@@ -1,0 +1,65 @@
+/* ============================================================
+   EXAM.TIET — Global Design Tokens
+   Strict RED & WHITE palette (Deep Academic Red + Neutrals)
+   Source of truth for the whole application.
+   ============================================================ */
+:root {
+  /* Primary — Deep Academic Red */
+  --c-primary-900: #6B0A1F;
+  --c-primary-800: #9D102D;
+  --c-primary-700: #B31234;
+  --c-primary-600: #C41E3A;
+  --c-primary-500: #D4284A;
+  --c-primary-200: #F5B8C4;
+  --c-primary-100: #FDE8EC;
+  --c-primary-50:  #FEF4F6;
+
+  /* Neutrals */
+  --c-gray-900: #1A1A2E;
+  --c-gray-800: #2D2D3F;
+  --c-gray-700: #4A4A5C;
+  --c-gray-600: #6B6B7B;
+  --c-gray-500: #8A8A9A;
+  --c-gray-400: #9CA3AF;
+  --c-gray-300: #D1D5DB;
+  --c-gray-200: #E5E7EB;
+  --c-gray-100: #F3F4F6;
+  --c-gray-50:  #F9FAFB;
+
+  /* Status */
+  --c-success-700: #065F46;
+  --c-success-500: #10B981;
+  --c-success-100: #D1FAE5;
+
+  --c-warning-700: #92400E;
+  --c-warning-500: #F59E0B;
+  --c-warning-100: #FEF3C7;
+
+  --c-danger-700: #991B1B;
+  --c-danger-500: #EF4444;
+  --c-danger-100: #FEE2E2;
+
+  /* Surfaces */
+  --c-bg:     #F7F8FA;
+  --c-card:   #FFFFFF;
+  --c-sidebar:#B31234;
+  --c-border: #E2E4E9;
+
+  /* Layout */
+  --sidebar-w: 240px;
+  --header-h: 60px;
+
+  /* Typography */
+  --font: 'Inter', system-ui, sans-serif;
+
+  /* Radius — small, no excessive rounding */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+
+  /* Shadows — subtle */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.07);
+  --shadow-lg: 0 4px 24px rgba(0,0,0,0.10);
+}
