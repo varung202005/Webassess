@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import DevNav from "./components/DevNav";
 import ProtectedRoute from "./routes/ProtectedRoute";
 
 import Login from "./pages/auth/Login";
@@ -145,7 +144,6 @@ export default function App() {
 
         <Route path="*" element={<NotFound />} />
       </Routes>
-      <DevNav />
     </BrowserRouter>
   );
 }
