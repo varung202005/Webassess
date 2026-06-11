@@ -1,8 +1,9 @@
-import LegacyPage from "../../components/LegacyPage";
+import { useState, FormEvent } from "react";
+import { supabase } from "../../lib/supabase";
+import { useAuthStore } from "../../store/authStore";
 
 const css = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;font-family:var(--font);-webkit-font-smoothing:antialiased;}
-body{display:flex;min-height:100vh;background:#F7F8FA;}
+.auth-page{display:flex;min-height:100vh;width:100%;font-family:var(--font);background:#F7F8FA;}
 button{font-family:var(--font);cursor:pointer;}
 
 /* ── SPLIT LAYOUT ── */
@@ -14,17 +15,13 @@ button{font-family:var(--font);cursor:pointer;}
   position: relative; overflow: hidden;
 }
 .auth-left::before {
-  content: '';
-  position: absolute; top: -80px; right: -80px;
-  width: 320px; height: 320px;
-  border-radius: 50%;
+  content: ''; position: absolute; top: -80px; right: -80px;
+  width: 320px; height: 320px; border-radius: 50%;
   background: rgba(255,255,255,0.05);
 }
 .auth-left::after {
-  content: '';
-  position: absolute; bottom: -120px; left: -60px;
-  width: 400px; height: 400px;
-  border-radius: 50%;
+  content: ''; position: absolute; bottom: -120px; left: -60px;
+  width: 400px; height: 400px; border-radius: 50%;
   background: rgba(0,0,0,0.08);
 }
 .auth-left-content { position: relative; z-index: 1; }
@@ -32,7 +29,12 @@ button{font-family:var(--font);cursor:pointer;}
 .auth-logo span { color: rgba(255,255,255,0.6); }
 .auth-institution { font-size: 13px; color: rgba(255,255,255,0.65); font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 56px; }
 .auth-left-headline { font-size: 32px; font-weight: 700; color: #fff; line-height: 1.25; margin-bottom: 16px; letter-spacing: -0.5px; }
-.auth-left-sub { font-size: 14px; color: rgba(255,255,255,0.7); line-height: 1.7; margin-bottom: 48px; }
+.auth-left-sub { font-size: 14px; color: rgba(255,255,255,0.7); line-height: 1.7; margin-bottom: 40px; }
+
+.auth-stats { display: flex; gap: 28px; margin-bottom: 40px; }
+.auth-stat-num { font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
+.auth-stat-label { font-size: 11.5px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+
 .auth-features { display: flex; flex-direction: column; gap: 14px; }
 .auth-feature { display: flex; align-items: center; gap: 12px; }
 .auth-feature-icon { width: 32px; height: 32px; border-radius: var(--radius-lg); background: rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 16px; color: rgba(255,255,255,0.9); flex-shrink: 0; }
@@ -51,19 +53,16 @@ button{font-family:var(--font);cursor:pointer;}
   box-shadow: var(--shadow-lg);
 }
 .auth-form-title { font-size: 22px; font-weight: 700; color: var(--c-gray-900); margin-bottom: 4px; letter-spacing: -0.3px; }
-.auth-form-sub { font-size: 13px; color: var(--c-gray-600); margin-bottom: 28px; }
+.auth-form-sub { font-size: 13px; color: var(--c-gray-600); margin-bottom: 24px; }
 
-/* Role selector */
-.role-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 24px; }
-.role-btn {
-  padding: 9px 10px; border: 1.5px solid var(--c-gray-200);
-  border-radius: var(--radius-lg); background: #fff;
-  font-size: 12px; font-weight: 600; color: var(--c-gray-600);
+/* Sign in / Create account tabs */
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 24px; background: var(--c-gray-50); border: 1px solid var(--c-gray-200); border-radius: var(--radius-lg); padding: 4px; }
+.auth-tab {
+  padding: 8px 10px; border: none; border-radius: calc(var(--radius-lg) - 2px);
+  background: transparent; font-size: 13px; font-weight: 600; color: var(--c-gray-600);
   cursor: pointer; transition: all .12s; text-align: center;
 }
-.role-btn:hover { border-color: var(--c-primary-400); color: var(--c-primary-700); background: var(--c-primary-50); }
-.role-btn.active { border-color: var(--c-primary-600); color: var(--c-primary-700); background: var(--c-primary-100); }
-.role-btn i { font-size: 16px; display: block; margin-bottom: 3px; }
+.auth-tab.active { background: #fff; color: var(--c-primary-700); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06)); }
 
 .form-group { margin-bottom: 16px; }
 .form-label { font-size: 12.5px; font-weight: 600; color: var(--c-gray-700); margin-bottom: 5px; display: block; }
@@ -81,7 +80,7 @@ button{font-family:var(--font);cursor:pointer;}
 
 .form-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .remember-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--c-gray-600); cursor: pointer; }
-.forgot-link { font-size: 13px; color: var(--c-primary-700); font-weight: 500; cursor: pointer; }
+.forgot-link { font-size: 13px; color: var(--c-primary-700); font-weight: 500; cursor: pointer; background: none; border: none; padding: 0; }
 .forgot-link:hover { text-decoration: underline; }
 
 .btn-login {
@@ -93,97 +92,272 @@ button{font-family:var(--font);cursor:pointer;}
   display: flex; align-items: center; justify-content: center; gap: 8px;
 }
 .btn-login:hover { background: var(--c-primary-800); }
-
-.auth-divider { text-align: center; font-size: 12px; color: var(--c-gray-400); margin: 18px 0; position: relative; }
-.auth-divider::before, .auth-divider::after { content: ''; position: absolute; top: 50%; width: calc(50% - 30px); height: 1px; background: var(--c-gray-200); }
-.auth-divider::before { left: 0; } .auth-divider::after { right: 0; }
+.btn-login:disabled { opacity: .65; cursor: not-allowed; }
 
 .auth-signup-row { text-align: center; font-size: 13px; color: var(--c-gray-600); margin-top: 16px; }
-.auth-signup-row a { color: var(--c-primary-700); font-weight: 600; cursor: pointer; }
+.auth-signup-row button { color: var(--c-primary-700); font-weight: 600; cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; }
 
-/* Error banner */
-.error-banner { background: var(--c-danger-100); border: 1px solid #FCA5A5; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: var(--c-danger-700); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }`;
-
-const html = `<div class="auth-left">
-  <div class="auth-left-content">
-    <div class="auth-logo">EXAM<span>.</span>TIET</div>
-    <div class="auth-institution">Thapar Institute · Examination Portal</div>
-    <div class="auth-left-headline">Online Examination Platform</div>
-    <div class="auth-left-sub">Secure, proctored, and fully automated examinations for 50,000+ students across all departments.</div>
-    <div class="auth-features">
-      <div class="auth-feature">
-        <div class="auth-feature-icon"><i class="ti ti-shield-check"></i></div>
-        <div class="auth-feature-text">AI-powered proctoring with face verification and browser monitoring</div>
-      </div>
-      <div class="auth-feature">
-        <div class="auth-feature-icon"><i class="ti ti-bolt"></i></div>
-        <div class="auth-feature-text">Real-time auto-save and instant result computation</div>
-      </div>
-      <div class="auth-feature">
-        <div class="auth-feature-icon"><i class="ti ti-chart-bar"></i></div>
-        <div class="auth-feature-text">Detailed analytics, grade distribution and performance insights</div>
-      </div>
-      <div class="auth-feature">
-        <div class="auth-feature-icon"><i class="ti ti-lock"></i></div>
-        <div class="auth-feature-text">Encrypted, tamper-proof submissions with full audit trail</div>
-      </div>
-    </div>
-  </div>
-  <div class="auth-left-footer">© 2026 Thapar Institute of Engineering & Technology · All Rights Reserved</div>
-</div>
-
-<div class="auth-right">
-  <div class="auth-form-box">
-    <div class="auth-form-title">Welcome back</div>
-    <div class="auth-form-sub">Sign in to your examination portal account</div>
-
-    <!-- Error state (hidden by default) -->
-    <!-- <div class="error-banner"><i class="ti ti-alert-circle"></i> Invalid email or password. Please try again.</div> -->
-
-    <!-- Role Selector -->
-    <div class="role-selector">
-      <button class="role-btn active" onclick="setRole(this)"><i class="ti ti-user-graduate"></i>Student</button>
-      <button class="role-btn" onclick="setRole(this)"><i class="ti ti-chalkboard"></i>Faculty</button>
-      <button class="role-btn" onclick="setRole(this)"><i class="ti ti-eye"></i>Proctor</button>
-      <button class="role-btn" onclick="setRole(this)"><i class="ti ti-settings"></i>Admin</button>
-    </div>
-
-    <div class="form-group">
-      <label class="form-label">University Email</label>
-      <input class="form-control" type="email" placeholder="rollno@thapar.edu" value="102417042@tiet.ac.in">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Password</label>
-      <div class="form-control-wrap">
-        <input class="form-control" type="password" id="pwd" placeholder="Enter your password" value="••••••••">
-        <i class="ti ti-eye" onclick="togglePwd()"></i>
-      </div>
-    </div>
-    <div class="form-row-2">
-      <label class="remember-label"><input type="checkbox" checked> Remember me</label>
-      <span class="forgot-link">Forgot password?</span>
-    </div>
-    <button class="btn-login" onclick="doLogin()">
-      <i class="ti ti-login"></i> Sign In
-    </button>
-    <div class="auth-signup-row">
-      New to the portal? <a onclick="">Request access from admin</a>
-    </div>
-  </div>
-</div>`;
-
-const script = `function setRole(el) {
-  document.querySelectorAll('.role-btn').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-}
-function togglePwd() {
-  const p = document.getElementById('pwd');
-  p.type = p.type === 'password' ? 'text' : 'password';
-}
-function doLogin() {
-  window.location.href = '/student/dashboard';
-}`;
+/* Banners */
+.error-banner { background: var(--c-danger-100); border: 1px solid #FCA5A5; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: var(--c-danger-700); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.success-banner { background: #ECFDF5; border: 1px solid #6EE7B7; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #047857; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }`;
 
 export default function Login() {
-  return <LegacyPage css={css} html={html} script={script} />;
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const setSession = useAuthStore((s) => s.setSession);
+  const setActiveRole = useAuthStore((s) => s.setActiveRole);
+
+  const switchMode = (next: "login" | "signup") => {
+    setMode(next);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (mode === "signup" && password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (mode === "login") {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+
+        const supaUser = data.user;
+        const session = data.session;
+
+        if (!supaUser || !session) {
+          throw new Error("Login succeeded but no session was returned.");
+        }
+
+        setSession(
+          {
+            id: supaUser.id,
+            fullName: (supaUser.user_metadata?.full_name as string) ?? "",
+            email: supaUser.email ?? email,
+            roles: ["STUDENT"],
+          },
+          session.access_token
+        );
+        setActiveRole("STUDENT");
+
+        window.location.href = "/student/dashboard";
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+              role: "student",
+            },
+          },
+        });
+        if (error) throw error;
+
+        if (data.session && data.user) {
+          setSession(
+            {
+              id: data.user.id,
+              fullName,
+              email: data.user.email ?? email,
+              roles: ["STUDENT"],
+            },
+            data.session.access_token
+          );
+          setActiveRole("STUDENT");
+          window.location.href = "/student/dashboard";
+          return;
+        }
+
+        setSuccess("Account created! Check your email to verify, then sign in.");
+        setFullName("");
+        setPassword("");
+        setConfirmPassword("");
+        switchMode("login");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-page">
+      <style dangerouslySetInnerHTML={{ __html: css }} />
+
+      <div className="auth-left">
+        <div className="auth-left-content">
+          <div className="auth-logo">EXAM<span>.</span>TIET</div>
+          <div className="auth-institution">Thapar Institute · Examination Portal</div>
+          <div className="auth-left-headline">Online Examination Platform</div>
+          <div className="auth-left-sub">
+            Secure, proctored, and fully automated examinations for 50,000+ students across all departments.
+          </div>
+
+          <div className="auth-stats">
+            <div>
+              <div className="auth-stat-num">50K+</div>
+              <div className="auth-stat-label">Students</div>
+            </div>
+            <div>
+              <div className="auth-stat-num">120+</div>
+              <div className="auth-stat-label">Courses</div>
+            </div>
+            <div>
+              <div className="auth-stat-num">99.9%</div>
+              <div className="auth-stat-label">Uptime</div>
+            </div>
+          </div>
+
+          <div className="auth-features">
+            <div className="auth-feature">
+              <div className="auth-feature-icon"><i className="ti ti-shield-check"></i></div>
+              <div className="auth-feature-text">AI-powered proctoring with face verification and browser monitoring</div>
+            </div>
+            <div className="auth-feature">
+              <div className="auth-feature-icon"><i className="ti ti-bolt"></i></div>
+              <div className="auth-feature-text">Real-time auto-save and instant result computation</div>
+            </div>
+            <div className="auth-feature">
+              <div className="auth-feature-icon"><i className="ti ti-chart-bar"></i></div>
+              <div className="auth-feature-text">Detailed analytics, grade distribution and performance insights</div>
+            </div>
+            <div className="auth-feature">
+              <div className="auth-feature-icon"><i className="ti ti-lock"></i></div>
+              <div className="auth-feature-text">Encrypted, tamper-proof submissions with full audit trail</div>
+            </div>
+          </div>
+        </div>
+        <div className="auth-left-footer">© 2026 Thapar Institute of Engineering & Technology · All Rights Reserved</div>
+      </div>
+
+      <div className="auth-right">
+        <div className="auth-form-box">
+          <div className="auth-form-title">{mode === "login" ? "Welcome back" : "Create your account"}</div>
+          <div className="auth-form-sub">
+            {mode === "login"
+              ? "Sign in to your examination portal account"
+              : "Register with your university email to get started"}
+          </div>
+
+          <div className="auth-tabs">
+            <button type="button" className={`auth-tab ${mode === "login" ? "active" : ""}`} onClick={() => switchMode("login")}>
+              Sign In
+            </button>
+            <button type="button" className={`auth-tab ${mode === "signup" ? "active" : ""}`} onClick={() => switchMode("signup")}>
+              Create Account
+            </button>
+          </div>
+
+          {error && (
+            <div className="error-banner">
+              <i className="ti ti-alert-circle"></i> {error}
+            </div>
+          )}
+          {success && (
+            <div className="success-banner">
+              <i className="ti ti-circle-check"></i> {success}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit}>
+            {mode === "signup" && (
+              <div className="form-group">
+                <label className="form-label">Full Name</label>
+                <input
+                  className="form-control"
+                  type="text"
+                  placeholder="Your full name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                />
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="form-label">University Email</label>
+              <input
+                className="form-control"
+                type="email"
+                placeholder="rollno@thapar.edu"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <div className="form-control-wrap">
+                <input
+                  className="form-control"
+                  type={showPwd ? "text" : "password"}
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                />
+                <i className="ti ti-eye" onClick={() => setShowPwd((s) => !s)}></i>
+              </div>
+            </div>
+
+            {mode === "signup" && (
+              <div className="form-group">
+                <label className="form-label">Confirm Password</label>
+                <input
+                  className="form-control"
+                  type={showPwd ? "text" : "password"}
+                  placeholder="Re-enter your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  minLength={6}
+                />
+              </div>
+            )}
+
+            {mode === "login" && (
+              <div className="form-row-2">
+                <label className="remember-label">
+                  <input type="checkbox" /> Remember me
+                </label>
+                <button type="button" className="forgot-link">Forgot password?</button>
+              </div>
+            )}
+
+            <button className="btn-login" type="submit" disabled={loading}>
+              <i className={`ti ${mode === "login" ? "ti-login" : "ti-user-plus"}`}></i>
+              {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
+            </button>
+          </form>
+
+          <div className="auth-signup-row">
+            {mode === "login" ? (
+              <>New to the portal? <button onClick={() => switchMode("signup")}>Create an account</button></>
+            ) : (
+              <>Already have an account? <button onClick={() => switchMode("login")}>Sign in</button></>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
