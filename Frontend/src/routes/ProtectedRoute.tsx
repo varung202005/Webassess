@@ -14,7 +14,9 @@ interface ProtectedRouteProps {
  */
 export default function ProtectedRoute({ roles, children }: ProtectedRouteProps) {
   const activeRole = useAuthStore((s) => s.activeRole);
+  const authReady = useAuthStore((s) => s.authReady);
 
+  if (!authReady) return <div className="route-loader">Loading your portal...</div>;
   if (!activeRole) return <Navigate to="/login" replace />;
   if (!roles.includes(activeRole)) return <Navigate to="/login" replace />;
 

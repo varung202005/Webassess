@@ -49,11 +49,22 @@ async def request_re_evaluation(
         raise HTTPException(status_code=403, detail="Not your result")
     if not result.data["is_published"]:
         raise HTTPException(status_code=400, detail="Result is not published yet")
+    if len(body.reason.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Reason must contain at least 10 characters")
+    existing = (
+        supabase.table("re_evaluation_requests")
+        .select("id")
+        .eq("result_id", str(body.result_id))
+        .eq("student_id", current_user["user_id"])
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(status_code=409, detail="A re-evaluation request already exists for this result")
 
     req = supabase.table("re_evaluation_requests").insert({
         "result_id": str(body.result_id),
         "student_id": current_user["user_id"],
-        "reason": body.reason,
+        "reason": body.reason.strip(),
         "status": "PENDING",
     }).execute()
 

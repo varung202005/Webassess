@@ -23,7 +23,7 @@ async def auto_grade_attempt(attempt_id: str) -> int:
     answers = (
         supabase.table("student_answers")
         .select(
-            "id, selected_option_id, "
+            "id, question_id, selected_option_id, selected_option_ids, "
             "questions(question_type, marks, negative_marks), "
             "exam_questions(marks_override)"
         )
@@ -42,7 +42,8 @@ async def auto_grade_attempt(attempt_id: str) -> int:
             continue
 
         selected_option_id = ans.get("selected_option_id")
-        if not selected_option_id:
+        selected_option_ids = ans.get("selected_option_ids") or []
+        if not selected_option_id and not selected_option_ids:
             # No answer selected — 0 marks, not incorrect (unanswered)
             supabase.table("student_answers").update({
                 "is_correct": False,
@@ -50,18 +51,31 @@ async def auto_grade_attempt(attempt_id: str) -> int:
             }).eq("id", ans["id"]).execute()
             continue
 
-        # Check if selected option is correct
-        option = (
-            supabase.table("question_options")
-            .select("is_correct")
-            .eq("id", selected_option_id)
-            .single()
-            .execute()
-        )
-        is_correct = option.data["is_correct"] if option.data else False
+        if q_type == "MSQ":
+            question_id = ans.get("question_id")
+            correct = (
+                supabase.table("question_options")
+                .select("id")
+                .eq("question_id", question_id)
+                .eq("is_correct", True)
+                .execute()
+                .data
+            )
+            is_correct = {row["id"] for row in correct} == set(selected_option_ids)
+        else:
+            option = (
+                supabase.table("question_options")
+                .select("is_correct")
+                .eq("id", selected_option_id)
+                .single()
+                .execute()
+            )
+            is_correct = option.data["is_correct"] if option.data else False
 
         # Effective marks: marks_override > question marks
         eq_data = ans.get("exam_questions") or {}
+        if isinstance(eq_data, list):
+            eq_data = eq_data[0] if eq_data else {}
         effective_marks = eq_data.get("marks_override") or q.get("marks", 0)
         negative = q.get("negative_marks", 0)
 

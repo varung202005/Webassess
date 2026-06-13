@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Literal
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.security import require_student, require_faculty, get_current_user_with_roles
 from app.db.supabase import get_supabase_admin
@@ -32,6 +32,81 @@ class StartAttemptRequest(BaseModel):
 class SubmitAttemptRequest(BaseModel):
     attempt_id: UUID
     submission_type: SubmissionType = "MANUAL"
+
+
+def _effective_deadline(supabase, attempt: dict) -> datetime:
+    schedule = (
+        supabase.table("exam_schedules")
+        .select("end_time, exams(duration_minutes)")
+        .eq("id", attempt["exam_schedule_id"])
+        .single()
+        .execute()
+        .data
+    )
+    started_at = datetime.fromisoformat(attempt["started_at"])
+    duration_deadline = started_at + timedelta(
+        minutes=schedule["exams"]["duration_minutes"]
+    )
+    return min(duration_deadline, datetime.fromisoformat(schedule["end_time"]))
+
+
+async def _finalize_attempt(supabase, attempt: dict, submission_type: SubmissionType):
+    from app.services.grading_service import auto_grade_attempt
+
+    attempt_id = attempt["id"]
+    now = datetime.now(timezone.utc)
+    started_at = datetime.fromisoformat(attempt["started_at"])
+    time_spent = int((now - started_at).total_seconds())
+    effective_deadline = _effective_deadline(supabase, attempt)
+    if now >= effective_deadline and submission_type == "MANUAL":
+        submission_type = "AUTO"
+
+    total_score = await auto_grade_attempt(attempt_id)
+    status = "SUBMITTED" if submission_type == "MANUAL" else "AUTO_SUBMITTED"
+    update = (
+        supabase.table("exam_attempts")
+        .update({
+            "status": status,
+            "submitted_at": now.isoformat(),
+            "total_score": total_score,
+            "total_time_spent_sec": time_spent,
+            "submission_type": submission_type,
+        })
+        .eq("id", attempt_id)
+        .eq("status", "IN_PROGRESS")
+        .execute()
+    )
+    if not update.data:
+        return None
+
+    event = "MANUAL_SUBMIT" if submission_type == "MANUAL" else "AUTO_SUBMIT"
+    supabase.table("submission_logs").insert({
+        "attempt_id": attempt_id,
+        "event_type": event,
+        "metadata": f'{{"total_score": {total_score}, "time_spent_sec": {time_spent}}}',
+    }).execute()
+    await _create_result(attempt_id, attempt, total_score)
+    return {
+        "message": "Exam submitted",
+        "total_score": total_score,
+        "submission_type": submission_type,
+    }
+
+
+async def auto_submit_expired_attempts():
+    """Safety net for attempts whose browser is closed at the deadline."""
+    supabase = get_supabase_admin()
+    attempts = (
+        supabase.table("exam_attempts")
+        .select("*")
+        .eq("status", "IN_PROGRESS")
+        .execute()
+        .data
+    )
+    now = datetime.now(timezone.utc)
+    for attempt in attempts:
+        if now >= _effective_deadline(supabase, attempt):
+            await _finalize_attempt(supabase, attempt, "AUTO")
 
 
 @router.post("/start")
@@ -77,7 +152,21 @@ async def start_attempt(
     if existing.data:
         a = existing.data[0]
         if a["status"] == "IN_PROGRESS":
-            return {"message": "Resuming existing attempt", "attempt_id": a["id"]}
+            full_attempt = (
+                supabase.table("exam_attempts")
+                .select("*")
+                .eq("id", a["id"])
+                .single()
+                .execute()
+                .data
+            )
+            return {
+                "message": "Resuming existing attempt",
+                "attempt_id": a["id"],
+                "started_at": full_attempt["started_at"],
+                "effective_deadline": _effective_deadline(supabase, full_attempt).isoformat(),
+                "timer_policy": "EARLIEST_OF_DURATION_OR_SCHEDULE_CLOSE",
+            }
         raise HTTPException(status_code=409, detail=f"Attempt already exists: {a['status']}")
 
     # Create attempt
@@ -98,7 +187,12 @@ async def start_attempt(
         "metadata": f'{{"schedule_id": "{schedule_id}"}}',
     }).execute()
 
-    return {"attempt_id": attempt["id"], "started_at": attempt["started_at"]}
+    return {
+        "attempt_id": attempt["id"],
+        "started_at": attempt["started_at"],
+        "effective_deadline": _effective_deadline(supabase, attempt).isoformat(),
+        "timer_policy": "EARLIEST_OF_DURATION_OR_SCHEDULE_CLOSE",
+    }
 
 
 @router.post("/submit")
@@ -110,8 +204,6 @@ async def submit_attempt(
     Submits the exam attempt. Runs auto-grading for MCQ and TRUE_FALSE.
     BACKEND responsibility — this is the most critical endpoint.
     """
-    from app.services.grading_service import auto_grade_attempt
-
     supabase = get_supabase_admin()
     attempt_id = str(body.attempt_id)
 
@@ -129,35 +221,10 @@ async def submit_attempt(
     if attempt.data["status"] != "IN_PROGRESS":
         raise HTTPException(status_code=400, detail="Attempt is not IN_PROGRESS")
 
-    now = datetime.now(timezone.utc)
-    started_at = datetime.fromisoformat(attempt.data["started_at"])
-    time_spent = int((now - started_at).total_seconds())
-
-    # Auto-grade MCQ/TRUE_FALSE answers
-    total_score = await auto_grade_attempt(attempt_id)
-
-    # Update attempt to SUBMITTED
-    status = "SUBMITTED" if body.submission_type == "MANUAL" else "AUTO_SUBMITTED"
-    supabase.table("exam_attempts").update({
-        "status": status,
-        "submitted_at": now.isoformat(),
-        "total_score": total_score,
-        "total_time_spent_sec": time_spent,
-        "submission_type": body.submission_type,
-    }).eq("id", attempt_id).execute()
-
-    # Log submission event
-    event = "MANUAL_SUBMIT" if body.submission_type == "MANUAL" else "AUTO_SUBMIT"
-    supabase.table("submission_logs").insert({
-        "attempt_id": attempt_id,
-        "event_type": event,
-        "metadata": f'{{"total_score": {total_score}, "time_spent_sec": {time_spent}}}',
-    }).execute()
-
-    # Create result record
-    await _create_result(attempt_id, attempt.data, total_score)
-
-    return {"message": "Exam submitted", "total_score": total_score}
+    result = await _finalize_attempt(supabase, attempt.data, body.submission_type)
+    if result is None:
+        raise HTTPException(status_code=409, detail="Attempt was already submitted")
+    return result
 
 
 async def _create_result(attempt_id: str, attempt: dict, total_score: int):
@@ -203,7 +270,10 @@ async def get_attempt(attempt_id: UUID, current_user: dict = Depends(get_current
     result = query.single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Attempt not found")
-    return result.data
+    attempt = result.data
+    if attempt["status"] == "IN_PROGRESS":
+        attempt["effective_deadline"] = _effective_deadline(supabase, attempt).isoformat()
+    return attempt
 
 
 @router.post("/{attempt_id}/log-event")

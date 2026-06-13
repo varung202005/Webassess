@@ -18,17 +18,53 @@ from app.db.supabase import get_supabase_admin
 router = APIRouter()
 
 
+def _notify_students_for_schedule(supabase, schedule: dict):
+    try:
+        students = (
+            supabase.table("students")
+            .select("user_id")
+            .eq("department_id", schedule["department_id"])
+            .execute()
+            .data
+        )
+    except Exception:
+        return
+    exam = (
+        supabase.table("exams")
+        .select("title")
+        .eq("id", schedule["exam_id"])
+        .single()
+        .execute()
+        .data
+    )
+    if not students:
+        return
+    supabase.table("notifications").insert([
+        {
+            "user_id": student["user_id"],
+            "type": "EXAM_SCHEDULED",
+            "title": "New exam scheduled",
+            "body": f"{exam['title']} has been scheduled.",
+            "metadata": {"exam_schedule_id": schedule["id"]},
+        }
+        for student in students
+    ]).execute()
+
+
 class ScheduleCreate(BaseModel):
     exam_id: UUID
     department_id: UUID
     start_time: datetime
     end_time: datetime
+    registration_deadline: Optional[datetime] = None
     is_published: bool = False
 
     @model_validator(mode="after")
     def validate_times(self):
         if self.end_time <= self.start_time:
             raise ValueError("end_time must be after start_time")
+        if self.registration_deadline and self.registration_deadline > self.start_time:
+            raise ValueError("registration_deadline must be on or before start_time")
         return self
 
 
@@ -37,6 +73,7 @@ class ScheduleUpdate(BaseModel):
     end_time: Optional[datetime] = None
     department_id: Optional[UUID] = None
     is_published: Optional[bool] = None
+    registration_deadline: Optional[datetime] = None
 
 
 @router.get("/")
@@ -77,9 +114,15 @@ async def create_schedule(body: ScheduleCreate):
         "department_id": str(body.department_id),
         "start_time": body.start_time.isoformat(),
         "end_time": body.end_time.isoformat(),
+        "registration_deadline": (
+            body.registration_deadline.isoformat()
+            if body.registration_deadline else None
+        ),
         "is_published": body.is_published,
     }
     result = supabase.table("exam_schedules").insert(data).execute()
+    if body.is_published:
+        _notify_students_for_schedule(supabase, result.data[0])
     return result.data[0]
 
 
@@ -95,7 +138,19 @@ async def update_schedule(schedule_id: UUID, body: ScheduleUpdate):
         data["start_time"] = data["start_time"].isoformat()
     if "end_time" in data:
         data["end_time"] = data["end_time"].isoformat()
+    if "registration_deadline" in data:
+        data["registration_deadline"] = data["registration_deadline"].isoformat()
     if "department_id" in data:
         data["department_id"] = str(data["department_id"])
+    existing = (
+        supabase.table("exam_schedules")
+        .select("is_published")
+        .eq("id", str(schedule_id))
+        .single()
+        .execute()
+        .data
+    )
     result = supabase.table("exam_schedules").update(data).eq("id", str(schedule_id)).execute()
+    if data.get("is_published") is True and not existing["is_published"]:
+        _notify_students_for_schedule(supabase, result.data[0])
     return result.data[0]

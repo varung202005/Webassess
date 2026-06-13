@@ -12,8 +12,9 @@ CRITICAL: Always use UPSERT — never plain INSERT. Idempotent saves.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
+from datetime import datetime, timedelta, timezone
 
 from app.core.security import require_student, require_faculty, get_current_user_with_roles
 from app.db.supabase import get_supabase_admin
@@ -25,6 +26,7 @@ class AnswerUpsert(BaseModel):
     attempt_id: UUID
     question_id: UUID
     selected_option_id: Optional[UUID] = None   # MCQ / TRUE_FALSE / MSQ
+    selected_option_ids: Optional[List[UUID]] = None  # MSQ
     answer_text: Optional[str] = None            # SHORT_ANSWER / LONG_ANSWER
     is_marked_for_review: bool = False
     time_spent_sec: int = 0
@@ -51,7 +53,7 @@ async def save_answer(
     # Verify attempt belongs to student
     attempt = (
         supabase.table("exam_attempts")
-        .select("status")
+        .select("status,started_at,exam_schedule_id")
         .eq("id", str(body.attempt_id))
         .eq("student_id", current_user["user_id"])
         .single()
@@ -61,11 +63,29 @@ async def save_answer(
         raise HTTPException(status_code=403, detail="Attempt not found or not yours")
     if attempt.data["status"] != "IN_PROGRESS":
         raise HTTPException(status_code=400, detail="Exam is not IN_PROGRESS")
+    schedule = (
+        supabase.table("exam_schedules")
+        .select("end_time, exams(duration_minutes)")
+        .eq("id", attempt.data["exam_schedule_id"])
+        .single()
+        .execute()
+        .data
+    )
+    duration_deadline = datetime.fromisoformat(attempt.data["started_at"]) + timedelta(
+        minutes=schedule["exams"]["duration_minutes"]
+    )
+    effective_deadline = min(
+        duration_deadline,
+        datetime.fromisoformat(schedule["end_time"]),
+    )
+    if datetime.now(timezone.utc) >= effective_deadline:
+        raise HTTPException(status_code=409, detail="Exam time has expired; submit the attempt")
 
     upsert_data = {
         "attempt_id": str(body.attempt_id),
         "question_id": str(body.question_id),
         "selected_option_id": str(body.selected_option_id) if body.selected_option_id else None,
+        "selected_option_ids": [str(value) for value in body.selected_option_ids] if body.selected_option_ids else None,
         "answer_text": body.answer_text,
         "is_marked_for_review": body.is_marked_for_review,
         "time_spent_sec": body.time_spent_sec,

@@ -1,390 +1,1050 @@
-import LegacyPage from "../../components/LegacyPage";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import FacultyLayout from "../../features/faculty/FacultyLayout";
+import { Loading, ErrorBlock, EmptyState, PageHeading } from "../../features/faculty/components";
+import { useFacultyDashboard, useExams, useFacultyAction } from "../../features/faculty/hooks";
+import { facultyApi } from "../../features/faculty/api";
+import type { ExamSection, ExamRule } from "../../features/faculty/types";
 
-const css = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;font-family:var(--font);font-size:14px;color:var(--c-gray-800);background:var(--c-bg);-webkit-font-smoothing:antialiased;}
-button{font-family:var(--font);cursor:pointer;border:none;background:none;}
-.app-shell{display:flex;height:100vh;overflow:hidden;}
-.sidebar{width:var(--sidebar-w);background:var(--c-sidebar);display:flex;flex-direction:column;flex-shrink:0;height:100vh;overflow-y:auto;}
-.sidebar-logo{padding:0 20px;height:var(--header-h);display:flex;align-items:center;border-bottom:1px solid rgba(0,0,0,0.12);}
-.logo-text{font-size:18px;font-weight:700;color:#fff;letter-spacing:-0.3px;}
-.logo-sub{font-size:10px;color:rgba(255,255,255,0.5);font-weight:500;letter-spacing:.8px;text-transform:uppercase;margin-top:1px;}
-.sidebar-section{padding:20px 12px 8px;}
-.sidebar-label{font-size:10px;font-weight:600;color:rgba(255,255,255,.4);letter-spacing:.8px;text-transform:uppercase;padding:0 8px;margin-bottom:4px;}
-.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-lg);color:rgba(255,255,255,.75);font-size:13.5px;font-weight:500;cursor:pointer;position:relative;margin-bottom:2px;transition:background .12s;width:100%;text-align:left;}
-.nav-item:hover{background:rgba(0,0,0,.12);color:#fff;}
-.nav-item.active{background:rgba(0,0,0,.2);color:#fff;}
-.nav-item.active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;background:#fff;border-radius:0 2px 2px 0;}
-.nav-item i{font-size:16px;flex-shrink:0;}
-.sidebar-bottom{margin-top:auto;padding:12px;border-top:1px solid rgba(0,0,0,.12);}
-.sidebar-user{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-lg);}
-.user-avatar{width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.2);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,.3);}
-.user-name{font-size:13px;font-weight:600;color:#fff;}
-.user-role{font-size:11px;color:rgba(255,255,255,.5);}
-.main-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;}
-.header{height:var(--header-h);background:var(--c-card);border-bottom:1px solid var(--c-border);display:flex;align-items:center;padding:0 24px;gap:16px;flex-shrink:0;box-shadow:var(--shadow-sm);}
-.breadcrumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--c-gray-600);flex:1;}
-.breadcrumbs .sep{color:var(--c-gray-300);}
-.breadcrumbs .current{color:var(--c-gray-900);font-weight:500;}
-.header-actions{display:flex;align-items:center;gap:8px;}
-.icon-btn{width:36px;height:36px;border-radius:var(--radius-lg);color:var(--c-gray-600);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;position:relative;}
-.icon-btn:hover{background:var(--c-gray-100);}
-.header-divider{width:1px;height:24px;background:var(--c-border);margin:0 4px;}
-.header-avatar{width:30px;height:30px;border-radius:50%;background:var(--c-primary-700);color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;}
-.header-user{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:var(--radius-lg);cursor:pointer;}
-.header-user:hover{background:var(--c-gray-100);}
-.header-user-name{font-size:13px;font-weight:500;color:var(--c-gray-800);}
-.page-content{flex:1;overflow-y:auto;padding:28px 28px 40px;}
-.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;font-size:13.5px;font-weight:500;border-radius:var(--radius-md);border:1px solid transparent;cursor:pointer;transition:all .12s;font-family:var(--font);line-height:1;}
-.btn i{font-size:15px;}
-.btn-primary{background:var(--c-primary-700);color:#fff;}
-.btn-primary:hover{background:var(--c-primary-800);}
-.btn-secondary{background:#fff;color:var(--c-gray-800);border-color:var(--c-border);}
-.btn-secondary:hover{background:var(--c-gray-50);}
-.btn-sm{padding:6px 12px;font-size:12.5px;}
+/* ── Mutation helpers ─────────────────────────────────────── */
+function useCreateExam() {
+  return useFacultyAction(
+    (body: Record<string, unknown>) => facultyApi.createExam(body),
+    [["exams"]],
+  );
+}
 
-/* WIZARD STEPS */
-.wizard-steps{display:flex;align-items:center;gap:0;margin-bottom:32px;background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius-xl);padding:20px 24px;overflow-x:auto;}
-.step-item{display:flex;align-items:center;gap:10px;flex:1;min-width:120px;}
-.step-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;border:2px solid var(--c-gray-200);color:var(--c-gray-400);}
-.step-item.done .step-num{background:var(--c-success-100);border-color:var(--c-success-500);color:var(--c-success-700);}
-.step-item.active .step-num{background:var(--c-primary-700);border-color:var(--c-primary-700);color:#fff;}
-.step-label{font-size:12.5px;font-weight:600;color:var(--c-gray-400);}
-.step-item.done .step-label{color:var(--c-success-700);}
-.step-item.active .step-label{color:var(--c-primary-700);}
-.step-connector{flex:1;height:1px;background:var(--c-gray-200);margin:0 8px;}
-.step-connector.done{background:var(--c-success-500);}
+function useCreateSection() {
+  return useFacultyAction(
+    (body: Record<string, unknown>) => facultyApi.createExamSection(body),
+    [["exam-sections"]],
+  );
+}
 
-/* FORM SECTIONS */
-.wizard-body{max-width:760px;}
-.form-section{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius-xl);padding:28px;margin-bottom:20px;}
-.form-section-title{font-size:14px;font-weight:700;color:var(--c-gray-900);margin-bottom:20px;display:flex;align-items:center;gap:8px;}
-.form-section-title i{font-size:18px;color:var(--c-primary-600);}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
-.form-row-3{grid-template-columns:1fr 1fr 1fr;}
-.form-row-full{grid-template-columns:1fr;}
-.form-group{display:flex;flex-direction:column;gap:5px;}
-.form-label{font-size:12.5px;font-weight:600;color:var(--c-gray-700);}
-.form-label span{color:var(--c-danger-500);}
-.form-control{padding:9px 12px;border:1px solid var(--c-border);border-radius:var(--radius-lg);font-size:13.5px;font-family:var(--font);color:var(--c-gray-800);outline:none;background:var(--c-gray-50);}
-.form-control:focus{border-color:var(--c-primary-600);background:#fff;box-shadow:0 0 0 3px rgba(196,30,58,.08);}
-textarea.form-control{resize:vertical;min-height:80px;}
-.form-hint{font-size:11.5px;color:var(--c-gray-500);margin-top:3px;}
-.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--c-gray-100);}
-.toggle-row:last-child{border-bottom:none;}
-.toggle-label{font-size:13.5px;color:var(--c-gray-800);}
-.toggle-sub{font-size:11.5px;color:var(--c-gray-500);margin-top:2px;}
-.toggle{position:relative;width:40px;height:22px;flex-shrink:0;}
-.toggle input{opacity:0;width:0;height:0;}
-.toggle-slider{position:absolute;inset:0;background:var(--c-gray-300);border-radius:22px;cursor:pointer;transition:.2s;}
-.toggle-slider::before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
-.toggle input:checked+.toggle-slider{background:var(--c-primary-700);}
-.toggle input:checked+.toggle-slider::before{transform:translateX(18px);}
+function useUpsertRules() {
+  return useFacultyAction(
+    (body: Record<string, unknown>) => facultyApi.upsertExamRules(body),
+    [["exam-rules"]],
+  );
+}
 
-/* SECTION BUILDER */
-.section-builder{border:1px solid var(--c-border);border-radius:var(--radius-xl);overflow:hidden;}
-.section-builder-hdr{padding:12px 16px;background:var(--c-gray-50);border-bottom:1px solid var(--c-border);display:flex;align-items:center;justify-content:space-between;}
-.section-row{padding:16px;border-bottom:1px solid var(--c-gray-100);display:flex;align-items:center;gap:12px;}
-.section-row:last-child{border-bottom:none;}
-.section-drag{color:var(--c-gray-300);font-size:20px;cursor:grab;}
-.section-info{flex:1;}
-.section-name{font-size:13.5px;font-weight:600;color:var(--c-gray-800);}
-.section-meta{font-size:12px;color:var(--c-gray-500);margin-top:2px;}
-.section-actions{display:flex;gap:4px;}
+function useCreateSchedule() {
+  return useFacultyAction(
+    (body: Record<string, unknown>) => facultyApi.createSchedule(body),
+    [["exam-schedules"]],
+  );
+}
 
-/* WIZARD FOOTER */
-.wizard-footer{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius-xl);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;margin-top:24px;}
-.wizard-footer-info{font-size:13px;color:var(--c-gray-500);}
+/* ── Types ─────────────────────────────────────────────────── */
+interface SectionDraft {
+  title: string;
+  question_count: number;
+  marks_per_question: number;
+  question_type: string;
+}
 
-/* RULES GRID */
-.rules-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;}
-.rules-grid .toggle-row{padding:14px 16px;border:none;border-bottom:1px solid var(--c-gray-100);}`;
+interface ExamDraft {
+  title: string;
+  course_id: string;
+  exam_type: string;
+  duration_minutes: number;
+  total_marks: number;
+  pass_marks: number;
+  instructions: string;
+  shuffle_questions: boolean;
+  shuffle_options: boolean;
+}
 
-const html = `<div class="app-shell">
-  <nav class="sidebar">
-    <div class="sidebar-logo">
-      <div><div class="logo-text">EXAM.TIET</div><div class="logo-sub">Examination Portal</div></div>
-    </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Faculty</div>
-      <button class="nav-item" onclick="location.href='/faculty/dashboard'"><i class="ti ti-dashboard"></i>Dashboard</button>
-      <button class="nav-item" onclick="location.href='/faculty/question-bank'"><i class="ti ti-database"></i>Question Bank</button>
-      <button class="nav-item active"><i class="ti ti-plus"></i>Create Exam</button>
-      <button class="nav-item"><i class="ti ti-calendar"></i>Scheduling</button>
-      <button class="nav-item"><i class="ti ti-pencil"></i>Evaluation</button>
-      <button class="nav-item"><i class="ti ti-refresh"></i>Re-evaluations</button>
-      <button class="nav-item"><i class="ti ti-chart-bar"></i>Analytics</button>
-    </div>
-    <div class="sidebar-bottom">
-      <div class="sidebar-user">
-        <div class="user-avatar">DR</div>
-        <div><div class="user-name">Dr. Rajesh Sharma</div><div class="user-role">Faculty · CSE Dept</div></div>
+interface RuleDraft {
+  allow_backtrack: boolean;
+  mark_for_review: boolean;
+  require_fullscreen: boolean;
+  enable_proctoring: boolean;
+  camera_required: boolean;
+  microphone_required: boolean;
+  max_tab_switches: number;
+  auto_save_interval_seconds: number;
+}
+
+interface ScheduleDraft {
+  start_time: string;
+  end_time: string;
+  department_ids: string[];
+}
+
+const STEPS = ["Basic Info", "Sections", "Questions", "Rules", "Schedule", "Preview"];
+
+const EXAM_TYPES = ["MID_SEMESTER", "END_SEMESTER", "QUIZ", "UNIT_TEST", "PRACTICE"];
+
+const SECTION_TYPES = ["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER", "LONG_ANSWER"];
+
+/* ── Step Components ───────────────────────────────────────── */
+
+function StepBasicInfo({
+  draft,
+  setDraft,
+  courses,
+  onNext,
+}: {
+  draft: ExamDraft;
+  setDraft: (d: ExamDraft) => void;
+  courses: Array<{ id: string; name: string; code: string }>;
+  onNext: () => void;
+}) {
+  const set = <K extends keyof ExamDraft>(key: K, val: ExamDraft[K]) =>
+    setDraft({ ...draft, [key]: val });
+
+  return (
+    <div className="form-section" id="step1-form">
+      <div className="form-section-title">
+        <i className="ti ti-info-circle" /> Basic Exam Information
+      </div>
+
+      <div className="form-row form-row-full">
+        <div className="form-group">
+          <label className="form-label">
+            Exam Title <span>*</span>
+          </label>
+          <input
+            className="form-control"
+            value={draft.title}
+            onChange={(e) => set("title", e.target.value)}
+            placeholder="e.g. Data Structures Mid Semester 2025"
+          />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">
+            Course <span>*</span>
+          </label>
+          <select
+            className="form-control"
+            value={draft.course_id}
+            onChange={(e) => set("course_id", e.target.value)}
+          >
+            <option value="">Select course…</option>
+            {courses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.code} · {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Exam Type</label>
+          <select
+            className="form-control"
+            value={draft.exam_type}
+            onChange={(e) => set("exam_type", e.target.value)}
+          >
+            {EXAM_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="form-row form-row-3">
+        <div className="form-group">
+          <label className="form-label">
+            Duration (minutes) <span>*</span>
+          </label>
+          <input
+            className="form-control"
+            type="number"
+            value={draft.duration_minutes}
+            min={1}
+            onChange={(e) => set("duration_minutes", Number(e.target.value))}
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label">
+            Total Marks <span>*</span>
+          </label>
+          <input
+            className="form-control"
+            type="number"
+            value={draft.total_marks}
+            min={1}
+            onChange={(e) => set("total_marks", Number(e.target.value))}
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label">
+            Pass Marks <span>*</span>
+          </label>
+          <input
+            className="form-control"
+            type="number"
+            value={draft.pass_marks}
+            min={1}
+            onChange={(e) => set("pass_marks", Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="form-row form-row-full">
+        <div className="form-group">
+          <label className="form-label">Instructions</label>
+          <textarea
+            className="form-control"
+            rows={4}
+            value={draft.instructions}
+            onChange={(e) => set("instructions", e.target.value)}
+            placeholder="Exam instructions for students…"
+          />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 20, marginTop: 4 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13.5px", cursor: "pointer" }}>
+          <input type="checkbox" checked={draft.shuffle_questions} onChange={(e) => set("shuffle_questions", e.target.checked)} />
+          Shuffle questions
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13.5px", cursor: "pointer" }}>
+          <input type="checkbox" checked={draft.shuffle_options} onChange={(e) => set("shuffle_options", e.target.checked)} />
+          Shuffle answer options
+        </label>
+      </div>
+
+      <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <button className="btn btn-primary" onClick={onNext} disabled={!draft.title || !draft.course_id}>
+          <i className="ti ti-arrow-right" /> Next: Sections
+        </button>
       </div>
     </div>
-  </nav>
+  );
+}
 
-  <div class="main-wrap">
-    <header class="header">
-      <div class="breadcrumbs"><span>Faculty</span><span class="sep">/</span><span>Exams</span><span class="sep">/</span><span class="current">Create New Exam</span></div>
-      <div class="header-actions">
-        <button class="btn btn-secondary btn-sm"><i class="ti ti-device-floppy"></i>Save Draft</button>
-        <div class="header-divider"></div>
-        <div class="header-avatar">DR</div>
+function StepSections({
+  sections,
+  setSections,
+  onBack,
+  onNext,
+}: {
+  sections: SectionDraft[];
+  setSections: (s: SectionDraft[]) => void;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const [showModal, setShowModal] = useState(false);
+  const [newSection, setNewSection] = useState<SectionDraft>({
+    title: "",
+    question_count: 10,
+    marks_per_question: 2,
+    question_type: "MCQ",
+  });
+
+  const addSection = () => {
+    if (!newSection.title) return;
+    setSections([...sections, { ...newSection }]);
+    setNewSection({ title: "", question_count: 10, marks_per_question: 2, question_type: "MCQ" });
+    setShowModal(false);
+  };
+
+  const removeSection = (idx: number) => {
+    setSections(sections.filter((_, i) => i !== idx));
+  };
+
+  const totalMarksFromSections = sections.reduce(
+    (sum, s) => sum + s.question_count * s.marks_per_question,
+    0,
+  );
+
+  return (
+    <div className="form-section">
+      <div className="form-section-title">
+        <i className="ti ti-layout-columns" /> Exam Sections
       </div>
-    </header>
+      <p style={{ fontSize: 13, color: "var(--c-gray-600)", marginBottom: 20 }}>
+        Divide your exam into logical sections. Each section can have its own marks allocation and question pool.
+      </p>
 
-    <div class="page-content">
-      <!-- WIZARD STEPS -->
-      <div class="wizard-steps">
-        <div class="step-item done">
-          <div class="step-num"><i class="ti ti-check" style="font-size:12px;"></i></div>
-          <div class="step-label">Basic Info</div>
+      <div className="section-builder">
+        <div className="section-builder-hdr">
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--c-gray-600)" }}>
+            {sections.length} SECTIONS ·{" "}
+            {sections.reduce((s, sec) => s + sec.question_count, 0)} QUESTIONS TOTAL
+          </span>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>
+            <i className="ti ti-plus" /> Add Section
+          </button>
         </div>
-        <div class="step-connector done"></div>
-        <div class="step-item active">
-          <div class="step-num">2</div>
-          <div class="step-label">Sections</div>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step-item">
-          <div class="step-num">3</div>
-          <div class="step-label">Questions</div>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step-item">
-          <div class="step-num">4</div>
-          <div class="step-label">Rules</div>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step-item">
-          <div class="step-num">5</div>
-          <div class="step-label">Schedule</div>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step-item">
-          <div class="step-num">6</div>
-          <div class="step-label">Preview</div>
-        </div>
+
+        {sections.length === 0 && (
+          <div style={{ padding: 32, textAlign: "center", color: "var(--c-gray-500)" }}>
+            <i className="ti ti-layout-columns" style={{ fontSize: 32, marginBottom: 8, opacity: 0.4 }} />
+            <div>No sections yet. Add your first exam section.</div>
+          </div>
+        )}
+
+        {sections.map((sec, idx) => (
+          <div className="section-row" key={idx}>
+            <i className="ti ti-grip-vertical section-drag" />
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: "50%",
+                background: "var(--c-primary-100)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 12,
+                fontWeight: 700,
+                color: "var(--c-primary-700)",
+                flexShrink: 0,
+              }}
+            >
+              {idx + 1}
+            </div>
+            <div className="section-info">
+              <div className="section-name">{sec.title}</div>
+              <div className="section-meta">
+                {sec.question_count} questions · {sec.marks_per_question} marks each ·{" "}
+                {sec.question_count * sec.marks_per_question} total marks · {sec.question_type}
+              </div>
+            </div>
+            <div className="section-actions">
+              <button className="btn btn-secondary btn-sm" onClick={() => removeSection(idx)}>
+                <i className="ti ti-trash" />
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <!-- STEP 1 CONTENT (shown as done/reference) -->
-      <div class="wizard-body">
-
-        <!-- Step 1 Review (collapsed) -->
-        <div class="form-section" style="background:var(--c-primary-50);border-color:var(--c-primary-200);">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <div style="width:22px;height:22px;border-radius:50%;background:var(--c-success-500);display:flex;align-items:center;justify-content:center;"><i class="ti ti-check" style="color:#fff;font-size:12px;"></i></div>
-              <div style="font-size:14px;font-weight:700;color:var(--c-primary-800);">Step 1 · Basic Info — Completed</div>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="showStep1()"><i class="ti ti-pencil"></i>Edit</button>
+      {sections.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginTop: 14,
+            padding: "12px 14px",
+            background: "var(--c-gray-50)",
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--c-border)",
+          }}
+        >
+          <div style={{ fontSize: 13, color: "var(--c-gray-600)" }}>
+            Marks tally:{" "}
+            <strong>
+              {sections.map((s, i) => `${s.question_count * s.marks_per_question}`).join(" + ")} = {totalMarksFromSections}
+            </strong>
           </div>
-          <div style="margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;" id="step1-summary">
-            <div><div style="font-size:11px;font-weight:600;color:var(--c-gray-500);text-transform:uppercase;letter-spacing:.5px;">Title</div><div style="font-size:13.5px;font-weight:600;margin-top:3px;">DSA Mid Semester 2025</div></div>
-            <div><div style="font-size:11px;font-weight:600;color:var(--c-gray-500);text-transform:uppercase;letter-spacing:.5px;">Course</div><div style="font-size:13.5px;font-weight:600;margin-top:3px;">CS301 · Data Structures</div></div>
-            <div><div style="font-size:11px;font-weight:600;color:var(--c-gray-500);text-transform:uppercase;letter-spacing:.5px;">Duration</div><div style="font-size:13.5px;font-weight:600;margin-top:3px;">120 minutes</div></div>
-            <div><div style="font-size:11px;font-weight:600;color:var(--c-gray-500);text-transform:uppercase;letter-spacing:.5px;">Total Marks</div><div style="font-size:13.5px;font-weight:600;margin-top:3px;">80</div></div>
-            <div><div style="font-size:11px;font-weight:600;color:var(--c-gray-500);text-transform:uppercase;letter-spacing:.5px;">Pass Marks</div><div style="font-size:13.5px;font-weight:600;margin-top:3px;">32</div></div>
-            <div><div style="font-size:11px;font-weight:600;color:var(--c-gray-500);text-transform:uppercase;letter-spacing:.5px;">Status</div><div style="margin-top:3px;"><span style="background:var(--c-warning-100);color:var(--c-warning-700);font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:4px;">DRAFT</span></div></div>
-          </div>
-        </div>
-
-        <!-- Step 1 FORM (shown when editing) -->
-        <div class="form-section" id="step1-form" style="display:none;">
-          <div class="form-section-title"><i class="ti ti-info-circle"></i>Basic Exam Information</div>
-          <div class="form-row form-row-full">
-            <div class="form-group">
-              <label class="form-label">Exam Title <span>*</span></label>
-              <input class="form-control" value="DSA Mid Semester 2025" placeholder="e.g. Data Structures Mid Semester 2025">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Course <span>*</span></label>
-              <select class="form-control"><option selected>CS301 · Data Structures &amp; Algorithms</option><option>CS302 · OOP</option><option>CS401 · Networks</option></select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Exam Type</label>
-              <select class="form-control"><option selected>Mid Semester</option><option>End Semester</option><option>Quiz</option><option>Unit Test</option></select>
-            </div>
-          </div>
-          <div class="form-row form-row-3">
-            <div class="form-group">
-              <label class="form-label">Duration (minutes) <span>*</span></label>
-              <input class="form-control" type="number" value="120">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Total Marks <span>*</span></label>
-              <input class="form-control" type="number" value="80">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Pass Marks <span>*</span></label>
-              <input class="form-control" type="number" value="32">
-            </div>
-          </div>
-          <div class="form-row form-row-full">
-            <div class="form-group">
-              <label class="form-label">Instructions</label>
-              <textarea class="form-control">Read all questions carefully. All MCQ questions carry 2 marks each. Negative marking applies (-0.5 per wrong answer). Do not switch tabs during the exam.</textarea>
-            </div>
-          </div>
-          <div style="display:flex;gap:20px;margin-top:4px;">
-            <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;"><input type="checkbox" checked>Shuffle questions</label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;"><input type="checkbox" checked>Shuffle answer options</label>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--c-success-700)",
+            }}
+          >
+            <i className="ti ti-check" /> Total: {totalMarksFromSections} marks
           </div>
         </div>
+      )}
 
-        <!-- STEP 2: SECTIONS (active) -->
-        <div class="form-section">
-          <div class="form-section-title"><i class="ti ti-layout-columns"></i>Exam Sections</div>
-          <p style="font-size:13px;color:var(--c-gray-600);margin-bottom:20px;">Divide your exam into logical sections. Each section can have its own marks allocation and question pool.</p>
+      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
+        <button className="btn btn-secondary" onClick={onBack}>
+          <i className="ti ti-arrow-left" /> Back
+        </button>
+        <button className="btn btn-primary" onClick={onNext}>
+          Next: Questions <i className="ti ti-arrow-right" />
+        </button>
+      </div>
 
-          <div class="section-builder">
-            <div class="section-builder-hdr">
-              <span style="font-size:12px;font-weight:600;color:var(--c-gray-600);">3 SECTIONS · 40 QUESTIONS TOTAL</span>
-              <button class="btn btn-primary btn-sm" onclick="addSection()"><i class="ti ti-plus"></i>Add Section</button>
+      {/* Add Section Modal */}
+      {showModal && (
+        <div
+          className="modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowModal(false);
+          }}
+        >
+          <div
+            className="modal"
+            style={{ maxWidth: 480 }}
+          >
+            <div
+              style={{
+                padding: "22px 24px",
+                borderBottom: "1px solid var(--c-border)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--c-gray-900)" }}>
+                Add Exam Section
+              </div>
+              <button
+                onClick={() => setShowModal(false)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "var(--radius-lg)",
+                  border: "1px solid var(--c-border)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  fontSize: 18,
+                  color: "var(--c-gray-600)",
+                  background: "#fff",
+                }}
+              >
+                <i className="ti ti-x" />
+              </button>
             </div>
-            <div class="section-row">
-              <i class="ti ti-grip-vertical section-drag"></i>
-              <div style="width:28px;height:28px;border-radius:50%;background:var(--c-primary-100);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--c-primary-700);flex-shrink:0;">1</div>
-              <div class="section-info">
-                <div class="section-name">Section A — MCQ (Single Answer)</div>
-                <div class="section-meta">20 questions · 2 marks each · 40 total marks</div>
+            <div style={{ padding: 24 }}>
+              <div className="form-group" style={{ marginBottom: 16 }}>
+                <label className="form-label">
+                  Section Title <span style={{ color: "var(--c-danger-500)" }}>*</span>
+                </label>
+                <input
+                  className="form-control"
+                  placeholder="e.g. Section A — MCQ"
+                  value={newSection.title}
+                  onChange={(e) =>
+                    setNewSection({ ...newSection, title: e.target.value })
+                  }
+                />
               </div>
-              <div class="section-actions">
-                <button class="btn btn-secondary btn-sm"><i class="ti ti-pencil"></i>Edit</button>
-                <button class="btn btn-secondary btn-sm" style="color:var(--c-danger-500);border-color:var(--c-danger-100);"><i class="ti ti-trash"></i></button>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                  marginBottom: 16,
+                }}
+              >
+                <div className="form-group">
+                  <label className="form-label">Question Count</label>
+                  <input
+                    className="form-control"
+                    type="number"
+                    value={newSection.question_count}
+                    min={1}
+                    onChange={(e) =>
+                      setNewSection({
+                        ...newSection,
+                        question_count: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Marks per Question</label>
+                  <input
+                    className="form-control"
+                    type="number"
+                    value={newSection.marks_per_question}
+                    min={1}
+                    onChange={(e) =>
+                      setNewSection({
+                        ...newSection,
+                        marks_per_question: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: 20 }}>
+                <label className="form-label">Question Type</label>
+                <select
+                  className="form-control"
+                  value={newSection.question_type}
+                  onChange={(e) =>
+                    setNewSection({ ...newSection, question_type: e.target.value })
+                  }
+                >
+                  {SECTION_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t === "TRUE_FALSE"
+                        ? "True / False"
+                        : t === "SHORT_ANSWER"
+                          ? "Short Answer"
+                          : t === "LONG_ANSWER"
+                            ? "Long Answer"
+                            : t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button className="btn btn-secondary" onClick={() => setShowModal(false)}>
+                  Cancel
+                </button>
+                <button className="btn btn-primary" onClick={addSection}>
+                  <i className="ti ti-plus" /> Add Section
+                </button>
               </div>
             </div>
-            <div class="section-row">
-              <i class="ti ti-grip-vertical section-drag"></i>
-              <div style="width:28px;height:28px;border-radius:50%;background:var(--c-primary-100);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--c-primary-700);flex-shrink:0;">2</div>
-              <div class="section-info">
-                <div class="section-name">Section B — Multiple Select (MSQ)</div>
-                <div class="section-meta">10 questions · 3 marks each · 30 total marks</div>
-              </div>
-              <div class="section-actions">
-                <button class="btn btn-secondary btn-sm"><i class="ti ti-pencil"></i>Edit</button>
-                <button class="btn btn-secondary btn-sm" style="color:var(--c-danger-500);border-color:var(--c-danger-100);"><i class="ti ti-trash"></i></button>
-              </div>
-            </div>
-            <div class="section-row">
-              <i class="ti ti-grip-vertical section-drag"></i>
-              <div style="width:28px;height:28px;border-radius:50%;background:var(--c-primary-100);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--c-primary-700);flex-shrink:0;">3</div>
-              <div class="section-info">
-                <div class="section-name">Section C — True / False</div>
-                <div class="section-meta">10 questions · 1 mark each · 10 total marks</div>
-              </div>
-              <div class="section-actions">
-                <button class="btn btn-secondary btn-sm"><i class="ti ti-pencil"></i>Edit</button>
-                <button class="btn btn-secondary btn-sm" style="color:var(--c-danger-500);border-color:var(--c-danger-100);"><i class="ti ti-trash"></i></button>
-              </div>
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding:12px 14px;background:var(--c-gray-50);border-radius:var(--radius-lg);border:1px solid var(--c-border);">
-            <div style="font-size:13px;color:var(--c-gray-600);">Marks tally: <strong>40 + 30 + 10 = 80</strong></div>
-            <div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--c-success-700);"><i class="ti ti-check"></i>Matches total marks</div>
           </div>
         </div>
-
-        <!-- STEP 4 PREVIEW: Rules (shown collapsed) -->
-        <div class="form-section" style="opacity:.5;pointer-events:none;">
-          <div class="form-section-title"><i class="ti ti-shield"></i>Exam Rules <span style="font-size:11px;font-weight:400;color:var(--c-gray-500);margin-left:8px;">(Step 4 — not yet)</span></div>
-          <div class="rules-grid">
-            <div class="toggle-row">
-              <div><div class="toggle-label">Allow Backtrack</div><div class="toggle-sub">Students can revisit answered questions</div></div>
-              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-            </div>
-            <div class="toggle-row">
-              <div><div class="toggle-label">Mark for Review</div><div class="toggle-sub">Enable flag for review button</div></div>
-              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-            </div>
-            <div class="toggle-row">
-              <div><div class="toggle-label">Require Fullscreen</div><div class="toggle-sub">Force fullscreen mode during exam</div></div>
-              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-            </div>
-            <div class="toggle-row">
-              <div><div class="toggle-label">Enable Proctoring</div><div class="toggle-sub">Face, browser, audio monitoring</div></div>
-              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-            </div>
-            <div class="toggle-row">
-              <div><div class="toggle-label">Camera Required</div><div class="toggle-sub">Block exam if camera unavailable</div></div>
-              <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
-            </div>
-            <div class="toggle-row">
-              <div><div class="toggle-label">Microphone Required</div><div class="toggle-sub">Block exam if mic unavailable</div></div>
-              <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
-            </div>
-          </div>
-          <div class="form-row" style="margin-top:16px;">
-            <div class="form-group">
-              <label class="form-label">Max Tab Switches Allowed</label>
-              <input class="form-control" type="number" value="3">
-              <span class="form-hint">Exam auto-submits if exceeded</span>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Auto-save Interval (seconds)</label>
-              <input class="form-control" type="number" value="30">
-            </div>
-          </div>
-        </div>
-
-        <!-- WIZARD FOOTER -->
-        <div class="wizard-footer">
-          <div class="wizard-footer-info">Step 2 of 6 · Sections</div>
-          <div style="display:flex;gap:10px;">
-            <button class="btn btn-secondary" onclick="goBack()"><i class="ti ti-arrow-left"></i>Back</button>
-            <button class="btn btn-primary" onclick="goNext()">Continue to Questions<i class="ti ti-arrow-right"></i></button>
-          </div>
-        </div>
-
-      </div><!-- /wizard-body -->
+      )}
     </div>
-  </div>
-</div>
+  );
+}
 
-<!-- ADD SECTION MODAL -->
-<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:none;align-items:center;justify-content:center;padding:24px;" id="section-modal" onclick="if(event.target===this)document.getElementById('section-modal').style.display='none'">
-  <div style="background:#fff;border-radius:12px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.2);">
-    <div style="padding:22px 24px;border-bottom:1px solid var(--c-border);display:flex;align-items:center;justify-content:space-between;">
-      <div style="font-size:16px;font-weight:700;color:var(--c-gray-900);">Add Exam Section</div>
-      <button onclick="document.getElementById('section-modal').style.display='none'" style="width:32px;height:32px;border-radius:var(--radius-lg);border:1px solid var(--c-border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;color:var(--c-gray-600);"><i class="ti ti-x"></i></button>
-    </div>
-    <div style="padding:24px;">
-      <div class="form-group" style="margin-bottom:16px;">
-        <label class="form-label">Section Title <span style="color:var(--c-danger-500)">*</span></label>
-        <input class="form-control" placeholder="e.g. Section A — MCQ">
+function StepQuestions({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  return (
+    <div className="form-section">
+      <div className="form-section-title">
+        <i className="ti ti-books" /> Question Selection
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-        <div class="form-group">
-          <label class="form-label">Question Count</label>
-          <input class="form-control" type="number" value="10">
+      <p style={{ fontSize: 13, color: "var(--c-gray-600)", marginBottom: 20 }}>
+        Select questions for each section from your question bank.
+      </p>
+
+      <div
+        style={{
+          padding: 32,
+          textAlign: "center",
+          background: "var(--c-gray-50)",
+          borderRadius: "var(--radius-lg)",
+          border: "2px dashed var(--c-border)",
+        }}
+      >
+        <i className="ti ti-books" style={{ fontSize: 40, color: "var(--c-gray-300)", marginBottom: 12 }} />
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--c-gray-600)", marginBottom: 4 }}>
+          Question Selection Coming Soon
         </div>
-        <div class="form-group">
-          <label class="form-label">Marks per Question</label>
-          <input class="form-control" type="number" value="2">
+        <div style={{ fontSize: 13, color: "var(--c-gray-500)", marginBottom: 16 }}>
+          Pick questions from your bank to create the exam paper. You can filter by topic, type, and difficulty.
         </div>
+        <button className="btn btn-primary" disabled>
+          <i className="ti ti-plus" /> Browse Question Bank
+        </button>
       </div>
-      <div class="form-group" style="margin-bottom:20px;">
-        <label class="form-label">Question Type</label>
-        <select class="form-control"><option>MCQ (Single Answer)</option><option>MSQ (Multiple Answer)</option><option>True / False</option><option>Short Answer</option><option>Long Answer</option></select>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;">
-        <button class="btn btn-secondary" onclick="document.getElementById('section-modal').style.display='none'">Cancel</button>
-        <button class="btn btn-primary"><i class="ti ti-plus"></i>Add Section</button>
+
+      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
+        <button className="btn btn-secondary" onClick={onBack}>
+          <i className="ti ti-arrow-left" /> Back
+        </button>
+        <button className="btn btn-primary" onClick={onNext}>
+          Next: Rules <i className="ti ti-arrow-right" />
+        </button>
       </div>
     </div>
-  </div>
-</div>`;
+  );
+}
 
-const script = `function addSection(){document.getElementById('section-modal').style.display='flex';}
-function goNext(){alert('Proceeding to Question Selection...');}
-function goBack(){location.href='/faculty/dashboard';}
-function showStep1(){
-  document.getElementById('step1-summary').closest('.form-section').style.display='none';
-  document.getElementById('step1-form').style.display='block';
-}`;
+function StepRules({
+  rules,
+  setRules,
+  onBack,
+  onNext,
+}: {
+  rules: RuleDraft;
+  setRules: (r: RuleDraft) => void;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const set = <K extends keyof RuleDraft>(key: K, val: RuleDraft[K]) =>
+    setRules({ ...rules, [key]: val });
 
+  return (
+    <div className="form-section">
+      <div className="form-section-title">
+        <i className="ti ti-shield" /> Exam Rules
+      </div>
+
+      <div className="rules-grid">
+        {[
+          { key: "allow_backtrack" as const, label: "Allow Backtrack", sub: "Students can revisit answered questions" },
+          { key: "mark_for_review" as const, label: "Mark for Review", sub: "Enable flag for review button" },
+          { key: "require_fullscreen" as const, label: "Require Fullscreen", sub: "Force fullscreen mode during exam" },
+          { key: "enable_proctoring" as const, label: "Enable Proctoring", sub: "Face, browser, audio monitoring" },
+          { key: "camera_required" as const, label: "Camera Required", sub: "Block exam if camera unavailable" },
+          { key: "microphone_required" as const, label: "Microphone Required", sub: "Block exam if mic unavailable" },
+        ].map(({ key, label, sub }) => (
+          <div className="toggle-row" key={key}>
+            <div>
+              <div className="toggle-label">{label}</div>
+              <div className="toggle-sub">{sub}</div>
+            </div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={rules[key]}
+                onChange={(e) => set(key, e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        ))}
+      </div>
+
+      <div className="form-row" style={{ marginTop: 16 }}>
+        <div className="form-group">
+          <label className="form-label">Max Tab Switches Allowed</label>
+          <input
+            className="form-control"
+            type="number"
+            value={rules.max_tab_switches}
+            min={1}
+            onChange={(e) => set("max_tab_switches", Number(e.target.value))}
+          />
+          <span className="form-hint">Exam auto-submits if exceeded</span>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Auto-save Interval (seconds)</label>
+          <input
+            className="form-control"
+            type="number"
+            value={rules.auto_save_interval_seconds}
+            min={5}
+            onChange={(e) => set("auto_save_interval_seconds", Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
+        <button className="btn btn-secondary" onClick={onBack}>
+          <i className="ti ti-arrow-left" /> Back
+        </button>
+        <button className="btn btn-primary" onClick={onNext}>
+          Next: Schedule <i className="ti ti-arrow-right" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepSchedule({
+  schedule,
+  setSchedule,
+  departments,
+  onBack,
+  onNext,
+}: {
+  schedule: ScheduleDraft;
+  setSchedule: (s: ScheduleDraft) => void;
+  departments: Array<{ id: string; name: string; code: string }>;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const set = <K extends keyof ScheduleDraft>(key: K, val: ScheduleDraft[K]) =>
+    setSchedule({ ...schedule, [key]: val });
+
+  const toggleDept = (id: string) => {
+    const has = schedule.department_ids.includes(id);
+    set(
+      "department_ids",
+      has
+        ? schedule.department_ids.filter((d) => d !== id)
+        : [...schedule.department_ids, id],
+    );
+  };
+
+  return (
+    <div className="form-section">
+      <div className="form-section-title">
+        <i className="ti ti-calendar-event" /> Exam Schedule
+      </div>
+
+      <div className="form-row form-row-full">
+        <div className="form-group">
+          <label className="form-label">
+            Start Time <span>*</span>
+          </label>
+          <input
+            className="form-control"
+            type="datetime-local"
+            value={schedule.start_time}
+            onChange={(e) => set("start_time", e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="form-row form-row-full">
+        <div className="form-group">
+          <label className="form-label">
+            End Time <span>*</span>
+          </label>
+          <input
+            className="form-control"
+            type="datetime-local"
+            value={schedule.end_time}
+            onChange={(e) => set("end_time", e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Target Departments</label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+          {departments.map((d) => (
+            <span
+              key={d.id}
+              className={`filter-chip ${schedule.department_ids.includes(d.id) ? "active" : ""}`}
+              onClick={() => toggleDept(d.id)}
+            >
+              {d.code || d.name}
+            </span>
+          ))}
+        </div>
+        {schedule.department_ids.length === 0 && (
+          <span className="form-hint">Select at least one department to make the exam available.</span>
+        )}
+      </div>
+
+      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
+        <button className="btn btn-secondary" onClick={onBack}>
+          <i className="ti ti-arrow-left" /> Back
+        </button>
+        <button className="btn btn-primary" onClick={onNext}>
+          Next: Preview <i className="ti ti-arrow-right" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepPreview({
+  draft,
+  sections,
+  rules,
+  schedule,
+  departments,
+  courses,
+  isSaving,
+  onBack,
+  onSave,
+}: {
+  draft: ExamDraft;
+  sections: SectionDraft[];
+  rules: RuleDraft;
+  schedule: ScheduleDraft;
+  departments: Array<{ id: string; name: string; code: string }>;
+  courses: Array<{ id: string; name: string; code: string }>;
+  isSaving: boolean;
+  onBack: () => void;
+  onSave: () => void;
+}) {
+  const course = courses.find((c) => c.id === draft.course_id);
+  const totalQ = sections.reduce((s, sec) => s + sec.question_count, 0);
+  const totalM = sections.reduce((s, sec) => s + sec.question_count * sec.marks_per_question, 0);
+  const deptNames = schedule.department_ids
+    .map((id) => departments.find((d) => d.id === id)?.name)
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <div className="form-section">
+      <div className="form-section-title">
+        <i className="ti ti-eye" /> Exam Preview
+      </div>
+
+      <div
+        style={{
+          background: "var(--c-primary-50)",
+          border: "1px solid var(--c-primary-200)",
+          borderRadius: "var(--radius-lg)",
+          padding: 20,
+          marginBottom: 20,
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--c-primary-800)", marginBottom: 12 }}>
+          {draft.title || "Untitled Exam"}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+          <div>
+            <div className="form-label">Course</div>
+            <div style={{ fontWeight: 600 }}>{course ? `${course.code} · ${course.name}` : "-"}</div>
+          </div>
+          <div>
+            <div className="form-label">Duration</div>
+            <div style={{ fontWeight: 600 }}>{draft.duration_minutes} minutes</div>
+          </div>
+          <div>
+            <div className="form-label">Total Marks</div>
+            <div style={{ fontWeight: 600 }}>{totalM || draft.total_marks}</div>
+          </div>
+          <div>
+            <div className="form-label">Pass Marks</div>
+            <div style={{ fontWeight: 600 }}>{draft.pass_marks}</div>
+          </div>
+          <div>
+            <div className="form-label">Questions</div>
+            <div style={{ fontWeight: 600 }}>{totalQ}</div>
+          </div>
+          <div>
+            <div className="form-label">Status</div>
+            <span className="badge badge-draft">
+              <span className="badge-dot" /> DRAFT
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div className="form-label" style={{ marginBottom: 8 }}>Sections ({sections.length})</div>
+        {sections.length === 0 && (
+          <div style={{ fontSize: 13, color: "var(--c-gray-500)" }}>No sections defined.</div>
+        )}
+        {sections.map((sec, idx) => (
+          <div
+            key={idx}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              padding: "8px 12px",
+              borderBottom: "1px solid var(--c-gray-100)",
+              fontSize: 13,
+            }}
+          >
+            <span style={{ fontWeight: 500 }}>{sec.title}</span>
+            <span style={{ color: "var(--c-gray-600)" }}>
+              {sec.question_count} Q × {sec.marks_per_question} marks = {sec.question_count * sec.marks_per_question}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div className="form-label" style={{ marginBottom: 8 }}>Schedule</div>
+        {schedule.start_time ? (
+          <div style={{ fontSize: 13 }}>
+            {new Date(schedule.start_time).toLocaleString()} → {new Date(schedule.end_time).toLocaleString()}
+            {deptNames && <span style={{ color: "var(--c-gray-500)", marginLeft: 8 }}>· {deptNames}</span>}
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: "var(--c-gray-500)" }}>Not scheduled yet</div>
+        )}
+      </div>
+
+      <div>
+        <div className="form-label" style={{ marginBottom: 4 }}>Rules</div>
+        <div style={{ fontSize: 13, color: "var(--c-gray-600)" }}>
+          {rules.allow_backtrack && "· Backtrack allowed"} {rules.mark_for_review && "· Mark for review"}{" "}
+          {rules.require_fullscreen && "· Fullscreen required"} {rules.enable_proctoring && "· Proctoring enabled"}{" "}
+          {!rules.allow_backtrack && !rules.mark_for_review && !rules.require_fullscreen && !rules.enable_proctoring && "Default rules"}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between" }}>
+        <button className="btn btn-secondary" onClick={onBack}>
+          <i className="ti ti-arrow-left" /> Back
+        </button>
+        <button className="btn btn-primary" onClick={onSave} disabled={isSaving}>
+          <i className={`ti ${isSaving ? "ti-loader spinner" : "ti-device-floppy"}`} />
+          {isSaving ? "Saving…" : "Create Exam"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Page ─────────────────────────────────────────────── */
 export default function CreateExam() {
-  return <LegacyPage css={css} html={html} script={script} />;
+  const navigate = useNavigate();
+  const { data: portal } = useFacultyDashboard();
+  const courses = portal?.courses ?? [];
+  const departments = portal?.departments ?? [];
+
+  const [step, setStep] = useState(0);
+  const [examDraft, setExamDraft] = useState<ExamDraft>({
+    title: "",
+    course_id: "",
+    exam_type: "MID_SEMESTER",
+    duration_minutes: 120,
+    total_marks: 80,
+    pass_marks: 32,
+    instructions: "",
+    shuffle_questions: true,
+    shuffle_options: true,
+  });
+  const [sections, setSections] = useState<SectionDraft[]>([]);
+  const [rules, setRules] = useState<RuleDraft>({
+    allow_backtrack: true,
+    mark_for_review: true,
+    require_fullscreen: true,
+    enable_proctoring: true,
+    camera_required: true,
+    microphone_required: false,
+    max_tab_switches: 3,
+    auto_save_interval_seconds: 30,
+  });
+  const [schedule, setSchedule] = useState<ScheduleDraft>({
+    start_time: "",
+    end_time: "",
+    department_ids: [],
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const createExamMut = useCreateExam();
+  const createSectionMut = useCreateSection();
+  const upsertRulesMut = useUpsertRules();
+  const createScheduleMut = useCreateSchedule();
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      // 1. Create exam
+      const exam = await createExamMut.mutateAsync({
+        title: examDraft.title,
+        course_id: examDraft.course_id,
+        exam_type: examDraft.exam_type,
+        duration_minutes: examDraft.duration_minutes,
+        total_marks: examDraft.total_marks,
+        pass_marks: examDraft.pass_marks,
+        instructions: examDraft.instructions,
+        shuffle_questions: examDraft.shuffle_questions,
+        shuffle_options: examDraft.shuffle_options,
+        status: "DRAFT",
+        semester: new Date().getFullYear().toString(),
+      });
+      const examId = (exam as any).id ?? (exam as any).exam_id;
+
+      // 2. Create sections
+      for (const sec of sections) {
+        await createSectionMut.mutateAsync({
+          exam_id: examId,
+          section_title: sec.title,
+          question_type: sec.question_type,
+          question_count: sec.question_count,
+          marks_per_question: sec.marks_per_question,
+          total_marks: sec.question_count * sec.marks_per_question,
+        });
+      }
+
+      // 3. Upsert rules
+      await upsertRulesMut.mutateAsync({
+        exam_id: examId,
+        ...rules,
+      });
+
+      // 4. Create schedule if times provided
+      if (schedule.start_time && schedule.end_time) {
+        for (const deptId of schedule.department_ids.length > 0
+          ? schedule.department_ids
+          : [""]) {
+          await createScheduleMut.mutateAsync({
+            exam_id: examId,
+            start_time: new Date(schedule.start_time).toISOString(),
+            end_time: new Date(schedule.end_time).toISOString(),
+            ...(deptId ? { department_id: deptId } : {}),
+          });
+        }
+      }
+
+      navigate("/faculty/dashboard");
+    } catch {
+      // Error handled by react-query
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const nextStep = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  const prevStep = () => setStep((s) => Math.max(s - 1, 0));
+
+  const renderStep = () => {
+    switch (step) {
+      case 0:
+        return (
+          <StepBasicInfo
+            draft={examDraft}
+            setDraft={setExamDraft}
+            courses={courses}
+            onNext={nextStep}
+          />
+        );
+      case 1:
+        return (
+          <StepSections
+            sections={sections}
+            setSections={setSections}
+            onBack={prevStep}
+            onNext={nextStep}
+          />
+        );
+      case 2:
+        return <StepQuestions onBack={prevStep} onNext={nextStep} />;
+      case 3:
+        return (
+          <StepRules
+            rules={rules}
+            setRules={setRules}
+            onBack={prevStep}
+            onNext={nextStep}
+          />
+        );
+      case 4:
+        return (
+          <StepSchedule
+            schedule={schedule}
+            setSchedule={setSchedule}
+            departments={departments}
+            onBack={prevStep}
+            onNext={nextStep}
+          />
+        );
+      case 5:
+        return (
+          <StepPreview
+            draft={examDraft}
+            sections={sections}
+            rules={rules}
+            schedule={schedule}
+            departments={departments}
+            courses={courses}
+            isSaving={isSaving}
+            onBack={prevStep}
+            onSave={handleSave}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <FacultyLayout activePage="create-exam">
+      <div className="page-header" style={{ marginBottom: 24 }}>
+        <div className="page-header-left">
+          <div className="page-title">Create New Exam</div>
+          <div className="page-subtitle">
+            Step {step + 1} of {STEPS.length} · {STEPS[step]}
+          </div>
+        </div>
+        <div className="page-header-actions">
+          <button className="btn btn-secondary btn-sm" onClick={() => navigate("/faculty/dashboard")}>
+            <i className="ti ti-device-floppy" /> Save Draft
+          </button>
+        </div>
+      </div>
+
+      {/* Wizard Steps */}
+      <div className="wizard-steps">
+        {STEPS.map((label, i) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 100 }}>
+            <div
+              className={`step-item ${i < step ? "done" : ""} ${i === step ? "active" : ""}`}
+              style={{ cursor: i < step ? "pointer" : "default" }}
+              onClick={() => i < step && setStep(i)}
+            >
+              <div className="step-num">
+                {i < step ? <i className="ti ti-check" style={{ fontSize: 12 }} /> : i + 1}
+              </div>
+              <div className="step-label">{label}</div>
+            </div>
+            {i < STEPS.length - 1 && <div className={`step-connector ${i < step ? "done" : ""}`} />}
+          </div>
+        ))}
+      </div>
+
+      <div className="wizard-body">{renderStep()}</div>
+    </FacultyLayout>
+  );
 }

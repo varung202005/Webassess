@@ -16,7 +16,12 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str
 
     # CORS
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ]
 
     # Proctoring
     INTEGRITY_SCORE_PENALTIES: dict = {
