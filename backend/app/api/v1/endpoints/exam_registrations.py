@@ -68,7 +68,7 @@ async def register_for_exam(
     # Check schedule exists and is published
     sched = (
         supabase.table("exam_schedules")
-        .select("id, is_published, end_time")
+        .select("*, exams(status, title)")
         .eq("id", schedule_id)
         .single()
         .execute()
@@ -77,9 +77,12 @@ async def register_for_exam(
         raise HTTPException(status_code=404, detail="Schedule not found")
     if not sched.data["is_published"]:
         raise HTTPException(status_code=400, detail="Exam schedule is not published yet")
+    if sched.data.get("exams", {}).get("status") != "PUBLISHED":
+        raise HTTPException(status_code=400, detail="Exam is not active")
 
-    end_time = datetime.fromisoformat(sched.data["end_time"])
-    if end_time < datetime.now(timezone.utc):
+    deadline_value = sched.data.get("registration_deadline") or sched.data["start_time"]
+    registration_deadline = datetime.fromisoformat(deadline_value)
+    if registration_deadline < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Exam registration window has closed")
 
     # Check not already registered
@@ -91,15 +94,85 @@ async def register_for_exam(
         .execute()
     )
     if existing.data:
-        raise HTTPException(status_code=409, detail="Already registered for this exam")
+        existing_registration = (
+            supabase.table("exam_registrations")
+            .select("*")
+            .eq("id", existing.data[0]["id"])
+            .single()
+            .execute()
+            .data
+        )
+        if existing_registration["status"] != "CANCELLED":
+            raise HTTPException(status_code=409, detail="Already registered for this exam")
+        result = (
+            supabase.table("exam_registrations")
+            .update({"status": "REGISTERED"})
+            .eq("id", existing_registration["id"])
+            .execute()
+        )
+    else:
+        result = supabase.table("exam_registrations").insert({
+            "exam_schedule_id": schedule_id,
+            "student_id": student_id,
+            "status": "REGISTERED",
+        }).execute()
 
-    result = supabase.table("exam_registrations").insert({
-        "exam_schedule_id": schedule_id,
-        "student_id": student_id,
-        "status": "REGISTERED",
+    registration = result.data[0]
+    supabase.table("notifications").insert({
+        "user_id": student_id,
+        "type": "REGISTRATION_SUCCESS",
+        "title": "Exam registration confirmed",
+        "body": f"You are registered for {sched.data.get('exams', {}).get('title', 'the exam')}.",
+        "metadata": {"exam_schedule_id": schedule_id},
     }).execute()
+    return registration
 
-    return result.data[0]
+
+@router.delete("/{registration_id}")
+async def cancel_registration(
+    registration_id: UUID,
+    current_user: dict = Depends(require_student),
+):
+    """Student cancels a registration before its registration deadline."""
+    supabase = get_supabase_admin()
+    registration = (
+        supabase.table("exam_registrations")
+        .select("*, exam_schedules(*, exams(title))")
+        .eq("id", str(registration_id))
+        .eq("student_id", current_user["user_id"])
+        .single()
+        .execute()
+    )
+    if not registration.data:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if registration.data["status"] != "REGISTERED":
+        raise HTTPException(status_code=400, detail="Only active registrations can be cancelled")
+    schedule = registration.data["exam_schedules"]
+    deadline = datetime.fromisoformat(
+        schedule.get("registration_deadline") or schedule["start_time"]
+    )
+    if datetime.now(timezone.utc) > deadline:
+        raise HTTPException(status_code=400, detail="Registration cancellation deadline has passed")
+    attempt = (
+        supabase.table("exam_attempts")
+        .select("id")
+        .eq("exam_schedule_id", registration.data["exam_schedule_id"])
+        .eq("student_id", current_user["user_id"])
+        .execute()
+    )
+    if attempt.data:
+        raise HTTPException(status_code=409, detail="Cannot cancel after an attempt has started")
+    supabase.table("exam_registrations").update({
+        "status": "CANCELLED",
+    }).eq("id", str(registration_id)).execute()
+    supabase.table("notifications").insert({
+        "user_id": current_user["user_id"],
+        "type": "REGISTRATION_CANCELLED",
+        "title": "Exam registration cancelled",
+        "body": f"Your registration for {schedule.get('exams', {}).get('title', 'the exam')} was cancelled.",
+        "metadata": {"exam_schedule_id": registration.data["exam_schedule_id"]},
+    }).execute()
+    return {"cancelled": True}
 
 
 @router.patch("/{registration_id}/status", dependencies=[Depends(require_faculty)])

@@ -32,6 +32,7 @@ class ExamCreate(BaseModel):
     shuffle_questions: bool = False
     shuffle_options: bool = False
     instructions: Optional[str] = None
+    semester: Optional[int] = None
 
     @model_validator(mode="after")
     def validate_marks(self):
@@ -48,6 +49,7 @@ class ExamUpdate(BaseModel):
     shuffle_questions: Optional[bool] = None
     shuffle_options: Optional[bool] = None
     instructions: Optional[str] = None
+    semester: Optional[int] = None
 
 
 class ExamQuestionAdd(BaseModel):
@@ -165,7 +167,10 @@ async def change_exam_status(exam_id: UUID, body: StatusTransition):
 
 
 @router.get("/{exam_id}/questions")
-async def get_exam_questions(exam_id: UUID, _: dict = Depends(get_current_user_with_roles)):
+async def get_exam_questions(
+    exam_id: UUID,
+    current_user: dict = Depends(get_current_user_with_roles),
+):
     """
     Returns all questions for an exam with effective marks.
     This is the key query from Phase 4 of the DB design.
@@ -186,6 +191,9 @@ async def get_exam_questions(exam_id: UUID, _: dict = Depends(get_current_user_w
     )
     # Compute effective_marks in Python (COALESCE equivalent)
     for row in result.data:
+        if "Student" in current_user["roles"]:
+            for option in row.get("questions", {}).get("question_options", []):
+                option.pop("is_correct", None)
         row["effective_marks"] = (
             row["marks_override"]
             if row["marks_override"] is not None

@@ -1,6 +1,7 @@
 import { useState, FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
-import { useAuthStore } from "../../store/authStore";
+import { useAuthStore, type Role } from "../../store/authStore";
 
 const css = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 .auth-page{display:flex;min-height:100vh;width:100%;font-family:var(--font);background:#F7F8FA;}
@@ -99,9 +100,13 @@ button{font-family:var(--font);cursor:pointer;}
 
 /* Banners */
 .error-banner { background: var(--c-danger-100); border: 1px solid #FCA5A5; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: var(--c-danger-700); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-.success-banner { background: #ECFDF5; border: 1px solid #6EE7B7; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #047857; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }`;
+.success-banner { background: #ECFDF5; border: 1px solid #6EE7B7; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #047857; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+@media(max-width:900px){.auth-left{width:360px;padding:38px 32px}.auth-right{padding:32px 24px}}
+@media(max-width:680px){.auth-page{display:block;background:#f7f8fa}.auth-left{display:none}.auth-right{min-height:100vh;width:100%;padding:22px 16px}.auth-form-box{max-width:440px;padding:26px 20px;border-radius:18px}.auth-form-title{font-size:21px}.form-row-2{justify-content:flex-end}}
+@media(max-width:380px){.auth-right{padding:12px}.auth-form-box{padding:22px 16px}.auth-tabs{gap:3px}}`;
 
 export default function Login() {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -114,6 +119,31 @@ export default function Login() {
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveRole = useAuthStore((s) => s.setActiveRole);
+  const apiUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+  const bootstrapPortalSession = async (token: string) => {
+    const response = await fetch(`${apiUrl}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) throw new Error("Your portal profile or role is not configured.");
+    const payload = await response.json() as {
+      user: { id: string; full_name?: string; email: string };
+      roles: string[];
+    };
+    const roles = payload.roles
+      .map((role) => role.toUpperCase())
+      .filter((role): role is Role => ["STUDENT", "FACULTY", "PROCTOR", "ADMIN"].includes(role));
+    if (!roles.length) throw new Error("No portal role is assigned to this account.");
+    const role = roles[0];
+    setSession({
+      id: payload.user.id,
+      fullName: payload.user.full_name ?? "",
+      email: payload.user.email,
+      roles,
+    }, token);
+    setActiveRole(role);
+    navigate(`/${role.toLowerCase()}/dashboard`, { replace: true });
+  };
 
   const switchMode = (next: "login" | "signup") => {
     setMode(next);
@@ -144,18 +174,7 @@ export default function Login() {
           throw new Error("Login succeeded but no session was returned.");
         }
 
-        setSession(
-          {
-            id: supaUser.id,
-            fullName: (supaUser.user_metadata?.full_name as string) ?? "",
-            email: supaUser.email ?? email,
-            roles: ["STUDENT"],
-          },
-          session.access_token
-        );
-        setActiveRole("STUDENT");
-
-        window.location.href = "/student/dashboard";
+        await bootstrapPortalSession(session.access_token);
       } else {
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -170,17 +189,7 @@ export default function Login() {
         if (error) throw error;
 
         if (data.session && data.user) {
-          setSession(
-            {
-              id: data.user.id,
-              fullName,
-              email: data.user.email ?? email,
-              roles: ["STUDENT"],
-            },
-            data.session.access_token
-          );
-          setActiveRole("STUDENT");
-          window.location.href = "/student/dashboard";
+          await bootstrapPortalSession(data.session.access_token);
           return;
         }
 
@@ -195,6 +204,22 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const sendPasswordReset = async () => {
+    setError(null);
+    setSuccess(null);
+    if (!email) {
+      setError("Enter your email address first.");
+      return;
+    }
+    setLoading(true);
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/login`,
+    });
+    setLoading(false);
+    if (resetError) setError(resetError.message);
+    else setSuccess("Password reset instructions have been sent to your email.");
   };
 
   return (
@@ -315,7 +340,9 @@ export default function Login() {
                   required
                   minLength={6}
                 />
-                <i className="ti ti-eye" onClick={() => setShowPwd((s) => !s)}></i>
+                <button type="button" aria-label={showPwd ? "Hide password" : "Show password"} onClick={() => setShowPwd((s) => !s)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: 0, background: "transparent", color: "var(--c-gray-400)" }}>
+                  <i className={`ti ${showPwd ? "ti-eye-off" : "ti-eye"}`}></i>
+                </button>
               </div>
             </div>
 
@@ -336,10 +363,7 @@ export default function Login() {
 
             {mode === "login" && (
               <div className="form-row-2">
-                <label className="remember-label">
-                  <input type="checkbox" /> Remember me
-                </label>
-                <button type="button" className="forgot-link">Forgot password?</button>
+                <button type="button" className="forgot-link" onClick={sendPasswordReset} disabled={loading}>Forgot password?</button>
               </div>
             )}
 

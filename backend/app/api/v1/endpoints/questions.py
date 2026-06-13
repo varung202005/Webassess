@@ -65,7 +65,7 @@ async def list_questions(
     question_type: Optional[QuestionType] = None,
     difficulty: Optional[Difficulty] = None,
     is_active: Optional[bool] = True,
-    _: dict = Depends(get_current_user_with_roles),
+    _: dict = Depends(require_faculty),
 ):
     """List questions with optional filters. Faculty/Admin see all; students don't call this."""
     supabase = get_supabase_admin()
@@ -84,7 +84,7 @@ async def list_questions(
 
 
 @router.get("/{question_id}")
-async def get_question(question_id: UUID, _: dict = Depends(get_current_user_with_roles)):
+async def get_question(question_id: UUID, _: dict = Depends(require_faculty)):
     supabase = get_supabase_admin()
     result = (
         supabase.table("questions")

@@ -24,15 +24,15 @@ async def get_my_notifications(
     return query.order("created_at", desc=True).execute().data
 
 
-@router.patch("/{notification_id}/read")
-async def mark_as_read(notification_id: UUID, current_user: dict = Depends(get_current_user_with_roles)):
-    supabase = get_supabase_admin()
-    supabase.table("notifications").update({"is_read": True}).eq("id", str(notification_id)).eq("user_id", current_user["user_id"]).execute()
-    return {"marked": True}
-
-
 @router.patch("/read-all")
 async def mark_all_read(current_user: dict = Depends(get_current_user_with_roles)):
     supabase = get_supabase_admin()
     supabase.table("notifications").update({"is_read": True}).eq("user_id", current_user["user_id"]).eq("is_read", False).execute()
+    return {"marked": True}
+
+
+@router.patch("/{notification_id}/read")
+async def mark_as_read(notification_id: UUID, current_user: dict = Depends(get_current_user_with_roles)):
+    supabase = get_supabase_admin()
+    supabase.table("notifications").update({"is_read": True}).eq("id", str(notification_id)).eq("user_id", current_user["user_id"]).execute()
     return {"marked": True}

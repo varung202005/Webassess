@@ -8,12 +8,19 @@ import StudentAvailableExams from "./pages/student/AvailableExams";
 import StudentRegistered from "./pages/student/Registered";
 import StudentHistory from "./pages/student/History";
 import StudentResults from "./pages/student/Results";
+import StudentReEvaluation from "./pages/student/ReEvaluation";
+import StudentNotifications from "./pages/student/Notifications";
+import StudentProfile from "./pages/student/Profile";
 
 import FacultyDashboard from "./pages/faculty/Dashboard";
 import FacultyQuestionBank from "./pages/faculty/QuestionBank";
 import FacultyCreateExam from "./pages/faculty/CreateExam";
 import FacultyEvaluation from "./pages/faculty/Evaluation";
 import FacultyAnalytics from "./pages/faculty/Analytics";
+import FacultySchedules from "./pages/faculty/Schedules";
+import FacultyReevaluations from "./pages/faculty/Reevaluations";
+import FacultyNotificationsPage from "./pages/faculty/NotificationsPage";
+import FacultyProfile from "./pages/faculty/Profile";
 
 import ProctorDashboard from "./pages/proctor/Dashboard";
 import AdminDashboard from "./pages/admin/Dashboard";
@@ -69,6 +76,18 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/student/re-evaluation"
+          element={<ProtectedRoute roles={["STUDENT"]}><StudentReEvaluation /></ProtectedRoute>}
+        />
+        <Route
+          path="/student/notifications"
+          element={<ProtectedRoute roles={["STUDENT"]}><StudentNotifications /></ProtectedRoute>}
+        />
+        <Route
+          path="/student/profile"
+          element={<ProtectedRoute roles={["STUDENT"]}><StudentProfile /></ProtectedRoute>}
+        />
 
         {/* Faculty */}
         <Route
@@ -111,6 +130,38 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/faculty/schedules"
+          element={
+            <ProtectedRoute roles={["FACULTY"]}>
+              <FacultySchedules />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/faculty/reevaluations"
+          element={
+            <ProtectedRoute roles={["FACULTY"]}>
+              <FacultyReevaluations />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/faculty/notifications"
+          element={
+            <ProtectedRoute roles={["FACULTY"]}>
+              <FacultyNotificationsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/faculty/profile"
+          element={
+            <ProtectedRoute roles={["FACULTY"]}>
+              <FacultyProfile />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Proctor */}
         <Route
@@ -134,7 +185,7 @@ export default function App() {
 
         {/* Exam (full-screen, no chrome) */}
         <Route
-          path="/exam/live"
+          path="/exam/live/:scheduleId"
           element={
             <ProtectedRoute roles={["STUDENT"]}>
               <LiveExam />

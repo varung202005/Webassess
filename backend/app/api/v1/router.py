@@ -20,6 +20,8 @@ from app.api.v1.endpoints import (
     notifications,
     audit_logs,
     admin,
+    student,
+    faculty,
 )
 
 api_router = APIRouter()
@@ -58,6 +60,12 @@ api_router.include_router(proctoring.router,            prefix="/proctoring",   
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 api_router.include_router(notifications.router,         prefix="/notifications",        tags=["Notifications"])
+
+# ── Student Portal ────────────────────────────────────────────────────────────
+api_router.include_router(student.router,               prefix="/student",              tags=["Student Portal"])
+
+# ── Faculty Portal ────────────────────────────────────────────────────────────
+api_router.include_router(faculty.router,               prefix="/faculty",              tags=["Faculty Portal"])
 
 # ── Admin / Audit ─────────────────────────────────────────────────────────────
 api_router.include_router(audit_logs.router,            prefix="/audit-logs",           tags=["Audit Logs"])
