@@ -5,20 +5,17 @@
  *  - Question Repository Overview (stats cards)
  *  - Exam Basic Info form (2-col grid)
  *  - Question Management (select existing / create new MCQ/MSQ/TRUE_FALSE)
- *  - PDF/DOCX import with AI extraction review
+ *  - PDF/DOCX import with text-based extraction (pdfplumber backend, no OCR)
  *  - Auto-generate exam from question pool
  *  - Exam rules + schedule
  *  - Preview & publish
  *
- * Question Bank standalone page is REMOVED — all question mgmt lives here.
- *
- * NOTE: Course is no longer a required concept in this flow.
- * - The Course selector has been removed from Exam Info.
- * - form.course_id is always "" and is sent to the backend as null.
- * - Question creation no longer requires a course_id.
+ * NOTE: Course is no longer required.
+ * - form.course_id is always "" and sent to the backend as null.
+ * - Question creation does not require a course_id.
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { PageState } from "../../features/faculty/components";
@@ -29,16 +26,15 @@ import type { Question } from "../../features/faculty/types";
 // ── Stepper steps ──────────────────────────────────────────────────────────
 const STEPS = [
   { id: "info",      label: "Exam Info",   icon: "ti-info-circle" },
-  { id: "questions", label: "Questions",   icon: "ti-list-check" },
+  { id: "questions", label: "Questions",   icon: "ti-list-check"  },
   { id: "rules",     label: "Rules",       icon: "ti-shield-check" },
-  { id: "schedule",  label: "Schedule",    icon: "ti-calendar" },
-  { id: "preview",   label: "Preview",     icon: "ti-eye" },
+  { id: "schedule",  label: "Schedule",    icon: "ti-calendar"    },
+  { id: "preview",   label: "Preview",     icon: "ti-eye"         },
 ];
 
-type Step = (typeof STEPS)[number]["id"];
-type QuestionType = "MCQ" | "MSQ" | "TRUE_FALSE";
-type Difficulty = "EASY" | "MEDIUM" | "HARD";
-type ImportStatus = "idle" | "uploading" | "extracting" | "review" | "saving";
+type QuestionType  = "MCQ" | "MSQ" | "TRUE_FALSE";
+type Difficulty    = "EASY" | "MEDIUM" | "HARD";
+type ImportStatus  = "idle" | "uploading" | "extracting" | "review" | "saving";
 
 interface ExtractedQuestion {
   id: string;
@@ -74,9 +70,9 @@ interface NewQuestion {
 }
 
 // ── Stat Card ──────────────────────────────────────────────────────────────
-function StatCard({ label, value, icon, color = "#8b1a1a" }: {
-  label: string; value: number | string; icon: string; color?: string;
-}) {
+function StatCard({
+  label, value, icon, color = "#8b1a1a",
+}: { label: string; value: number | string; icon: string; color?: string }) {
   return (
     <div className="repo-stat-card">
       <div className="repo-stat-icon" style={{ background: `${color}15`, color }}>
@@ -91,8 +87,10 @@ function StatCard({ label, value, icon, color = "#8b1a1a" }: {
 }
 
 // ── Repository Overview ────────────────────────────────────────────────────
-function RepositoryOverview({ portal }: { portal: ReturnType<typeof useFacultyDashboard>["data"] }) {
-  const qs = portal?.questionStats;
+function RepositoryOverview({
+  portal,
+}: { portal: ReturnType<typeof useFacultyDashboard>["data"] }) {
+  const qs     = portal?.questionStats;
   const byType = qs?.byType ?? {};
   return (
     <div className="repo-overview">
@@ -101,25 +99,28 @@ function RepositoryOverview({ portal }: { portal: ReturnType<typeof useFacultyDa
         <span className="section-sub">Your personal question bank — reuse across exams</span>
       </div>
       <div className="repo-stats-grid">
-        <StatCard label="Total Questions" value={qs?.total ?? 0}  icon="ti-books"        color="#8b1a1a" />
-        <StatCard label="MCQ"             value={byType.MCQ ?? 0} icon="ti-circle-dot"   color="#2563eb" />
-        <StatCard label="MSQ"             value={byType.MSQ ?? 0} icon="ti-checkbox"     color="#7c3aed" />
-        <StatCard label="True / False"    value={byType.TRUE_FALSE ?? 0} icon="ti-toggle-left" color="#059669" />
-        <StatCard label="Active"          value={qs?.active ?? 0} icon="ti-circle-check" color="#d97706" />
-        <StatCard label="Courses Covered" value={portal?.courses?.length ?? 0} icon="ti-book" color="#0891b2" />
+        <StatCard label="Total Questions"  value={qs?.total          ?? 0} icon="ti-books"        color="#8b1a1a" />
+        <StatCard label="MCQ"              value={byType.MCQ         ?? 0} icon="ti-circle-dot"   color="#2563eb" />
+        <StatCard label="MSQ"              value={byType.MSQ         ?? 0} icon="ti-checkbox"     color="#7c3aed" />
+        <StatCard label="True / False"     value={byType.TRUE_FALSE  ?? 0} icon="ti-toggle-left"  color="#059669" />
+        <StatCard label="Active"           value={qs?.active         ?? 0} icon="ti-circle-check" color="#d97706" />
+        <StatCard label="Courses Covered"  value={portal?.courses?.length ?? 0} icon="ti-book"   color="#0891b2" />
       </div>
     </div>
   );
 }
 
 // ── Stepper ────────────────────────────────────────────────────────────────
-function Stepper({ steps, current, onStep }: {
-  steps: typeof STEPS; current: number; onStep: (i: number) => void;
-}) {
+function Stepper({
+  steps, current, onStep,
+}: { steps: typeof STEPS; current: number; onStep: (i: number) => void }) {
   return (
     <div className="exam-stepper">
       {steps.map((s, i) => (
-        <div key={s.id} className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}>
+        <div
+          key={s.id}
+          className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}
+        >
           <button
             className="stepper-btn"
             onClick={() => i < current && onStep(i)}
@@ -140,16 +141,14 @@ function Stepper({ steps, current, onStep }: {
 // ── Step 1: Exam Info ──────────────────────────────────────────────────────
 function StepExamInfo({
   form, onChange,
-}: {
-  form: ExamForm;
-  onChange: (f: Partial<ExamForm>) => void;
-}) {
+}: { form: ExamForm; onChange: (f: Partial<ExamForm>) => void }) {
   return (
     <div className="step-panel">
       <div className="step-header">
         <h3>Basic Exam Information</h3>
         <p>Configure the core details of your exam. All fields marked * are required.</p>
       </div>
+
       <div className="form-grid-1col">
         <div className="form-field">
           <label>Exam Title *</label>
@@ -161,6 +160,7 @@ function StepExamInfo({
           />
         </div>
       </div>
+
       <div className="form-grid-2col">
         <div className="form-field">
           <label>Exam Type</label>
@@ -170,10 +170,11 @@ function StepExamInfo({
             onChange={(e) => onChange({ exam_type: e.target.value })}
           >
             {["MID_SEMESTER","END_SEMESTER","QUIZ","ASSIGNMENT","PRACTICE","PLACEMENT","ENTRANCE"].map((t) => (
-              <option key={t} value={t}>{t.replace("_", " ")}</option>
+              <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
             ))}
           </select>
         </div>
+
         <div className="form-field">
           <label>Duration (minutes) *</label>
           <input
@@ -182,6 +183,7 @@ function StepExamInfo({
             onChange={(e) => onChange({ duration_minutes: +e.target.value })}
           />
         </div>
+
         <div className="form-field">
           <label>Total Marks *</label>
           <input
@@ -190,6 +192,7 @@ function StepExamInfo({
             onChange={(e) => onChange({ total_marks: +e.target.value })}
           />
         </div>
+
         <div className="form-field">
           <label>Pass Marks *</label>
           <input
@@ -198,28 +201,33 @@ function StepExamInfo({
             onChange={(e) => onChange({ pass_marks: +e.target.value })}
           />
         </div>
+
         <div className="form-field">
           <label>&nbsp;</label>
           <div className="checkbox-group">
             <label className="checkbox-label">
-              <input type="checkbox" checked={form.shuffle_questions}
-                onChange={(e) => onChange({ shuffle_questions: e.target.checked })} />
+              <input
+                type="checkbox" checked={form.shuffle_questions}
+                onChange={(e) => onChange({ shuffle_questions: e.target.checked })}
+              />
               Shuffle Questions
             </label>
             <label className="checkbox-label">
-              <input type="checkbox" checked={form.shuffle_options}
-                onChange={(e) => onChange({ shuffle_options: e.target.checked })} />
+              <input
+                type="checkbox" checked={form.shuffle_options}
+                onChange={(e) => onChange({ shuffle_options: e.target.checked })}
+              />
               Shuffle Options
             </label>
           </div>
         </div>
       </div>
+
       <div className="form-field">
         <label>Instructions for Students</label>
         <textarea
-          className="form-textarea"
-          rows={4}
-          placeholder="e.g. All questions are compulsory. Each MCQ carries 1 mark. Negative marking of 0.25 applies..."
+          className="form-textarea" rows={4}
+          placeholder="e.g. All questions are compulsory. Each MCQ carries 1 mark. Negative marking of 0.25 applies…"
           value={form.instructions}
           onChange={(e) => onChange({ instructions: e.target.value })}
         />
@@ -228,7 +236,7 @@ function StepExamInfo({
   );
 }
 
-// ── Question Row for selection ─────────────────────────────────────────────
+// ── Question Row ───────────────────────────────────────────────────────────
 function QuestionRow({
   q, selected, onToggle,
 }: { q: Question; selected: boolean; onToggle: () => void }) {
@@ -241,10 +249,15 @@ function QuestionRow({
   return (
     <div className={`q-row ${selected ? "q-row-selected" : ""}`} onClick={onToggle}>
       <div className="q-row-check">
-        <input type="checkbox" checked={selected} onChange={onToggle} onClick={(e) => e.stopPropagation()} />
+        <input
+          type="checkbox" checked={selected} onChange={onToggle}
+          onClick={(e) => e.stopPropagation()}
+        />
       </div>
       <div className="q-row-body">
-        <div className="q-row-text">{q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}</div>
+        <div className="q-row-text">
+          {q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}
+        </div>
         <div className="q-row-meta">
           <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>
             {q.question_type}
@@ -253,7 +266,9 @@ function QuestionRow({
             {q.difficulty}
           </span>
           <span className="q-badge">{q.marks} mark{q.marks !== 1 ? "s" : ""}</span>
-          {q.courses && <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>}
+          {q.courses && (
+            <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>
+          )}
         </div>
       </div>
     </div>
@@ -278,7 +293,7 @@ function CreateQuestionForm({
     ],
   });
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError]   = useState("");
 
   const setType = (qt: QuestionType) => {
     if (qt === "TRUE_FALSE") {
@@ -286,7 +301,7 @@ function CreateQuestionForm({
         ...f,
         question_type: qt,
         options: [
-          { option_text: "True", is_correct: false, order_index: 0 },
+          { option_text: "True",  is_correct: false, order_index: 0 },
           { option_text: "False", is_correct: false, order_index: 1 },
         ],
       }));
@@ -295,7 +310,16 @@ function CreateQuestionForm({
         ...f,
         question_type: qt,
         options: f.options.length < 4
-          ? [...f.options, ...Array(4 - f.options.length).fill({ option_text: "", is_correct: false, order_index: 0 })].map((o, i) => ({ ...o, order_index: i }))
+          ? [
+              ...f.options,
+              ...Array(4 - f.options.length)
+                .fill(null)
+                .map((_, i) => ({
+                  option_text: "",
+                  is_correct: false,
+                  order_index: f.options.length + i,
+                })),
+            ]
           : f.options,
       }));
     }
@@ -306,18 +330,17 @@ function CreateQuestionForm({
       ...f,
       options: f.options.map((o, i) => ({
         ...o,
-        // MCQ/TRUE_FALSE: only one correct; MSQ: multiple
-        is_correct: f.question_type === "MSQ"
-          ? (i === idx ? !o.is_correct : o.is_correct)
-          : i === idx,
+        is_correct:
+          f.question_type === "MSQ"
+            ? i === idx ? !o.is_correct : o.is_correct
+            : i === idx,
       })),
     }));
   };
 
   const save = async () => {
     if (!form.question_text.trim()) return setError("Question text is required.");
-    const hasCorrect = form.options.some((o) => o.is_correct);
-    if (!hasCorrect) return setError("Mark at least one correct answer.");
+    if (!form.options.some((o) => o.is_correct)) return setError("Mark at least one correct answer.");
     setSaving(true);
     setError("");
     try {
@@ -333,6 +356,7 @@ function CreateQuestionForm({
       });
       const full = await facultyApi.getQuestion(res.question_id);
       onSaved(full);
+      // Reset form
       setForm({
         question_type: "MCQ",
         question_text: "",
@@ -358,7 +382,11 @@ function CreateQuestionForm({
       <div className="form-grid-3col">
         <div className="form-field">
           <label>Question Type</label>
-          <select className="form-select" value={form.question_type} onChange={(e) => setType(e.target.value as QuestionType)}>
+          <select
+            className="form-select"
+            value={form.question_type}
+            onChange={(e) => setType(e.target.value as QuestionType)}
+          >
             <option value="MCQ">MCQ (Single correct)</option>
             <option value="MSQ">MSQ (Multiple correct)</option>
             <option value="TRUE_FALSE">True / False</option>
@@ -366,27 +394,34 @@ function CreateQuestionForm({
         </div>
         <div className="form-field">
           <label>Marks</label>
-          <input type="number" className="form-input" min={1} max={100} value={form.marks}
-            onChange={(e) => setForm((f) => ({ ...f, marks: +e.target.value }))} />
+          <input
+            type="number" className="form-input" min={1} max={100}
+            value={form.marks}
+            onChange={(e) => setForm((f) => ({ ...f, marks: +e.target.value }))}
+          />
         </div>
         <div className="form-field">
           <label>Negative Marks</label>
-          <input type="number" className="form-input" min={0} step={0.25} value={form.negative_marks}
-            onChange={(e) => setForm((f) => ({ ...f, negative_marks: +e.target.value }))} />
-        </div>
-      </div>
-      <div className="form-grid-2col">
-        <div className="form-field col-span-2">
-          <label>Question Text *</label>
-          <textarea className="form-textarea" rows={3}
-            placeholder="Enter your question here..."
-            value={form.question_text}
-            onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))}
+          <input
+            type="number" className="form-input" min={0} step={0.25}
+            value={form.negative_marks}
+            onChange={(e) => setForm((f) => ({ ...f, negative_marks: +e.target.value }))}
           />
         </div>
       </div>
+
+      <div className="form-field">
+        <label>Question Text *</label>
+        <textarea
+          className="form-textarea" rows={3}
+          placeholder="Enter your question here…"
+          value={form.question_text}
+          onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))}
+        />
+      </div>
+
       <div className="options-grid">
-        <label className="form-label-sm">Answer Options (click to mark correct)</label>
+        <label className="form-label-sm">Answer Options (click circle/checkbox to mark correct)</label>
         {form.options.map((opt, idx) => (
           <div key={idx} className={`option-row ${opt.is_correct ? "option-correct" : ""}`}>
             <button
@@ -403,14 +438,19 @@ function CreateQuestionForm({
               placeholder={`Option ${String.fromCharCode(65 + idx)}`}
               value={opt.option_text}
               readOnly={form.question_type === "TRUE_FALSE"}
-              onChange={(e) => setForm((f) => ({
-                ...f,
-                options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o),
-              }))}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  options: f.options.map((o, i) =>
+                    i === idx ? { ...o, option_text: e.target.value } : o
+                  ),
+                }))
+              }
             />
           </div>
         ))}
       </div>
+
       <div className="form-field">
         <label>Difficulty</label>
         <div className="difficulty-toggle">
@@ -426,10 +466,14 @@ function CreateQuestionForm({
           ))}
         </div>
       </div>
+
       {error && <div className="form-error">{error}</div>}
+
       <div className="form-actions">
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? <><span className="spinner-sm" /> Saving…</> : <><i className="ti ti-plus" /> Add to Repository &amp; Exam</>}
+          {saving
+            ? <><span className="spinner-sm" /> Saving…</>
+            : <><i className="ti ti-plus" /> Add to Repository &amp; Exam</>}
         </button>
       </div>
     </div>
@@ -437,88 +481,110 @@ function CreateQuestionForm({
 }
 
 // ── PDF Import Panel ───────────────────────────────────────────────────────
-function PdfImportPanel({ courseId, onImported }: { courseId: string; onImported: (qs: ExtractedQuestion[]) => void }) {
-  const [status, setStatus] = useState<ImportStatus>("idle");
+/**
+ * Uploads the file to POST /questions/extract via facultyApi.extractQuestionsFromFile.
+ * The backend uses pdfplumber (text-based PDF) or python-docx (DOCX) — no image OCR.
+ * Results arrive as ExtractedQuestion[] which the faculty reviews and approves.
+ * No dummy / mock data anywhere in this component.
+ */
+function PdfImportPanel({
+  onImported,
+}: { onImported: (qs: ExtractedQuestion[]) => void }) {
+  const [status,    setStatus]    = useState<ImportStatus>("idle");
   const [extracted, setExtracted] = useState<ExtractedQuestion[]>([]);
-  const [error, setError] = useState("");
+  const [error,     setError]     = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = async (file: File) => {
+  const confColor = (c: number) =>
+    c >= 85 ? "#059669" : c >= 70 ? "#d97706" : "#dc2626";
+
+  // ── Handle file selection ───────────────────────────────────────────────
+  const handleFile = useCallback(async (file: File) => {
     if (!file) return;
-    setStatus("uploading");
+
+    if (!/\.(pdf|docx)$/i.test(file.name)) {
+      setError("Only PDF and DOCX files are supported.");
+      return;
+    }
+
     setError("");
-    // Simulate extraction pipeline (replace with real API call when backend ready)
-    setStatus("extracting");
-    await new Promise((r) => setTimeout(r, 1500));
-    // Mock extracted questions for demo — replace with real API
-    const mock: ExtractedQuestion[] = [
-      {
-        id: "ext-1",
-        question_text: "Which data structure uses LIFO (Last In, First Out) order?",
-        question_type: "MCQ",
-        options: [
-          { text: "Queue", is_correct: false },
-          { text: "Stack", is_correct: true },
-          { text: "Linked List", is_correct: false },
-          { text: "Tree", is_correct: false },
-        ],
-        marks: 1, difficulty: "EASY", confidence: 96, needs_review: false, approved: false,
-      },
-      {
-        id: "ext-2",
-        question_text: "Which of the following are valid sorting algorithms?",
-        question_type: "MSQ",
-        options: [
-          { text: "Bubble Sort", is_correct: true },
-          { text: "Quick Sort", is_correct: true },
-          { text: "Binary Search", is_correct: false },
-          { text: "Merge Sort", is_correct: true },
-        ],
-        marks: 2, difficulty: "MEDIUM", confidence: 83, needs_review: false, approved: false,
-      },
-      {
-        id: "ext-3",
-        question_text: "A binary tree can have at most 2 children per node.",
-        question_type: "TRUE_FALSE",
-        options: [
-          { text: "True", is_correct: true },
-          { text: "False", is_correct: false },
-        ],
-        marks: 1, difficulty: "EASY", confidence: 74, needs_review: true, approved: false,
-      },
-    ];
-    setExtracted(mock);
-    setStatus("review");
-  };
+    setStatus("uploading");
 
-  const toggleApprove = (id: string) => {
-    setExtracted((list) => list.map((q) => q.id === id ? { ...q, approved: !q.approved } : q));
-  };
+    try {
+      // Move to "extracting" state immediately so the user sees feedback
+      setStatus("extracting");
 
-  const approveAll = () => setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
+      // facultyApi.extractQuestionsFromFile sends multipart/form-data
+      // to POST /questions/extract and returns ExtractedQuestion[]
+      const result = await facultyApi.extractQuestionsFromFile(file);
 
-  const saveApproved = async () => {
+      if (!result || result.length === 0) {
+        setError(
+          "No questions could be extracted. Make sure questions are numbered (1., 2., …) " +
+          "and options are labeled A–D. Mark correct answers with * or use an Answer Key section."
+        );
+        setStatus("idle");
+        return;
+      }
+
+      // All questions start as not approved — faculty must review
+      setExtracted(result.map((q) => ({ ...q, approved: false })));
+      setStatus("review");
+    } catch (e: any) {
+      setError(e?.message ?? "Extraction failed. Please try again.");
+      setStatus("idle");
+    }
+  }, []);
+
+  const toggleApprove = (id: string) =>
+    setExtracted((list) =>
+      list.map((q) => (q.id === id ? { ...q, approved: !q.approved } : q))
+    );
+
+  const approveAll = () =>
+    setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
+
+  const saveApproved = () => {
     const approved = extracted.filter((q) => q.approved);
-    if (!approved.length) return setError("Approve at least one question first.");
+    if (!approved.length) {
+      setError("Approve at least one question first.");
+      return;
+    }
     setStatus("saving");
-    // Pass approved questions up — parent will add them to the exam
-    onImported(approved);
+    onImported(approved);   // parent saves to DB and adds to exam
     setStatus("idle");
     setExtracted([]);
+    setError("");
   };
 
-  const confColor = (c: number) => c >= 85 ? "#059669" : c >= 70 ? "#d97706" : "#dc2626";
+  const reset = () => {
+    setStatus("idle");
+    setExtracted([]);
+    setError("");
+    if (fileRef.current) fileRef.current.value = "";
+  };
 
+  // ── Idle: drop zone ─────────────────────────────────────────────────────
   if (status === "idle") {
     return (
       <div className="import-dropzone" onClick={() => fileRef.current?.click()}>
         <input
-          ref={fileRef} type="file" accept=".pdf,.docx" hidden
-          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.docx"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleFile(f);
+          }}
         />
         <i className="ti ti-file-upload import-drop-icon" />
         <div className="import-drop-title">Import Questions from PDF or DOCX</div>
-        <div className="import-drop-sub">AI-powered extraction · Supports MCQ, MSQ, True/False</div>
+        <div className="import-drop-sub">
+          Text-based PDFs only (Word export, LaTeX, Google Docs) · Supports MCQ, MSQ, True/False<br />
+          Number questions (1., 2., …) · Label options A–D · Mark answers with * or add an Answer Key section
+        </div>
+        {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
         <button className="btn btn-secondary" type="button">
           <i className="ti ti-upload" /> Choose File
         </button>
@@ -526,37 +592,74 @@ function PdfImportPanel({ courseId, onImported }: { courseId: string; onImported
     );
   }
 
+  // ── Uploading / extracting spinner ──────────────────────────────────────
   if (status === "uploading" || status === "extracting") {
     return (
       <div className="import-processing">
         <span className="spinner" />
         <div className="import-proc-title">
-          {status === "uploading" ? "Uploading file…" : "Extracting questions with AI…"}
+          {status === "uploading" ? "Uploading file…" : "Extracting questions…"}
         </div>
-        <div className="import-proc-sub">This takes 10–30 seconds for most documents</div>
+        <div className="import-proc-sub">This takes a few seconds for most documents</div>
       </div>
     );
   }
 
+  // ── Saving spinner ───────────────────────────────────────────────────────
+  if (status === "saving") {
+    return (
+      <div className="import-processing">
+        <span className="spinner" />
+        <div className="import-proc-title">Saving questions to repository…</div>
+      </div>
+    );
+  }
+
+  // ── Review table ─────────────────────────────────────────────────────────
   if (status === "review") {
-    const approved = extracted.filter((q) => q.approved).length;
-    const avgConf = Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length);
+    const approvedCount = extracted.filter((q) => q.approved).length;
+    const avgConf = extracted.length
+      ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length)
+      : 0;
+
     return (
       <div className="import-review">
+        {/* Summary cards */}
         <div className="import-review-summary">
-          <div className="import-summary-card"><span className="is-val">{extracted.length}</span><span className="is-lbl">Questions Found</span></div>
-          <div className="import-summary-card"><span className="is-val">{extracted.filter(q => q.question_type === "MCQ").length}</span><span className="is-lbl">MCQ</span></div>
-          <div className="import-summary-card"><span className="is-val">{extracted.filter(q => q.question_type === "MSQ").length}</span><span className="is-lbl">MSQ</span></div>
-          <div className="import-summary-card"><span className="is-val">{extracted.filter(q => q.question_type === "TRUE_FALSE").length}</span><span className="is-lbl">T/F</span></div>
-          <div className="import-summary-card"><span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span><span className="is-lbl">Avg Confidence</span></div>
-          <div className="import-summary-card"><span className="is-val">{approved}</span><span className="is-lbl">Approved</span></div>
+          <div className="import-summary-card">
+            <span className="is-val">{extracted.length}</span>
+            <span className="is-lbl">Questions Found</span>
+          </div>
+          <div className="import-summary-card">
+            <span className="is-val">{extracted.filter((q) => q.question_type === "MCQ").length}</span>
+            <span className="is-lbl">MCQ</span>
+          </div>
+          <div className="import-summary-card">
+            <span className="is-val">{extracted.filter((q) => q.question_type === "MSQ").length}</span>
+            <span className="is-lbl">MSQ</span>
+          </div>
+          <div className="import-summary-card">
+            <span className="is-val">{extracted.filter((q) => q.question_type === "TRUE_FALSE").length}</span>
+            <span className="is-lbl">T/F</span>
+          </div>
+          <div className="import-summary-card">
+            <span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span>
+            <span className="is-lbl">Avg Confidence</span>
+          </div>
+          <div className="import-summary-card">
+            <span className="is-val">{approvedCount}</span>
+            <span className="is-lbl">Approved</span>
+          </div>
         </div>
+
+        {/* Review table */}
         <div className="import-table-wrap">
           <div className="import-table-actions">
-            <button className="btn btn-sm btn-secondary" onClick={approveAll}>
+            <button className="btn btn-sm btn-secondary" onClick={approveAll} type="button">
               <i className="ti ti-check-all" /> Approve All
             </button>
           </div>
+
           <table className="import-table">
             <thead>
               <tr>
@@ -564,90 +667,125 @@ function PdfImportPanel({ courseId, onImported }: { courseId: string; onImported
                 <th>Question</th>
                 <th>Type</th>
                 <th>Marks</th>
-                <th>Answer</th>
+                <th>Correct Answer(s)</th>
                 <th>Confidence</th>
                 <th>Approve</th>
               </tr>
             </thead>
             <tbody>
-              {extracted.map((q) => (
-                <tr key={q.id} className={q.needs_review ? "row-review" : ""}>
-                  <td>
-                    {q.needs_review && <i className="ti ti-alert-triangle" style={{ color: "#d97706" }} title="Needs review" />}
-                  </td>
-                  <td className="q-text-cell">{q.question_text.slice(0, 80)}…</td>
-                  <td><span className="q-type-badge">{q.question_type}</span></td>
-                  <td>{q.marks}</td>
-                  <td className="ans-cell">
-                    {q.options.filter(o => o.is_correct).map(o => o.text).join(", ")}
-                  </td>
-                  <td>
-                    <span className="conf-badge" style={{ color: confColor(q.confidence), borderColor: confColor(q.confidence) }}>
-                      {q.confidence}%
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      className={`approve-btn ${q.approved ? "approved" : ""}`}
-                      onClick={() => toggleApprove(q.id)}
-                    >
-                      {q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {extracted.map((q) => {
+                const correctAnswers = q.options.filter((o) => o.is_correct).map((o) => o.text);
+                return (
+                  <tr key={q.id} className={q.needs_review ? "row-review" : ""}>
+                    <td>
+                      {q.needs_review && (
+                        <i
+                          className="ti ti-alert-triangle"
+                          style={{ color: "#d97706" }}
+                          title="Low confidence — review before approving"
+                        />
+                      )}
+                    </td>
+                    <td className="q-text-cell">
+                      {q.question_text.slice(0, 80)}
+                      {q.question_text.length > 80 ? "…" : ""}
+                    </td>
+                    <td>
+                      <span className="q-type-badge">{q.question_type}</span>
+                    </td>
+                    <td>{q.marks}</td>
+                    <td className="ans-cell">
+                      {correctAnswers.length > 0
+                        ? correctAnswers.join(", ")
+                        : <span style={{ color: "#dc2626" }}>No answer detected</span>}
+                    </td>
+                    <td>
+                      <span
+                        className="conf-badge"
+                        style={{
+                          color: confColor(q.confidence),
+                          borderColor: confColor(q.confidence),
+                        }}
+                      >
+                        {q.confidence}%
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className={`approve-btn ${q.approved ? "approved" : ""}`}
+                        onClick={() => toggleApprove(q.id)}
+                        type="button"
+                      >
+                        {q.approved
+                          ? <><i className="ti ti-check" /> Approved</>
+                          : "Approve"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+
         {error && <div className="form-error">{error}</div>}
+
         <div className="import-review-actions">
-          <button className="btn btn-secondary" onClick={() => { setStatus("idle"); setExtracted([]); }}>
+          <button className="btn btn-secondary" onClick={reset} type="button">
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={saveApproved} disabled={approved === 0}>
-            <i className="ti ti-check" /> Save {approved} Question{approved !== 1 ? "s" : ""} to Repository
+          <button
+            className="btn btn-primary"
+            onClick={saveApproved}
+            disabled={approvedCount === 0}
+            type="button"
+          >
+            <i className="ti ti-check" /> Save {approvedCount} Question{approvedCount !== 1 ? "s" : ""} to Repository
           </button>
         </div>
       </div>
     );
   }
 
-  if (status === "saving") {
-    return <div className="import-processing"><span className="spinner" /><div>Saving questions…</div></div>;
-  }
-
   return null;
 }
 
 // ── Auto-generate Panel ────────────────────────────────────────────────────
-function AutoGeneratePanel({ questions, onGenerated }: {
-  questions: Question[]; onGenerated: (selected: Question[]) => void;
-}) {
-  const [mcqCount, setMcqCount] = useState(10);
-  const [msqCount, setMsqCount] = useState(5);
-  const [tfCount, setTfCount] = useState(5);
+function AutoGeneratePanel({
+  questions, onGenerated,
+}: { questions: Question[]; onGenerated: (selected: Question[]) => void }) {
+  const [mcqCount,   setMcqCount]   = useState(10);
+  const [msqCount,   setMsqCount]   = useState(5);
+  const [tfCount,    setTfCount]    = useState(5);
   const [difficulty, setDifficulty] = useState<"MIXED" | Difficulty>("MIXED");
-  const [error, setError] = useState("");
+  const [error,      setError]      = useState("");
 
   const generate = () => {
     setError("");
-    const pool = [...questions];
-    const pick = (type: QuestionType, count: number) => {
-      let candidates = pool.filter((q) => q.question_type === type && q.is_active);
-      if (difficulty !== "MIXED") candidates = candidates.filter((q) => q.difficulty === difficulty);
-      // Shuffle
+    const pick = (type: QuestionType, count: number): Question[] => {
+      let candidates = questions.filter(
+        (q) => q.question_type === type && q.is_active
+      );
+      if (difficulty !== "MIXED")
+        candidates = candidates.filter((q) => q.difficulty === difficulty);
+      // Fisher-Yates shuffle
       for (let i = candidates.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
       }
       return candidates.slice(0, count);
     };
+
     const selected = [
-      ...pick("MCQ", mcqCount),
-      ...pick("MSQ", msqCount),
+      ...pick("MCQ",       mcqCount),
+      ...pick("MSQ",       msqCount),
       ...pick("TRUE_FALSE", tfCount),
     ];
-    if (selected.length === 0) return setError("No questions match the criteria. Add more questions to the repository first.");
+
+    if (selected.length === 0) {
+      setError("No questions match the criteria. Add more questions to the repository first.");
+      return;
+    }
     onGenerated(selected);
   };
 
@@ -657,31 +795,53 @@ function AutoGeneratePanel({ questions, onGenerated }: {
         <i className="ti ti-wand" />
         <div>
           <div className="auto-gen-title">Auto-Generate Exam Paper</div>
-          <div className="auto-gen-sub">System randomly selects questions from your repository based on the criteria below</div>
+          <div className="auto-gen-sub">
+            Randomly selects questions from your repository based on the criteria below
+          </div>
         </div>
       </div>
+
       <div className="form-grid-2col">
         <div className="form-field">
           <label>MCQ Count</label>
-          <input type="number" className="form-input" min={0} max={50} value={mcqCount}
-            onChange={(e) => setMcqCount(+e.target.value)} />
-          <span className="field-hint">{questions.filter(q => q.question_type === "MCQ").length} available</span>
+          <input
+            type="number" className="form-input" min={0} max={50}
+            value={mcqCount}
+            onChange={(e) => setMcqCount(+e.target.value)}
+          />
+          <span className="field-hint">
+            {questions.filter((q) => q.question_type === "MCQ").length} available
+          </span>
         </div>
         <div className="form-field">
           <label>MSQ Count</label>
-          <input type="number" className="form-input" min={0} max={30} value={msqCount}
-            onChange={(e) => setMsqCount(+e.target.value)} />
-          <span className="field-hint">{questions.filter(q => q.question_type === "MSQ").length} available</span>
+          <input
+            type="number" className="form-input" min={0} max={30}
+            value={msqCount}
+            onChange={(e) => setMsqCount(+e.target.value)}
+          />
+          <span className="field-hint">
+            {questions.filter((q) => q.question_type === "MSQ").length} available
+          </span>
         </div>
         <div className="form-field">
           <label>True/False Count</label>
-          <input type="number" className="form-input" min={0} max={30} value={tfCount}
-            onChange={(e) => setTfCount(+e.target.value)} />
-          <span className="field-hint">{questions.filter(q => q.question_type === "TRUE_FALSE").length} available</span>
+          <input
+            type="number" className="form-input" min={0} max={30}
+            value={tfCount}
+            onChange={(e) => setTfCount(+e.target.value)}
+          />
+          <span className="field-hint">
+            {questions.filter((q) => q.question_type === "TRUE_FALSE").length} available
+          </span>
         </div>
         <div className="form-field">
           <label>Difficulty Mix</label>
-          <select className="form-select" value={difficulty} onChange={(e) => setDifficulty(e.target.value as any)}>
+          <select
+            className="form-select"
+            value={difficulty}
+            onChange={(e) => setDifficulty(e.target.value as any)}
+          >
             <option value="MIXED">Mixed (Recommended)</option>
             <option value="EASY">Easy Only</option>
             <option value="MEDIUM">Medium Only</option>
@@ -689,8 +849,10 @@ function AutoGeneratePanel({ questions, onGenerated }: {
           </select>
         </div>
       </div>
+
       {error && <div className="form-error">{error}</div>}
-      <button className="btn btn-primary" onClick={generate}>
+
+      <button className="btn btn-primary" onClick={generate} type="button">
         <i className="ti ti-wand" /> Generate Paper ({mcqCount + msqCount + tfCount} questions)
       </button>
     </div>
@@ -707,24 +869,27 @@ function StepQuestions({
   onAddNew: (q: Question) => void;
   onImported: (qs: ExtractedQuestion[]) => void;
 }) {
-  const [tab, setTab] = useState<"select" | "create" | "import" | "auto">("select");
-  const [search, setSearch] = useState("");
+  const [tab,        setTab]        = useState<"select" | "create" | "import" | "auto">("select");
+  const [search,     setSearch]     = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterDiff, setFilterDiff] = useState("");
-  const { data: questions = [], isLoading } = useQuestions(courseId ? { course_id: courseId } : undefined);
+
+  const { data: questions = [], isLoading } = useQuestions(
+    courseId ? { course_id: courseId } : undefined
+  );
 
   const filtered = questions.filter((q) => {
     const matchSearch = !search || q.question_text.toLowerCase().includes(search.toLowerCase());
-    const matchType = !filterType || q.question_type === filterType;
-    const matchDiff = !filterDiff || q.difficulty === filterDiff;
+    const matchType   = !filterType || q.question_type === filterType;
+    const matchDiff   = !filterDiff || q.difficulty === filterDiff;
     return matchSearch && matchType && matchDiff;
   });
 
   const tabs = [
-    { id: "select", label: "Select Existing", icon: "ti-list-search" },
-    { id: "create", label: "Create Question", icon: "ti-pencil-plus" },
-    { id: "import", label: "Import from PDF", icon: "ti-file-upload" },
-    { id: "auto",   label: "Auto-Generate",   icon: "ti-wand" },
+    { id: "select", label: "Select Existing", icon: "ti-list-search"  },
+    { id: "create", label: "Create Question", icon: "ti-pencil-plus"  },
+    { id: "import", label: "Import from PDF", icon: "ti-file-upload"  },
+    { id: "auto",   label: "Auto-Generate",   icon: "ti-wand"         },
   ] as const;
 
   return (
@@ -736,9 +901,15 @@ function StepQuestions({
           {selectedIds.size} question{selectedIds.size !== 1 ? "s" : ""} selected for this exam
         </div>
       </div>
+
       <div className="q-tabs">
         {tabs.map((t) => (
-          <button key={t.id} className={`q-tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+          <button
+            key={t.id}
+            className={`q-tab ${tab === t.id ? "active" : ""}`}
+            onClick={() => setTab(t.id)}
+            type="button"
+          >
             <i className={`ti ${t.icon}`} /> {t.label}
           </button>
         ))}
@@ -747,28 +918,51 @@ function StepQuestions({
       {tab === "select" && (
         <div className="q-select-panel">
           <div className="q-filters">
-            <input className="form-input q-search" placeholder="Search questions…"
-              value={search} onChange={(e) => setSearch(e.target.value)} />
-            <select className="form-select" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+            <input
+              className="form-input q-search"
+              placeholder="Search questions…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select
+              className="form-select"
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+            >
               <option value="">All Types</option>
               <option value="MCQ">MCQ</option>
               <option value="MSQ">MSQ</option>
               <option value="TRUE_FALSE">True / False</option>
             </select>
-            <select className="form-select" value={filterDiff} onChange={(e) => setFilterDiff(e.target.value)}>
+            <select
+              className="form-select"
+              value={filterDiff}
+              onChange={(e) => setFilterDiff(e.target.value)}
+            >
               <option value="">All Difficulty</option>
               <option value="EASY">Easy</option>
               <option value="MEDIUM">Medium</option>
               <option value="HARD">Hard</option>
             </select>
             {selectedIds.size > 0 && (
-              <button className="btn btn-sm btn-secondary" onClick={() => questions.forEach((q) => { if (selectedIds.has(q.id)) onToggle(q); })}>
+              <button
+                className="btn btn-sm btn-secondary"
+                type="button"
+                onClick={() =>
+                  questions.forEach((q) => {
+                    if (selectedIds.has(q.id)) onToggle(q);
+                  })
+                }
+              >
                 Clear Selection
               </button>
             )}
           </div>
+
           {isLoading ? (
-            <div className="loading-state"><span className="spinner" /> Loading questions…</div>
+            <div className="loading-state">
+              <span className="spinner" /> Loading questions…
+            </div>
           ) : filtered.length === 0 ? (
             <div className="empty-state" style={{ padding: "40px 0" }}>
               <i className="ti ti-books" style={{ fontSize: 36, color: "#ccc" }} />
@@ -782,7 +976,12 @@ function StepQuestions({
           ) : (
             <div className="q-list">
               {filtered.map((q) => (
-                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} />
+                <QuestionRow
+                  key={q.id}
+                  q={q}
+                  selected={selectedIds.has(q.id)}
+                  onToggle={() => onToggle(q)}
+                />
               ))}
             </div>
           )}
@@ -798,7 +997,6 @@ function StepQuestions({
 
       {tab === "import" && (
         <PdfImportPanel
-          courseId={courseId}
           onImported={(qs) => { onImported(qs); setTab("select"); }}
         />
       )}
@@ -806,30 +1004,45 @@ function StepQuestions({
       {tab === "auto" && (
         <AutoGeneratePanel
           questions={questions}
-          onGenerated={(selected) => { selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); }); setTab("select"); }}
+          onGenerated={(selected) => {
+            selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); });
+            setTab("select");
+          }}
         />
       )}
     </div>
   );
 }
 
-// ── Step 3: Rules ─────────────────────────────────────────────────────────
-function StepRules({ rules, onChange }: {
-  rules: Record<string, any>;
-  onChange: (r: Record<string, any>) => void;
-}) {
-  const rule = (key: string, label: string, type: "bool" | "num" = "bool", min?: number) => (
+// ── Step 3: Rules ──────────────────────────────────────────────────────────
+function StepRules({
+  rules, onChange,
+}: { rules: Record<string, any>; onChange: (r: Record<string, any>) => void }) {
+  const rule = (
+    key: string,
+    label: string,
+    type: "bool" | "num" = "bool",
+    min?: number,
+  ) => (
     <div className="form-field rule-field">
       <div className="rule-label">{label}</div>
-      {type === "bool"
-        ? <label className="toggle-switch">
-            <input type="checkbox" checked={!!rules[key]}
-              onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
-            <span className="toggle-slider" />
-          </label>
-        : <input type="number" className="form-input rule-num" min={min ?? 0} value={rules[key] ?? 0}
-            onChange={(e) => onChange({ ...rules, [key]: +e.target.value })} />
-      }
+      {type === "bool" ? (
+        <label className="toggle-switch">
+          <input
+            type="checkbox"
+            checked={!!rules[key]}
+            onChange={(e) => onChange({ ...rules, [key]: e.target.checked })}
+          />
+          <span className="toggle-slider" />
+        </label>
+      ) : (
+        <input
+          type="number" className="form-input rule-num"
+          min={min ?? 0}
+          value={rules[key] ?? 0}
+          onChange={(e) => onChange({ ...rules, [key]: +e.target.value })}
+        />
+      )}
     </div>
   );
 
@@ -847,14 +1060,14 @@ function StepRules({ rules, onChange }: {
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-shield" /> Proctoring</h4>
-          {rule("fullscreen_required", "Require fullscreen mode")}
-          {rule("proctoring_enabled", "Enable AI proctoring")}
-          {rule("camera_required", "Require camera access")}
-          {rule("microphone_required", "Require microphone")}
+          {rule("fullscreen_required",  "Require fullscreen mode")}
+          {rule("proctoring_enabled",   "Enable AI proctoring")}
+          {rule("camera_required",      "Require camera access")}
+          {rule("microphone_required",  "Require microphone")}
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
-          {rule("max_tab_switches", "Max tab switches allowed", "num", 0)}
+          {rule("max_tab_switches",       "Max tab switches allowed", "num", 0)}
           {rule("auto_save_interval_sec", "Auto-save interval (sec)", "num", 10)}
         </div>
       </div>
@@ -862,8 +1075,10 @@ function StepRules({ rules, onChange }: {
   );
 }
 
-// ── Step 4: Schedule ──────────────────────────────────────────────────────
-function StepSchedule({ departments, schedule, onChange }: {
+// ── Step 4: Schedule ───────────────────────────────────────────────────────
+function StepSchedule({
+  departments, schedule, onChange,
+}: {
   departments: { id: string; name: string; code: string }[];
   schedule: Record<string, any>;
   onChange: (s: Record<string, any>) => void;
@@ -877,34 +1092,49 @@ function StepSchedule({ departments, schedule, onChange }: {
       <div className="form-grid-2col">
         <div className="form-field">
           <label>Department *</label>
-          <select className="form-select" value={schedule.department_id ?? ""} onChange={(e) => onChange({ ...schedule, department_id: e.target.value })}>
+          <select
+            className="form-select"
+            value={schedule.department_id ?? ""}
+            onChange={(e) => onChange({ ...schedule, department_id: e.target.value })}
+          >
             <option value="">Select department…</option>
-            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
           </select>
         </div>
         <div className="form-field">
           <label>Registration Deadline</label>
-          <input type="datetime-local" className="form-input"
+          <input
+            type="datetime-local" className="form-input"
             value={schedule.registration_deadline ?? ""}
-            onChange={(e) => onChange({ ...schedule, registration_deadline: e.target.value })} />
+            onChange={(e) => onChange({ ...schedule, registration_deadline: e.target.value })}
+          />
         </div>
         <div className="form-field">
           <label>Start Time *</label>
-          <input type="datetime-local" className="form-input"
+          <input
+            type="datetime-local" className="form-input"
             value={schedule.start_time ?? ""}
-            onChange={(e) => onChange({ ...schedule, start_time: e.target.value })} />
+            onChange={(e) => onChange({ ...schedule, start_time: e.target.value })}
+          />
         </div>
         <div className="form-field">
           <label>End Time *</label>
-          <input type="datetime-local" className="form-input"
+          <input
+            type="datetime-local" className="form-input"
             value={schedule.end_time ?? ""}
-            onChange={(e) => onChange({ ...schedule, end_time: e.target.value })} />
+            onChange={(e) => onChange({ ...schedule, end_time: e.target.value })}
+          />
         </div>
       </div>
       <div className="form-field">
         <label className="checkbox-label">
-          <input type="checkbox" checked={!!schedule.is_published}
-            onChange={(e) => onChange({ ...schedule, is_published: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={!!schedule.is_published}
+            onChange={(e) => onChange({ ...schedule, is_published: e.target.checked })}
+          />
           Publish immediately (students will see this exam)
         </label>
       </div>
@@ -913,17 +1143,19 @@ function StepSchedule({ departments, schedule, onChange }: {
 }
 
 // ── Step 5: Preview ────────────────────────────────────────────────────────
-function StepPreview({ form, selectedQuestions, schedule, examId }: {
+function StepPreview({
+  form, selectedQuestions, schedule, examId,
+}: {
   form: ExamForm;
   selectedQuestions: Question[];
   schedule: Record<string, any>;
   examId: string | null;
 }) {
   const totalMarks = selectedQuestions.reduce((s, q) => s + q.marks, 0);
-  const byType = selectedQuestions.reduce((acc, q) => {
-    acc[q.question_type] = (acc[q.question_type] ?? 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  const byType = selectedQuestions.reduce(
+    (acc, q) => { acc[q.question_type] = (acc[q.question_type] ?? 0) + 1; return acc; },
+    {} as Record<string, number>
+  );
 
   return (
     <div className="step-panel">
@@ -931,6 +1163,7 @@ function StepPreview({ form, selectedQuestions, schedule, examId }: {
         <h3>Exam Preview</h3>
         <p>Review all settings before publishing.</p>
       </div>
+
       {examId ? (
         <div className="preview-success">
           <i className="ti ti-circle-check" style={{ fontSize: 40, color: "#059669" }} />
@@ -943,10 +1176,10 @@ function StepPreview({ form, selectedQuestions, schedule, examId }: {
             <h4>Exam Info</h4>
             <div className="preview-rows">
               <div className="preview-row"><span>Title</span><strong>{form.title || "—"}</strong></div>
-              <div className="preview-row"><span>Type</span><strong>{form.exam_type}</strong></div>
+              <div className="preview-row"><span>Type</span><strong>{form.exam_type.replace(/_/g, " ")}</strong></div>
               <div className="preview-row"><span>Duration</span><strong>{form.duration_minutes} min</strong></div>
-              <div className="preview-row"><span>Total Marks (form)</span><strong>{form.total_marks}</strong></div>
-              <div className="preview-row"><span>Questions Marks Total</span><strong>{totalMarks}</strong></div>
+              <div className="preview-row"><span>Total Marks (configured)</span><strong>{form.total_marks}</strong></div>
+              <div className="preview-row"><span>Questions Marks Sum</span><strong>{totalMarks}</strong></div>
               <div className="preview-row"><span>Pass Marks</span><strong>{form.pass_marks}</strong></div>
             </div>
           </div>
@@ -954,9 +1187,13 @@ function StepPreview({ form, selectedQuestions, schedule, examId }: {
             <h4>Questions ({selectedQuestions.length})</h4>
             <div className="preview-rows">
               {Object.entries(byType).map(([type, count]) => (
-                <div key={type} className="preview-row"><span>{type}</span><strong>{count}</strong></div>
+                <div key={type} className="preview-row">
+                  <span>{type}</span><strong>{count}</strong>
+                </div>
               ))}
-              {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
+              {selectedQuestions.length === 0 && (
+                <div className="preview-empty">No questions selected</div>
+              )}
             </div>
           </div>
           <div className="preview-card">
@@ -964,7 +1201,10 @@ function StepPreview({ form, selectedQuestions, schedule, examId }: {
             <div className="preview-rows">
               <div className="preview-row"><span>Start</span><strong>{schedule.start_time || "—"}</strong></div>
               <div className="preview-row"><span>End</span><strong>{schedule.end_time || "—"}</strong></div>
-              <div className="preview-row"><span>Published</span><strong>{schedule.is_published ? "Yes" : "No (Draft)"}</strong></div>
+              <div className="preview-row">
+                <span>Published</span>
+                <strong>{schedule.is_published ? "Yes" : "No (Draft)"}</strong>
+              </div>
             </div>
           </div>
         </div>
@@ -977,11 +1217,13 @@ function StepPreview({ form, selectedQuestions, schedule, examId }: {
 export default function CreateExam() {
   const navigate = useNavigate();
   const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
-  const [currentStep, setCurrentStep] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [examId, setExamId] = useState<string | null>(null);
-  const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
+
+  const [currentStep,        setCurrentStep]        = useState(0);
+  const [saving,             setSaving]             = useState(false);
+  const [saveError,          setSaveError]          = useState("");
+  const [examId,             setExamId]             = useState<string | null>(null);
+  const [selectedQuestions,  setSelectedQuestions]  = useState<Question[]>([]);
+
   const selectedIds = new Set(selectedQuestions.map((q) => q.id));
 
   const [form, setForm] = useState<ExamForm>({
@@ -997,22 +1239,22 @@ export default function CreateExam() {
   });
 
   const [rules, setRules] = useState({
-    allow_backtrack: true,
-    mark_for_review: true,
-    fullscreen_required: false,
-    proctoring_enabled: false,
-    camera_required: false,
-    microphone_required: false,
-    max_tab_switches: 3,
+    allow_backtrack:       true,
+    mark_for_review:       true,
+    fullscreen_required:   false,
+    proctoring_enabled:    false,
+    camera_required:       false,
+    microphone_required:   false,
+    max_tab_switches:      3,
     auto_save_interval_sec: 30,
   });
 
   const [schedule, setSchedule] = useState<Record<string, any>>({
-    department_id: "",
-    start_time: "",
-    end_time: "",
+    department_id:         "",
+    start_time:            "",
+    end_time:              "",
     registration_deadline: "",
-    is_published: false,
+    is_published:          false,
   });
 
   const departments = portal?.departments ?? [];
@@ -1025,9 +1267,35 @@ export default function CreateExam() {
     );
   };
 
-  const handleImported = (qs: ExtractedQuestion[]) => {
-    // For now just show a success toast — real impl would save to repo and select
-    console.log("Imported:", qs.length, "questions");
+  /**
+   * handleImported: saves approved extracted questions to the DB via the API,
+   * then adds them to the current exam selection.
+   */
+  const handleImported = async (qs: ExtractedQuestion[]) => {
+    for (const q of qs) {
+      try {
+        const res = await facultyApi.createQuestion({
+          course_id: form.course_id || null,
+          question_type: q.question_type,
+          question_text: q.question_text,
+          marks: q.marks,
+          negative_marks: 0,
+          difficulty: q.difficulty,
+          options: q.options.map((o, i) => ({
+            option_text: o.text,
+            is_correct:  o.is_correct,
+            order_index: i,
+          })),
+          topics: [],
+        });
+        const full = await facultyApi.getQuestion(res.question_id);
+        setSelectedQuestions((prev) =>
+          prev.some((p) => p.id === full.id) ? prev : [...prev, full]
+        );
+      } catch (e) {
+        console.error("Failed to save imported question:", q.question_text, e);
+      }
+    }
   };
 
   const saveExam = async () => {
@@ -1036,41 +1304,39 @@ export default function CreateExam() {
     try {
       // 1. Create exam
       const examData = await facultyApi.createExam({
-        title: form.title,
-        course_id: form.course_id || null,
-        total_marks: form.total_marks,
-        pass_marks: form.pass_marks,
-        duration_minutes: form.duration_minutes,
+        title:             form.title,
+        course_id:         form.course_id || null,
+        total_marks:       form.total_marks,
+        pass_marks:        form.pass_marks,
+        duration_minutes:  form.duration_minutes,
         shuffle_questions: form.shuffle_questions,
-        shuffle_options: form.shuffle_options,
-        instructions: form.instructions || null,
+        shuffle_options:   form.shuffle_options,
+        instructions:      form.instructions || null,
       });
-
       const newExamId = examData.id;
 
-      // 2. Add questions
+      // 2. Attach questions
       for (let i = 0; i < selectedQuestions.length; i++) {
-        const q = selectedQuestions[i];
         await facultyApi.addQuestionToExam(newExamId, {
-          question_id: q.id,
+          question_id: selectedQuestions[i].id,
           order_index: i,
         });
       }
 
-      // 3. Upsert rules
+      // 3. Upsert exam rules
       await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
 
-      // 4. Create schedule if provided
+      // 4. Create schedule (optional)
       if (schedule.department_id && schedule.start_time && schedule.end_time) {
         await facultyApi.createSchedule({
-          exam_id: newExamId,
-          department_id: schedule.department_id,
-          start_time: new Date(schedule.start_time).toISOString(),
-          end_time: new Date(schedule.end_time).toISOString(),
+          exam_id:               newExamId,
+          department_id:         schedule.department_id,
+          start_time:            new Date(schedule.start_time).toISOString(),
+          end_time:              new Date(schedule.end_time).toISOString(),
           registration_deadline: schedule.registration_deadline
             ? new Date(schedule.registration_deadline).toISOString()
             : null,
-          is_published: schedule.is_published,
+          is_published:          schedule.is_published,
         });
       }
 
@@ -1083,7 +1349,8 @@ export default function CreateExam() {
   };
 
   const canProceed = () => {
-    if (currentStep === 0) return form.title && form.total_marks > 0 && form.pass_marks > 0;
+    if (currentStep === 0)
+      return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
     return true;
   };
 
@@ -1096,20 +1363,24 @@ export default function CreateExam() {
     <FacultyLayout activePage="create-exam">
       <PageState loading={portalLoading}>
         <div className="create-exam-workspace">
-          {/* Repository Overview */}
           <RepositoryOverview portal={portal} />
 
-          {/* Workspace Card */}
           <div className="workspace-card">
             <div className="workspace-header">
               <div>
                 <h2 className="workspace-title">Create New Exam</h2>
                 <p className="workspace-sub">
-                  {examId ? "Exam created — share with students via schedule." : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
+                  {examId
+                    ? "Exam created — share with students via schedule."
+                    : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
                 </p>
               </div>
               {!examId && (
-                <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")}>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => navigate("/faculty/dashboard")}
+                  type="button"
+                >
                   <i className="ti ti-x" /> Cancel
                 </button>
               )}
@@ -1117,17 +1388,22 @@ export default function CreateExam() {
 
             <Stepper steps={STEPS} current={currentStep} onStep={setCurrentStep} />
 
-            {/* Step content */}
             <div className="workspace-body">
               {currentStep === 0 && (
-                <StepExamInfo form={form} onChange={(p) => setForm((f) => ({ ...f, ...p }))} />
+                <StepExamInfo
+                  form={form}
+                  onChange={(p) => setForm((f) => ({ ...f, ...p }))}
+                />
               )}
               {currentStep === 1 && (
                 <StepQuestions
                   courseId={form.course_id}
                   selectedIds={selectedIds}
                   onToggle={toggleQuestion}
-                  onAddNew={(q) => { if (!selectedIds.has(q.id)) setSelectedQuestions((p) => [...p, q]); }}
+                  onAddNew={(q) => {
+                    if (!selectedIds.has(q.id))
+                      setSelectedQuestions((p) => [...p, q]);
+                  }}
                   onImported={handleImported}
                 />
               )}
@@ -1135,45 +1411,83 @@ export default function CreateExam() {
                 <StepRules rules={rules} onChange={setRules} />
               )}
               {currentStep === 3 && (
-                <StepSchedule departments={departments} schedule={schedule} onChange={setSchedule} />
+                <StepSchedule
+                  departments={departments}
+                  schedule={schedule}
+                  onChange={setSchedule}
+                />
               )}
               {currentStep === 4 && (
-                <StepPreview form={form} selectedQuestions={selectedQuestions} schedule={schedule} examId={examId} />
+                <StepPreview
+                  form={form}
+                  selectedQuestions={selectedQuestions}
+                  schedule={schedule}
+                  examId={examId}
+                />
               )}
             </div>
 
-            {/* Navigation */}
+            {/* Navigation footer */}
             {!examId && (
               <div className="workspace-footer">
                 <div className="footer-left">
                   {currentStep > 0 && (
-                    <button className="btn btn-secondary" onClick={() => setCurrentStep((s) => s - 1)}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setCurrentStep((s) => s - 1)}
+                      type="button"
+                    >
                       <i className="ti ti-chevron-left" /> Back
                     </button>
                   )}
                 </div>
                 <div className="footer-center">
-                  {saveError && <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>}
+                  {saveError && (
+                    <div className="form-error" style={{ textAlign: "center" }}>
+                      {saveError}
+                    </div>
+                  )}
                 </div>
                 <div className="footer-right">
                   {currentStep < STEPS.length - 1 ? (
-                    <button className="btn btn-primary" onClick={next} disabled={!canProceed()}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={next}
+                      disabled={!canProceed()}
+                      type="button"
+                    >
                       Next <i className="ti ti-chevron-right" />
                     </button>
                   ) : (
-                    <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId}>
-                      {saving ? <><span className="spinner-sm" /> Creating…</> : <><i className="ti ti-check" /> Create Exam</>}
+                    <button
+                      className="btn btn-primary"
+                      onClick={saveExam}
+                      disabled={saving || !!examId}
+                      type="button"
+                    >
+                      {saving
+                        ? <><span className="spinner-sm" /> Creating…</>
+                        : <><i className="ti ti-check" /> Create Exam</>}
                     </button>
                   )}
                 </div>
               </div>
             )}
+
             {examId && (
               <div className="workspace-footer">
-                <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")}>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => navigate("/faculty/dashboard")}
+                  type="button"
+                >
                   <i className="ti ti-home" /> Back to Dashboard
                 </button>
-                <button className="btn btn-secondary" onClick={() => navigate("/faculty/schedules")}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => navigate("/faculty/schedules")}
+                  type="button"
+                >
                   <i className="ti ti-calendar" /> Manage Schedules
                 </button>
               </div>

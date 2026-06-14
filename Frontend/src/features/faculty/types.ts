@@ -260,4 +260,22 @@ export interface ExamAnalytics {
     avg_accuracy: number;
     difficulty: string;
   }>;
+
+}
+
+export interface ExtractedOption {
+  text: string;
+  is_correct: boolean;
+}
+
+export interface ExtractedQuestion {
+  id: string;
+  question_text: string;
+  question_type: "MCQ" | "MSQ" | "TRUE_FALSE";
+  options: ExtractedOption[];
+  marks: number;
+  difficulty: "EASY" | "MEDIUM" | "HARD";
+  confidence: number;
+  needs_review: boolean;
+  approved: boolean;
 }

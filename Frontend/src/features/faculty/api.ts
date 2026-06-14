@@ -1,4 +1,4 @@
-import { del, get, patch, post } from "../../lib/api";
+import { del, get, patch, post, apiFile } from "../../lib/api";
 import type {
   Course,
   Department,
@@ -9,6 +9,7 @@ import type {
   ExamRule,
   ExamSchedule,
   ExamSection,
+  ExtractedQuestion,
   FacultyDashboard,
   Notification,
   Question,
@@ -16,6 +17,7 @@ import type {
   Result,
   StudentAnswer,
 } from "./types";
+
 
 export const facultyApi = {
   // ── Portal ──────────────────────────────────────────────────────────────────
@@ -48,6 +50,18 @@ export const facultyApi = {
 
   deleteQuestion: (questionId: string) =>
     del(`/api/v1/questions/${questionId}`),
+
+  /**
+   * Upload a text-based PDF or DOCX and extract structured questions from it.
+   * Sends multipart/form-data to POST /api/v1/questions/extract.
+   * Uses apiFile() which omits Content-Type so the browser sets the correct
+   * multipart boundary automatically — do NOT use post() here.
+   */
+  extractQuestionsFromFile: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiFile<ExtractedQuestion[]>("/api/v1/questions/extract", formData);
+  },
 
   // ── Exams ───────────────────────────────────────────────────────────────────
   listExams: (params?: { course_id?: string; status?: string }) => {
@@ -90,7 +104,8 @@ export const facultyApi = {
   listSchedules: (params?: { exam_id?: string; is_published?: boolean }) => {
     const query = new URLSearchParams();
     if (params?.exam_id) query.set("exam_id", params.exam_id);
-    if (params?.is_published !== undefined) query.set("is_published", String(params.is_published));
+    if (params?.is_published !== undefined)
+      query.set("is_published", String(params.is_published));
     const qs = query.toString();
     return get<ExamSchedule[]>(`/api/v1/exam-schedules/${qs ? `?${qs}` : ""}`);
   },
@@ -106,7 +121,9 @@ export const facultyApi = {
 
   // ── Registrations ───────────────────────────────────────────────────────────
   listRegistrations: (examScheduleId: string) =>
-    get<ExamRegistration[]>(`/api/v1/exam-registrations/schedule/${examScheduleId}`),
+    get<ExamRegistration[]>(
+      `/api/v1/exam-registrations/schedule/${examScheduleId}`
+    ),
 
   // ── Attempts (Faculty view) ─────────────────────────────────────────────────
   getExamAttempts: (examId: string) =>
@@ -114,7 +131,7 @@ export const facultyApi = {
 
   getAttemptTimeline: (attemptId: string) =>
     get<Array<{ source: string; event: string; time: string }>>(
-      `/api/v1/exam-attempts/${attemptId}/timeline`,
+      `/api/v1/exam-attempts/${attemptId}/timeline`
     ),
 
   // ── Grading ─────────────────────────────────────────────────────────────────
@@ -161,7 +178,9 @@ export const facultyApi = {
 
   // ── Notifications ───────────────────────────────────────────────────────────
   getNotifications: (unreadOnly?: boolean) =>
-    get<Notification[]>(`/api/v1/notifications/${unreadOnly ? "?unread_only=true" : ""}`),
+    get<Notification[]>(
+      `/api/v1/notifications/${unreadOnly ? "?unread_only=true" : ""}`
+    ),
 
   markNotificationRead: (notificationId: string) =>
     patch(`/api/v1/notifications/${notificationId}/read`),
@@ -171,6 +190,7 @@ export const facultyApi = {
 
   // ── Master Data ─────────────────────────────────────────────────────────────
   listDepartments: () => get<Department[]>("/api/v1/departments/"),
+
   listCourses: (departmentId?: string) => {
     const qs = departmentId ? `?department_id=${departmentId}` : "";
     return get<Course[]>(`/api/v1/courses/${qs}`);

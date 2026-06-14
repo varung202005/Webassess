@@ -11,9 +11,10 @@ export class ApiError extends Error {
 }
 
 /**
- * Thin fetch wrapper that attaches the Supabase JWT to every request,
- * per RESPONSIBILITY_MAP.md rule #2:
- * "Every protected backend call needs Authorization: Bearer <token>".
+ * Thin fetch wrapper that attaches the Supabase JWT to every request.
+ * DO NOT set Content-Type here for multipart/form-data — the browser must
+ * set it automatically so it includes the correct boundary parameter.
+ * For JSON requests the header is set explicitly below.
  */
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = useAuthStore.getState().token;
@@ -23,6 +24,8 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      // Per-call headers come last so callers can override Content-Type
+      // (e.g. file upload strips it entirely via apiFile below)
       ...options.headers,
     },
   });
@@ -34,7 +37,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       const parsed = JSON.parse(body) as { detail?: string };
       message = parsed.detail ?? message;
     } catch {
-      // Non-JSON backend response.
+      // Non-JSON error body — use raw text
     }
     throw new ApiError(res.status, message);
   }
@@ -43,9 +46,41 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return res.json() as Promise<T>;
 }
 
-export const get = <T>(path: string) => api<T>(path, { method: "GET" });
+/**
+ * File upload variant — sends multipart/form-data.
+ * Does NOT set Content-Type so the browser can supply the boundary.
+ */
+export async function apiFile<T>(path: string, formData: FormData): Promise<T> {
+  const token = useAuthStore.getState().token;
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    body: formData,
+    headers: {
+      // No Content-Type — browser sets it with the correct multipart boundary
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let message = body || res.statusText;
+    try {
+      const parsed = JSON.parse(body) as { detail?: string };
+      message = parsed.detail ?? message;
+    } catch {
+      // Non-JSON error body
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+export const get  = <T>(path: string) => api<T>(path, { method: "GET" });
 export const post = <T>(path: string, body?: unknown) =>
   api<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 export const patch = <T>(path: string, body?: unknown) =>
   api<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined });
-export const del = <T>(path: string) => api<T>(path, { method: "DELETE" });
+export const del  = <T>(path: string) => api<T>(path, { method: "DELETE" });
