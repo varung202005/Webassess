@@ -7,6 +7,10 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
 
+
+
+    GROQ_API_KEY: str = ""   # empty string default so server starts even without it
+
     # Supabase
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str   # Server-side only — never expose to frontend
@@ -14,6 +18,8 @@ class Settings(BaseSettings):
 
     # JWT — Supabase signs JWTs with this secret
     SUPABASE_JWT_SECRET: str
+
+    
 
     # CORS
     ALLOWED_ORIGINS: list[str] = [

@@ -581,8 +581,8 @@ function PdfImportPanel({
         <i className="ti ti-file-upload import-drop-icon" />
         <div className="import-drop-title">Import Questions from PDF or DOCX</div>
         <div className="import-drop-sub">
-          Text-based PDFs only (Word export, LaTeX, Google Docs) · Supports MCQ, MSQ, True/False<br />
-          Number questions (1., 2., …) · Label options A–D · Mark answers with * or add an Answer Key section
+          Supports Google Forms PDFs &amp; standard MCQ PDFs (auto-detected) · Text-based PDFs only<br />
+          Questions numbered 1., 2., … · Answers inferred free via Groq AI when not in PDF
         </div>
         {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
         <button className="btn btn-secondary" type="button">
@@ -598,9 +598,13 @@ function PdfImportPanel({
       <div className="import-processing">
         <span className="spinner" />
         <div className="import-proc-title">
-          {status === "uploading" ? "Uploading file…" : "Extracting questions…"}
+          {status === "uploading" ? "Uploading file…" : "Extracting questions & inferring answers via Groq AI…"}
         </div>
-        <div className="import-proc-sub">This takes a few seconds for most documents</div>
+        <div className="import-proc-sub">
+          {status === "extracting"
+            ? "Parsing PDF then asking Groq (free) for correct answers — takes 5–10 seconds"
+            : "Uploading…"}
+        </div>
       </div>
     );
   }
@@ -696,7 +700,7 @@ function PdfImportPanel({
                     <td>{q.marks}</td>
                     <td className="ans-cell">
                       {correctAnswers.length > 0
-                        ? correctAnswers.join(", ")
+                        ? <>{correctAnswers.join(", ")}<span className="ai-badge" title="Answer inferred by AI">✦ AI</span></>
                         : <span style={{ color: "#dc2626" }}>No answer detected</span>}
                     </td>
                     <td>
