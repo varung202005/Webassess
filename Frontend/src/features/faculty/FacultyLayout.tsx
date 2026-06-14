@@ -7,39 +7,38 @@ import { facultyApi } from "./api";
 import type { Notification } from "./types";
 import "./faculty.css";
 
+// Question Bank removed from nav — merged into Create Exam workspace
 const navGroups = [
   {
     label: "Main",
     items: [
-      { key: "dashboard", label: "Dashboard", icon: "ti-layout-dashboard", path: "/faculty/dashboard" },
-      { key: "question-bank", label: "Question Bank", icon: "ti-books", path: "/faculty/question-bank" },
-      { key: "create-exam", label: "Create Exam", icon: "ti-file-plus", path: "/faculty/create-exam" },
-      { key: "evaluation", label: "Evaluation", icon: "ti-writing", path: "/faculty/evaluation" },
+      { key: "dashboard",   label: "Dashboard",  icon: "ti-layout-dashboard", path: "/faculty/dashboard" },
+      { key: "create-exam", label: "Create Exam", icon: "ti-file-plus",        path: "/faculty/create-exam" },
+      { key: "evaluation",  label: "Evaluation",  icon: "ti-writing",          path: "/faculty/evaluation" },
     ],
   },
   {
     label: "Insights",
     items: [
       { key: "analytics", label: "Analytics", icon: "ti-device-desktop-analytics", path: "/faculty/analytics" },
-      { key: "schedules", label: "Schedules", icon: "ti-calendar-stats", path: "/faculty/schedules" },
+      { key: "schedules", label: "Schedules", icon: "ti-calendar-stats",           path: "/faculty/schedules" },
     ],
   },
   {
     label: "Management",
     items: [
       { key: "reevaluations", label: "Re-evaluations", icon: "ti-refresh-alert", path: "/faculty/reevaluations" },
-      { key: "notifications", label: "Notifications", icon: "ti-bell", path: "/faculty/notifications" },
+      { key: "notifications", label: "Notifications",  icon: "ti-bell",          path: "/faculty/notifications" },
     ],
   },
 ];
 
 const routeTitles: Record<string, string> = {
-  "/faculty/dashboard": "Dashboard",
-  "/faculty/question-bank": "Question Bank",
-  "/faculty/create-exam": "Create Exam",
-  "/faculty/evaluation": "Evaluation",
-  "/faculty/analytics": "Analytics",
-  "/faculty/schedules": "Schedules",
+  "/faculty/dashboard":     "Dashboard",
+  "/faculty/create-exam":   "Create Exam",
+  "/faculty/evaluation":    "Evaluation",
+  "/faculty/analytics":     "Analytics",
+  "/faculty/schedules":     "Schedules",
   "/faculty/reevaluations": "Re-evaluations",
   "/faculty/notifications": "Notifications",
 };
@@ -52,10 +51,7 @@ interface FacultyLayoutProps {
   actions?: React.ReactNode;
 }
 
-export default function FacultyLayout({
-  activePage,
-  children,
-}: FacultyLayoutProps) {
+export default function FacultyLayout({ activePage, children }: FacultyLayoutProps) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("faculty-sidebar") === "collapsed");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);

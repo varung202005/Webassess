@@ -1,15 +1,3 @@
-"""
-Questions endpoints — Question Bank.
-
-WHO DOES WHAT:
-  - Create / edit question form  → FRONTEND (UI form) + BACKEND (POST/PATCH)
-  - Question list / filters      → FRONTEND (renders) + BACKEND (query with filters)
-  - Add options to a question    → BACKEND (POST /questions/{id}/options)
-  - Soft delete question         → BACKEND only (sets is_active=FALSE)
-  - Tag topics to question       → BACKEND only
-  
-  NOTE: Never hard-delete questions — they may be linked to past exam_questions.
-"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Literal
@@ -39,7 +27,7 @@ class TopicCreate(BaseModel):
 
 
 class QuestionCreate(BaseModel):
-    course_id: UUID
+    course_id: Optional[UUID] = None   # CHANGED: now optional — questions can exist without a course
     question_type: QuestionType
     question_text: str
     marks: int
@@ -112,7 +100,7 @@ async def create_question(
     # 1. Insert question
     q_data = {
         "created_by": current_user["user_id"],
-        "course_id": str(body.course_id),
+        "course_id": str(body.course_id) if body.course_id else None,  # CHANGED: allow NULL course
         "question_type": body.question_type,
         "question_text": body.question_text,
         "marks": body.marks,

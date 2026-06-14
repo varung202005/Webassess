@@ -1,49 +1,58 @@
-import { useState } from "react";
+/**
+ * CreateExam.tsx — Complete Exam Creation Workspace
+ *
+ * Integrates:
+ *  - Question Repository Overview (stats cards)
+ *  - Exam Basic Info form (2-col grid)
+ *  - Question Management (select existing / create new MCQ/MSQ/TRUE_FALSE)
+ *  - PDF/DOCX import with AI extraction review
+ *  - Auto-generate exam from question pool
+ *  - Exam rules + schedule
+ *  - Preview & publish
+ *
+ * Question Bank standalone page is REMOVED — all question mgmt lives here.
+ *
+ * NOTE: Course is no longer a required concept in this flow.
+ * - The Course selector has been removed from Exam Info.
+ * - form.course_id is always "" and is sent to the backend as null.
+ * - Question creation no longer requires a course_id.
+ */
+
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
-import { Loading, ErrorBlock, EmptyState, PageHeading } from "../../features/faculty/components";
-import { useFacultyDashboard, useExams, useFacultyAction } from "../../features/faculty/hooks";
+import { PageState } from "../../features/faculty/components";
+import { useFacultyDashboard, useQuestions } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
-import type { ExamSection, ExamRule } from "../../features/faculty/types";
+import type { Question } from "../../features/faculty/types";
 
-/* ── Mutation helpers ─────────────────────────────────────── */
-function useCreateExam() {
-  return useFacultyAction(
-    (body: Record<string, unknown>) => facultyApi.createExam(body),
-    [["exams"]],
-  );
+// ── Stepper steps ──────────────────────────────────────────────────────────
+const STEPS = [
+  { id: "info",      label: "Exam Info",   icon: "ti-info-circle" },
+  { id: "questions", label: "Questions",   icon: "ti-list-check" },
+  { id: "rules",     label: "Rules",       icon: "ti-shield-check" },
+  { id: "schedule",  label: "Schedule",    icon: "ti-calendar" },
+  { id: "preview",   label: "Preview",     icon: "ti-eye" },
+];
+
+type Step = (typeof STEPS)[number]["id"];
+type QuestionType = "MCQ" | "MSQ" | "TRUE_FALSE";
+type Difficulty = "EASY" | "MEDIUM" | "HARD";
+type ImportStatus = "idle" | "uploading" | "extracting" | "review" | "saving";
+
+interface ExtractedQuestion {
+  id: string;
+  question_text: string;
+  question_type: QuestionType;
+  options: { text: string; is_correct: boolean }[];
+  marks: number;
+  difficulty: Difficulty;
+  confidence: number;
+  needs_review: boolean;
+  approved: boolean;
 }
 
-function useCreateSection() {
-  return useFacultyAction(
-    (body: Record<string, unknown>) => facultyApi.createExamSection(body),
-    [["exam-sections"]],
-  );
-}
-
-function useUpsertRules() {
-  return useFacultyAction(
-    (body: Record<string, unknown>) => facultyApi.upsertExamRules(body),
-    [["exam-rules"]],
-  );
-}
-
-function useCreateSchedule() {
-  return useFacultyAction(
-    (body: Record<string, unknown>) => facultyApi.createSchedule(body),
-    [["exam-schedules"]],
-  );
-}
-
-/* ── Types ─────────────────────────────────────────────────── */
-interface SectionDraft {
-  title: string;
-  question_count: number;
-  marks_per_question: number;
-  question_type: string;
-}
-
-interface ExamDraft {
+interface ExamForm {
   title: string;
   course_id: string;
   exam_type: string;
@@ -55,805 +64,927 @@ interface ExamDraft {
   shuffle_options: boolean;
 }
 
-interface RuleDraft {
-  allow_backtrack: boolean;
-  mark_for_review: boolean;
-  require_fullscreen: boolean;
-  enable_proctoring: boolean;
-  camera_required: boolean;
-  microphone_required: boolean;
-  max_tab_switches: number;
-  auto_save_interval_seconds: number;
+interface NewQuestion {
+  question_type: QuestionType;
+  question_text: string;
+  marks: number;
+  negative_marks: number;
+  difficulty: Difficulty;
+  options: { option_text: string; is_correct: boolean; order_index: number }[];
 }
 
-interface ScheduleDraft {
-  start_time: string;
-  end_time: string;
-  department_ids: string[];
-}
-
-const STEPS = ["Basic Info", "Sections", "Questions", "Rules", "Schedule", "Preview"];
-
-const EXAM_TYPES = ["MID_SEMESTER", "END_SEMESTER", "QUIZ", "UNIT_TEST", "PRACTICE"];
-
-const SECTION_TYPES = ["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER", "LONG_ANSWER"];
-
-/* ── Step Components ───────────────────────────────────────── */
-
-function StepBasicInfo({
-  draft,
-  setDraft,
-  courses,
-  onNext,
-}: {
-  draft: ExamDraft;
-  setDraft: (d: ExamDraft) => void;
-  courses: Array<{ id: string; name: string; code: string }>;
-  onNext: () => void;
+// ── Stat Card ──────────────────────────────────────────────────────────────
+function StatCard({ label, value, icon, color = "#8b1a1a" }: {
+  label: string; value: number | string; icon: string; color?: string;
 }) {
-  const set = <K extends keyof ExamDraft>(key: K, val: ExamDraft[K]) =>
-    setDraft({ ...draft, [key]: val });
-
   return (
-    <div className="form-section" id="step1-form">
-      <div className="form-section-title">
-        <i className="ti ti-info-circle" /> Basic Exam Information
+    <div className="repo-stat-card">
+      <div className="repo-stat-icon" style={{ background: `${color}15`, color }}>
+        <i className={`ti ${icon}`} />
       </div>
-
-      <div className="form-row form-row-full">
-        <div className="form-group">
-          <label className="form-label">
-            Exam Title <span>*</span>
-          </label>
-          <input
-            className="form-control"
-            value={draft.title}
-            onChange={(e) => set("title", e.target.value)}
-            placeholder="e.g. Data Structures Mid Semester 2025"
-          />
-        </div>
-      </div>
-
-      <div className="form-row">
-        <div className="form-group">
-          <label className="form-label">
-            Course <span>*</span>
-          </label>
-          <select
-            className="form-control"
-            value={draft.course_id}
-            onChange={(e) => set("course_id", e.target.value)}
-          >
-            <option value="">Select course…</option>
-            {courses.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.code} · {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Exam Type</label>
-          <select
-            className="form-control"
-            value={draft.exam_type}
-            onChange={(e) => set("exam_type", e.target.value)}
-          >
-            {EXAM_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="form-row form-row-3">
-        <div className="form-group">
-          <label className="form-label">
-            Duration (minutes) <span>*</span>
-          </label>
-          <input
-            className="form-control"
-            type="number"
-            value={draft.duration_minutes}
-            min={1}
-            onChange={(e) => set("duration_minutes", Number(e.target.value))}
-          />
-        </div>
-        <div className="form-group">
-          <label className="form-label">
-            Total Marks <span>*</span>
-          </label>
-          <input
-            className="form-control"
-            type="number"
-            value={draft.total_marks}
-            min={1}
-            onChange={(e) => set("total_marks", Number(e.target.value))}
-          />
-        </div>
-        <div className="form-group">
-          <label className="form-label">
-            Pass Marks <span>*</span>
-          </label>
-          <input
-            className="form-control"
-            type="number"
-            value={draft.pass_marks}
-            min={1}
-            onChange={(e) => set("pass_marks", Number(e.target.value))}
-          />
-        </div>
-      </div>
-
-      <div className="form-row form-row-full">
-        <div className="form-group">
-          <label className="form-label">Instructions</label>
-          <textarea
-            className="form-control"
-            rows={4}
-            value={draft.instructions}
-            onChange={(e) => set("instructions", e.target.value)}
-            placeholder="Exam instructions for students…"
-          />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 20, marginTop: 4 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13.5px", cursor: "pointer" }}>
-          <input type="checkbox" checked={draft.shuffle_questions} onChange={(e) => set("shuffle_questions", e.target.checked)} />
-          Shuffle questions
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13.5px", cursor: "pointer" }}>
-          <input type="checkbox" checked={draft.shuffle_options} onChange={(e) => set("shuffle_options", e.target.checked)} />
-          Shuffle answer options
-        </label>
-      </div>
-
-      <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <button className="btn btn-primary" onClick={onNext} disabled={!draft.title || !draft.course_id}>
-          <i className="ti ti-arrow-right" /> Next: Sections
-        </button>
+      <div className="repo-stat-body">
+        <div className="repo-stat-value">{value}</div>
+        <div className="repo-stat-label">{label}</div>
       </div>
     </div>
   );
 }
 
-function StepSections({
-  sections,
-  setSections,
-  onBack,
-  onNext,
-}: {
-  sections: SectionDraft[];
-  setSections: (s: SectionDraft[]) => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const [showModal, setShowModal] = useState(false);
-  const [newSection, setNewSection] = useState<SectionDraft>({
-    title: "",
-    question_count: 10,
-    marks_per_question: 2,
-    question_type: "MCQ",
-  });
-
-  const addSection = () => {
-    if (!newSection.title) return;
-    setSections([...sections, { ...newSection }]);
-    setNewSection({ title: "", question_count: 10, marks_per_question: 2, question_type: "MCQ" });
-    setShowModal(false);
-  };
-
-  const removeSection = (idx: number) => {
-    setSections(sections.filter((_, i) => i !== idx));
-  };
-
-  const totalMarksFromSections = sections.reduce(
-    (sum, s) => sum + s.question_count * s.marks_per_question,
-    0,
-  );
-
+// ── Repository Overview ────────────────────────────────────────────────────
+function RepositoryOverview({ portal }: { portal: ReturnType<typeof useFacultyDashboard>["data"] }) {
+  const qs = portal?.questionStats;
+  const byType = qs?.byType ?? {};
   return (
-    <div className="form-section">
-      <div className="form-section-title">
-        <i className="ti ti-layout-columns" /> Exam Sections
+    <div className="repo-overview">
+      <div className="repo-overview-header">
+        <h2 className="section-title"><i className="ti ti-database" /> Question Repository</h2>
+        <span className="section-sub">Your personal question bank — reuse across exams</span>
       </div>
-      <p style={{ fontSize: 13, color: "var(--c-gray-600)", marginBottom: 20 }}>
-        Divide your exam into logical sections. Each section can have its own marks allocation and question pool.
-      </p>
+      <div className="repo-stats-grid">
+        <StatCard label="Total Questions" value={qs?.total ?? 0}  icon="ti-books"        color="#8b1a1a" />
+        <StatCard label="MCQ"             value={byType.MCQ ?? 0} icon="ti-circle-dot"   color="#2563eb" />
+        <StatCard label="MSQ"             value={byType.MSQ ?? 0} icon="ti-checkbox"     color="#7c3aed" />
+        <StatCard label="True / False"    value={byType.TRUE_FALSE ?? 0} icon="ti-toggle-left" color="#059669" />
+        <StatCard label="Active"          value={qs?.active ?? 0} icon="ti-circle-check" color="#d97706" />
+        <StatCard label="Courses Covered" value={portal?.courses?.length ?? 0} icon="ti-book" color="#0891b2" />
+      </div>
+    </div>
+  );
+}
 
-      <div className="section-builder">
-        <div className="section-builder-hdr">
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--c-gray-600)" }}>
-            {sections.length} SECTIONS ·{" "}
-            {sections.reduce((s, sec) => s + sec.question_count, 0)} QUESTIONS TOTAL
-          </span>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>
-            <i className="ti ti-plus" /> Add Section
+// ── Stepper ────────────────────────────────────────────────────────────────
+function Stepper({ steps, current, onStep }: {
+  steps: typeof STEPS; current: number; onStep: (i: number) => void;
+}) {
+  return (
+    <div className="exam-stepper">
+      {steps.map((s, i) => (
+        <div key={s.id} className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}>
+          <button
+            className="stepper-btn"
+            onClick={() => i < current && onStep(i)}
+            disabled={i > current}
+          >
+            <div className="stepper-circle">
+              {i < current ? <i className="ti ti-check" /> : <span>{i + 1}</span>}
+            </div>
+            <span className="stepper-label">{s.label}</span>
           </button>
+          {i < steps.length - 1 && <div className="stepper-line" />}
         </div>
-
-        {sections.length === 0 && (
-          <div style={{ padding: 32, textAlign: "center", color: "var(--c-gray-500)" }}>
-            <i className="ti ti-layout-columns" style={{ fontSize: 32, marginBottom: 8, opacity: 0.4 }} />
-            <div>No sections yet. Add your first exam section.</div>
-          </div>
-        )}
-
-        {sections.map((sec, idx) => (
-          <div className="section-row" key={idx}>
-            <i className="ti ti-grip-vertical section-drag" />
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: "50%",
-                background: "var(--c-primary-100)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 12,
-                fontWeight: 700,
-                color: "var(--c-primary-700)",
-                flexShrink: 0,
-              }}
-            >
-              {idx + 1}
-            </div>
-            <div className="section-info">
-              <div className="section-name">{sec.title}</div>
-              <div className="section-meta">
-                {sec.question_count} questions · {sec.marks_per_question} marks each ·{" "}
-                {sec.question_count * sec.marks_per_question} total marks · {sec.question_type}
-              </div>
-            </div>
-            <div className="section-actions">
-              <button className="btn btn-secondary btn-sm" onClick={() => removeSection(idx)}>
-                <i className="ti ti-trash" />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {sections.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginTop: 14,
-            padding: "12px 14px",
-            background: "var(--c-gray-50)",
-            borderRadius: "var(--radius-lg)",
-            border: "1px solid var(--c-border)",
-          }}
-        >
-          <div style={{ fontSize: 13, color: "var(--c-gray-600)" }}>
-            Marks tally:{" "}
-            <strong>
-              {sections.map((s, i) => `${s.question_count * s.marks_per_question}`).join(" + ")} = {totalMarksFromSections}
-            </strong>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 13,
-              fontWeight: 600,
-              color: "var(--c-success-700)",
-            }}
-          >
-            <i className="ti ti-check" /> Total: {totalMarksFromSections} marks
-          </div>
-        </div>
-      )}
-
-      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
-        <button className="btn btn-secondary" onClick={onBack}>
-          <i className="ti ti-arrow-left" /> Back
-        </button>
-        <button className="btn btn-primary" onClick={onNext}>
-          Next: Questions <i className="ti ti-arrow-right" />
-        </button>
-      </div>
-
-      {/* Add Section Modal */}
-      {showModal && (
-        <div
-          className="modal-backdrop"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowModal(false);
-          }}
-        >
-          <div
-            className="modal"
-            style={{ maxWidth: 480 }}
-          >
-            <div
-              style={{
-                padding: "22px 24px",
-                borderBottom: "1px solid var(--c-border)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--c-gray-900)" }}>
-                Add Exam Section
-              </div>
-              <button
-                onClick={() => setShowModal(false)}
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "var(--radius-lg)",
-                  border: "1px solid var(--c-border)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  fontSize: 18,
-                  color: "var(--c-gray-600)",
-                  background: "#fff",
-                }}
-              >
-                <i className="ti ti-x" />
-              </button>
-            </div>
-            <div style={{ padding: 24 }}>
-              <div className="form-group" style={{ marginBottom: 16 }}>
-                <label className="form-label">
-                  Section Title <span style={{ color: "var(--c-danger-500)" }}>*</span>
-                </label>
-                <input
-                  className="form-control"
-                  placeholder="e.g. Section A — MCQ"
-                  value={newSection.title}
-                  onChange={(e) =>
-                    setNewSection({ ...newSection, title: e.target.value })
-                  }
-                />
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
-                  marginBottom: 16,
-                }}
-              >
-                <div className="form-group">
-                  <label className="form-label">Question Count</label>
-                  <input
-                    className="form-control"
-                    type="number"
-                    value={newSection.question_count}
-                    min={1}
-                    onChange={(e) =>
-                      setNewSection({
-                        ...newSection,
-                        question_count: Number(e.target.value),
-                      })
-                    }
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Marks per Question</label>
-                  <input
-                    className="form-control"
-                    type="number"
-                    value={newSection.marks_per_question}
-                    min={1}
-                    onChange={(e) =>
-                      setNewSection({
-                        ...newSection,
-                        marks_per_question: Number(e.target.value),
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="form-group" style={{ marginBottom: 20 }}>
-                <label className="form-label">Question Type</label>
-                <select
-                  className="form-control"
-                  value={newSection.question_type}
-                  onChange={(e) =>
-                    setNewSection({ ...newSection, question_type: e.target.value })
-                  }
-                >
-                  {SECTION_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t === "TRUE_FALSE"
-                        ? "True / False"
-                        : t === "SHORT_ANSWER"
-                          ? "Short Answer"
-                          : t === "LONG_ANSWER"
-                            ? "Long Answer"
-                            : t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button className="btn btn-secondary" onClick={() => setShowModal(false)}>
-                  Cancel
-                </button>
-                <button className="btn btn-primary" onClick={addSection}>
-                  <i className="ti ti-plus" /> Add Section
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      ))}
     </div>
   );
 }
 
-function StepQuestions({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
-  return (
-    <div className="form-section">
-      <div className="form-section-title">
-        <i className="ti ti-books" /> Question Selection
-      </div>
-      <p style={{ fontSize: 13, color: "var(--c-gray-600)", marginBottom: 20 }}>
-        Select questions for each section from your question bank.
-      </p>
-
-      <div
-        style={{
-          padding: 32,
-          textAlign: "center",
-          background: "var(--c-gray-50)",
-          borderRadius: "var(--radius-lg)",
-          border: "2px dashed var(--c-border)",
-        }}
-      >
-        <i className="ti ti-books" style={{ fontSize: 40, color: "var(--c-gray-300)", marginBottom: 12 }} />
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--c-gray-600)", marginBottom: 4 }}>
-          Question Selection Coming Soon
-        </div>
-        <div style={{ fontSize: 13, color: "var(--c-gray-500)", marginBottom: 16 }}>
-          Pick questions from your bank to create the exam paper. You can filter by topic, type, and difficulty.
-        </div>
-        <button className="btn btn-primary" disabled>
-          <i className="ti ti-plus" /> Browse Question Bank
-        </button>
-      </div>
-
-      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
-        <button className="btn btn-secondary" onClick={onBack}>
-          <i className="ti ti-arrow-left" /> Back
-        </button>
-        <button className="btn btn-primary" onClick={onNext}>
-          Next: Rules <i className="ti ti-arrow-right" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StepRules({
-  rules,
-  setRules,
-  onBack,
-  onNext,
+// ── Step 1: Exam Info ──────────────────────────────────────────────────────
+function StepExamInfo({
+  form, onChange,
 }: {
-  rules: RuleDraft;
-  setRules: (r: RuleDraft) => void;
-  onBack: () => void;
-  onNext: () => void;
+  form: ExamForm;
+  onChange: (f: Partial<ExamForm>) => void;
 }) {
-  const set = <K extends keyof RuleDraft>(key: K, val: RuleDraft[K]) =>
-    setRules({ ...rules, [key]: val });
-
   return (
-    <div className="form-section">
-      <div className="form-section-title">
-        <i className="ti ti-shield" /> Exam Rules
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Basic Exam Information</h3>
+        <p>Configure the core details of your exam. All fields marked * are required.</p>
       </div>
-
-      <div className="rules-grid">
-        {[
-          { key: "allow_backtrack" as const, label: "Allow Backtrack", sub: "Students can revisit answered questions" },
-          { key: "mark_for_review" as const, label: "Mark for Review", sub: "Enable flag for review button" },
-          { key: "require_fullscreen" as const, label: "Require Fullscreen", sub: "Force fullscreen mode during exam" },
-          { key: "enable_proctoring" as const, label: "Enable Proctoring", sub: "Face, browser, audio monitoring" },
-          { key: "camera_required" as const, label: "Camera Required", sub: "Block exam if camera unavailable" },
-          { key: "microphone_required" as const, label: "Microphone Required", sub: "Block exam if mic unavailable" },
-        ].map(({ key, label, sub }) => (
-          <div className="toggle-row" key={key}>
-            <div>
-              <div className="toggle-label">{label}</div>
-              <div className="toggle-sub">{sub}</div>
-            </div>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={rules[key]}
-                onChange={(e) => set(key, e.target.checked)}
-              />
-              <span className="toggle-slider" />
+      <div className="form-grid-1col">
+        <div className="form-field">
+          <label>Exam Title *</label>
+          <input
+            className="form-input"
+            placeholder="e.g. Data Structures Mid Semester 2025"
+            value={form.title}
+            onChange={(e) => onChange({ title: e.target.value })}
+          />
+        </div>
+      </div>
+      <div className="form-grid-2col">
+        <div className="form-field">
+          <label>Exam Type</label>
+          <select
+            className="form-select"
+            value={form.exam_type}
+            onChange={(e) => onChange({ exam_type: e.target.value })}
+          >
+            {["MID_SEMESTER","END_SEMESTER","QUIZ","ASSIGNMENT","PRACTICE","PLACEMENT","ENTRANCE"].map((t) => (
+              <option key={t} value={t}>{t.replace("_", " ")}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-field">
+          <label>Duration (minutes) *</label>
+          <input
+            type="number" className="form-input" min={10} max={360}
+            value={form.duration_minutes}
+            onChange={(e) => onChange({ duration_minutes: +e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>Total Marks *</label>
+          <input
+            type="number" className="form-input" min={1}
+            value={form.total_marks}
+            onChange={(e) => onChange({ total_marks: +e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>Pass Marks *</label>
+          <input
+            type="number" className="form-input" min={1}
+            value={form.pass_marks}
+            onChange={(e) => onChange({ pass_marks: +e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>&nbsp;</label>
+          <div className="checkbox-group">
+            <label className="checkbox-label">
+              <input type="checkbox" checked={form.shuffle_questions}
+                onChange={(e) => onChange({ shuffle_questions: e.target.checked })} />
+              Shuffle Questions
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={form.shuffle_options}
+                onChange={(e) => onChange({ shuffle_options: e.target.checked })} />
+              Shuffle Options
             </label>
           </div>
-        ))}
-      </div>
-
-      <div className="form-row" style={{ marginTop: 16 }}>
-        <div className="form-group">
-          <label className="form-label">Max Tab Switches Allowed</label>
-          <input
-            className="form-control"
-            type="number"
-            value={rules.max_tab_switches}
-            min={1}
-            onChange={(e) => set("max_tab_switches", Number(e.target.value))}
-          />
-          <span className="form-hint">Exam auto-submits if exceeded</span>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Auto-save Interval (seconds)</label>
-          <input
-            className="form-control"
-            type="number"
-            value={rules.auto_save_interval_seconds}
-            min={5}
-            onChange={(e) => set("auto_save_interval_seconds", Number(e.target.value))}
-          />
         </div>
       </div>
-
-      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
-        <button className="btn btn-secondary" onClick={onBack}>
-          <i className="ti ti-arrow-left" /> Back
-        </button>
-        <button className="btn btn-primary" onClick={onNext}>
-          Next: Schedule <i className="ti ti-arrow-right" />
-        </button>
+      <div className="form-field">
+        <label>Instructions for Students</label>
+        <textarea
+          className="form-textarea"
+          rows={4}
+          placeholder="e.g. All questions are compulsory. Each MCQ carries 1 mark. Negative marking of 0.25 applies..."
+          value={form.instructions}
+          onChange={(e) => onChange({ instructions: e.target.value })}
+        />
       </div>
     </div>
   );
 }
 
-function StepSchedule({
-  schedule,
-  setSchedule,
-  departments,
-  onBack,
-  onNext,
-}: {
-  schedule: ScheduleDraft;
-  setSchedule: (s: ScheduleDraft) => void;
-  departments: Array<{ id: string; name: string; code: string }>;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const set = <K extends keyof ScheduleDraft>(key: K, val: ScheduleDraft[K]) =>
-    setSchedule({ ...schedule, [key]: val });
+// ── Question Row for selection ─────────────────────────────────────────────
+function QuestionRow({
+  q, selected, onToggle,
+}: { q: Question; selected: boolean; onToggle: () => void }) {
+  const typeColor: Record<string, string> = {
+    MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669",
+  };
+  const diffColor: Record<string, string> = {
+    EASY: "#059669", MEDIUM: "#d97706", HARD: "#dc2626",
+  };
+  return (
+    <div className={`q-row ${selected ? "q-row-selected" : ""}`} onClick={onToggle}>
+      <div className="q-row-check">
+        <input type="checkbox" checked={selected} onChange={onToggle} onClick={(e) => e.stopPropagation()} />
+      </div>
+      <div className="q-row-body">
+        <div className="q-row-text">{q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}</div>
+        <div className="q-row-meta">
+          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>
+            {q.question_type}
+          </span>
+          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty] }}>
+            {q.difficulty}
+          </span>
+          <span className="q-badge">{q.marks} mark{q.marks !== 1 ? "s" : ""}</span>
+          {q.courses && <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const toggleDept = (id: string) => {
-    const has = schedule.department_ids.includes(id);
-    set(
-      "department_ids",
-      has
-        ? schedule.department_ids.filter((d) => d !== id)
-        : [...schedule.department_ids, id],
-    );
+// ── Create Question Form ───────────────────────────────────────────────────
+function CreateQuestionForm({
+  courseId, onSaved,
+}: { courseId: string; onSaved: (q: Question) => void }) {
+  const [form, setForm] = useState<NewQuestion>({
+    question_type: "MCQ",
+    question_text: "",
+    marks: 1,
+    negative_marks: 0,
+    difficulty: "MEDIUM",
+    options: [
+      { option_text: "", is_correct: false, order_index: 0 },
+      { option_text: "", is_correct: false, order_index: 1 },
+      { option_text: "", is_correct: false, order_index: 2 },
+      { option_text: "", is_correct: false, order_index: 3 },
+    ],
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const setType = (qt: QuestionType) => {
+    if (qt === "TRUE_FALSE") {
+      setForm((f) => ({
+        ...f,
+        question_type: qt,
+        options: [
+          { option_text: "True", is_correct: false, order_index: 0 },
+          { option_text: "False", is_correct: false, order_index: 1 },
+        ],
+      }));
+    } else {
+      setForm((f) => ({
+        ...f,
+        question_type: qt,
+        options: f.options.length < 4
+          ? [...f.options, ...Array(4 - f.options.length).fill({ option_text: "", is_correct: false, order_index: 0 })].map((o, i) => ({ ...o, order_index: i }))
+          : f.options,
+      }));
+    }
+  };
+
+  const toggleCorrect = (idx: number) => {
+    setForm((f) => ({
+      ...f,
+      options: f.options.map((o, i) => ({
+        ...o,
+        // MCQ/TRUE_FALSE: only one correct; MSQ: multiple
+        is_correct: f.question_type === "MSQ"
+          ? (i === idx ? !o.is_correct : o.is_correct)
+          : i === idx,
+      })),
+    }));
+  };
+
+  const save = async () => {
+    if (!form.question_text.trim()) return setError("Question text is required.");
+    const hasCorrect = form.options.some((o) => o.is_correct);
+    if (!hasCorrect) return setError("Mark at least one correct answer.");
+    setSaving(true);
+    setError("");
+    try {
+      const res = await facultyApi.createQuestion({
+        course_id: courseId || null,
+        question_type: form.question_type,
+        question_text: form.question_text,
+        marks: form.marks,
+        negative_marks: form.negative_marks,
+        difficulty: form.difficulty,
+        options: form.options.filter((o) => o.option_text.trim()),
+        topics: [],
+      });
+      const full = await facultyApi.getQuestion(res.question_id);
+      onSaved(full);
+      setForm({
+        question_type: "MCQ",
+        question_text: "",
+        marks: 1,
+        negative_marks: 0,
+        difficulty: "MEDIUM",
+        options: [
+          { option_text: "", is_correct: false, order_index: 0 },
+          { option_text: "", is_correct: false, order_index: 1 },
+          { option_text: "", is_correct: false, order_index: 2 },
+          { option_text: "", is_correct: false, order_index: 3 },
+        ],
+      });
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to save question");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="form-section">
-      <div className="form-section-title">
-        <i className="ti ti-calendar-event" /> Exam Schedule
+    <div className="create-q-form">
+      <div className="form-grid-3col">
+        <div className="form-field">
+          <label>Question Type</label>
+          <select className="form-select" value={form.question_type} onChange={(e) => setType(e.target.value as QuestionType)}>
+            <option value="MCQ">MCQ (Single correct)</option>
+            <option value="MSQ">MSQ (Multiple correct)</option>
+            <option value="TRUE_FALSE">True / False</option>
+          </select>
+        </div>
+        <div className="form-field">
+          <label>Marks</label>
+          <input type="number" className="form-input" min={1} max={100} value={form.marks}
+            onChange={(e) => setForm((f) => ({ ...f, marks: +e.target.value }))} />
+        </div>
+        <div className="form-field">
+          <label>Negative Marks</label>
+          <input type="number" className="form-input" min={0} step={0.25} value={form.negative_marks}
+            onChange={(e) => setForm((f) => ({ ...f, negative_marks: +e.target.value }))} />
+        </div>
       </div>
-
-      <div className="form-row form-row-full">
-        <div className="form-group">
-          <label className="form-label">
-            Start Time <span>*</span>
-          </label>
-          <input
-            className="form-control"
-            type="datetime-local"
-            value={schedule.start_time}
-            onChange={(e) => set("start_time", e.target.value)}
+      <div className="form-grid-2col">
+        <div className="form-field col-span-2">
+          <label>Question Text *</label>
+          <textarea className="form-textarea" rows={3}
+            placeholder="Enter your question here..."
+            value={form.question_text}
+            onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))}
           />
         </div>
       </div>
-
-      <div className="form-row form-row-full">
-        <div className="form-group">
-          <label className="form-label">
-            End Time <span>*</span>
-          </label>
-          <input
-            className="form-control"
-            type="datetime-local"
-            value={schedule.end_time}
-            onChange={(e) => set("end_time", e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="form-group">
-        <label className="form-label">Target Departments</label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-          {departments.map((d) => (
-            <span
-              key={d.id}
-              className={`filter-chip ${schedule.department_ids.includes(d.id) ? "active" : ""}`}
-              onClick={() => toggleDept(d.id)}
+      <div className="options-grid">
+        <label className="form-label-sm">Answer Options (click to mark correct)</label>
+        {form.options.map((opt, idx) => (
+          <div key={idx} className={`option-row ${opt.is_correct ? "option-correct" : ""}`}>
+            <button
+              className={`option-marker ${opt.is_correct ? "correct" : ""}`}
+              onClick={() => toggleCorrect(idx)}
+              type="button"
             >
-              {d.code || d.name}
-            </span>
-          ))}
-        </div>
-        {schedule.department_ids.length === 0 && (
-          <span className="form-hint">Select at least one department to make the exam available.</span>
-        )}
-      </div>
-
-      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between" }}>
-        <button className="btn btn-secondary" onClick={onBack}>
-          <i className="ti ti-arrow-left" /> Back
-        </button>
-        <button className="btn btn-primary" onClick={onNext}>
-          Next: Preview <i className="ti ti-arrow-right" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StepPreview({
-  draft,
-  sections,
-  rules,
-  schedule,
-  departments,
-  courses,
-  isSaving,
-  onBack,
-  onSave,
-}: {
-  draft: ExamDraft;
-  sections: SectionDraft[];
-  rules: RuleDraft;
-  schedule: ScheduleDraft;
-  departments: Array<{ id: string; name: string; code: string }>;
-  courses: Array<{ id: string; name: string; code: string }>;
-  isSaving: boolean;
-  onBack: () => void;
-  onSave: () => void;
-}) {
-  const course = courses.find((c) => c.id === draft.course_id);
-  const totalQ = sections.reduce((s, sec) => s + sec.question_count, 0);
-  const totalM = sections.reduce((s, sec) => s + sec.question_count * sec.marks_per_question, 0);
-  const deptNames = schedule.department_ids
-    .map((id) => departments.find((d) => d.id === id)?.name)
-    .filter(Boolean)
-    .join(", ");
-
-  return (
-    <div className="form-section">
-      <div className="form-section-title">
-        <i className="ti ti-eye" /> Exam Preview
-      </div>
-
-      <div
-        style={{
-          background: "var(--c-primary-50)",
-          border: "1px solid var(--c-primary-200)",
-          borderRadius: "var(--radius-lg)",
-          padding: 20,
-          marginBottom: 20,
-        }}
-      >
-        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--c-primary-800)", marginBottom: 12 }}>
-          {draft.title || "Untitled Exam"}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-          <div>
-            <div className="form-label">Course</div>
-            <div style={{ fontWeight: 600 }}>{course ? `${course.code} · ${course.name}` : "-"}</div>
-          </div>
-          <div>
-            <div className="form-label">Duration</div>
-            <div style={{ fontWeight: 600 }}>{draft.duration_minutes} minutes</div>
-          </div>
-          <div>
-            <div className="form-label">Total Marks</div>
-            <div style={{ fontWeight: 600 }}>{totalM || draft.total_marks}</div>
-          </div>
-          <div>
-            <div className="form-label">Pass Marks</div>
-            <div style={{ fontWeight: 600 }}>{draft.pass_marks}</div>
-          </div>
-          <div>
-            <div className="form-label">Questions</div>
-            <div style={{ fontWeight: 600 }}>{totalQ}</div>
-          </div>
-          <div>
-            <div className="form-label">Status</div>
-            <span className="badge badge-draft">
-              <span className="badge-dot" /> DRAFT
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <div className="form-label" style={{ marginBottom: 8 }}>Sections ({sections.length})</div>
-        {sections.length === 0 && (
-          <div style={{ fontSize: 13, color: "var(--c-gray-500)" }}>No sections defined.</div>
-        )}
-        {sections.map((sec, idx) => (
-          <div
-            key={idx}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              padding: "8px 12px",
-              borderBottom: "1px solid var(--c-gray-100)",
-              fontSize: 13,
-            }}
-          >
-            <span style={{ fontWeight: 500 }}>{sec.title}</span>
-            <span style={{ color: "var(--c-gray-600)" }}>
-              {sec.question_count} Q × {sec.marks_per_question} marks = {sec.question_count * sec.marks_per_question}
-            </span>
+              {form.question_type === "MSQ"
+                ? <i className={`ti ${opt.is_correct ? "ti-checkbox" : "ti-square"}`} />
+                : <i className={`ti ${opt.is_correct ? "ti-circle-filled" : "ti-circle"}`} />}
+            </button>
+            <input
+              className="form-input option-input"
+              placeholder={`Option ${String.fromCharCode(65 + idx)}`}
+              value={opt.option_text}
+              readOnly={form.question_type === "TRUE_FALSE"}
+              onChange={(e) => setForm((f) => ({
+                ...f,
+                options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o),
+              }))}
+            />
           </div>
         ))}
       </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <div className="form-label" style={{ marginBottom: 8 }}>Schedule</div>
-        {schedule.start_time ? (
-          <div style={{ fontSize: 13 }}>
-            {new Date(schedule.start_time).toLocaleString()} → {new Date(schedule.end_time).toLocaleString()}
-            {deptNames && <span style={{ color: "var(--c-gray-500)", marginLeft: 8 }}>· {deptNames}</span>}
-          </div>
-        ) : (
-          <div style={{ fontSize: 13, color: "var(--c-gray-500)" }}>Not scheduled yet</div>
-        )}
-      </div>
-
-      <div>
-        <div className="form-label" style={{ marginBottom: 4 }}>Rules</div>
-        <div style={{ fontSize: 13, color: "var(--c-gray-600)" }}>
-          {rules.allow_backtrack && "· Backtrack allowed"} {rules.mark_for_review && "· Mark for review"}{" "}
-          {rules.require_fullscreen && "· Fullscreen required"} {rules.enable_proctoring && "· Proctoring enabled"}{" "}
-          {!rules.allow_backtrack && !rules.mark_for_review && !rules.require_fullscreen && !rules.enable_proctoring && "Default rules"}
+      <div className="form-field">
+        <label>Difficulty</label>
+        <div className="difficulty-toggle">
+          {(["EASY", "MEDIUM", "HARD"] as Difficulty[]).map((d) => (
+            <button
+              key={d}
+              className={`diff-btn ${form.difficulty === d ? "active" : ""} diff-${d.toLowerCase()}`}
+              onClick={() => setForm((f) => ({ ...f, difficulty: d }))}
+              type="button"
+            >
+              {d}
+            </button>
+          ))}
         </div>
       </div>
-
-      <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between" }}>
-        <button className="btn btn-secondary" onClick={onBack}>
-          <i className="ti ti-arrow-left" /> Back
-        </button>
-        <button className="btn btn-primary" onClick={onSave} disabled={isSaving}>
-          <i className={`ti ${isSaving ? "ti-loader spinner" : "ti-device-floppy"}`} />
-          {isSaving ? "Saving…" : "Create Exam"}
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? <><span className="spinner-sm" /> Saving…</> : <><i className="ti ti-plus" /> Add to Repository &amp; Exam</>}
         </button>
       </div>
     </div>
   );
 }
 
-/* ── Main Page ─────────────────────────────────────────────── */
+// ── PDF Import Panel ───────────────────────────────────────────────────────
+function PdfImportPanel({ courseId, onImported }: { courseId: string; onImported: (qs: ExtractedQuestion[]) => void }) {
+  const [status, setStatus] = useState<ImportStatus>("idle");
+  const [extracted, setExtracted] = useState<ExtractedQuestion[]>([]);
+  const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    if (!file) return;
+    setStatus("uploading");
+    setError("");
+    // Simulate extraction pipeline (replace with real API call when backend ready)
+    setStatus("extracting");
+    await new Promise((r) => setTimeout(r, 1500));
+    // Mock extracted questions for demo — replace with real API
+    const mock: ExtractedQuestion[] = [
+      {
+        id: "ext-1",
+        question_text: "Which data structure uses LIFO (Last In, First Out) order?",
+        question_type: "MCQ",
+        options: [
+          { text: "Queue", is_correct: false },
+          { text: "Stack", is_correct: true },
+          { text: "Linked List", is_correct: false },
+          { text: "Tree", is_correct: false },
+        ],
+        marks: 1, difficulty: "EASY", confidence: 96, needs_review: false, approved: false,
+      },
+      {
+        id: "ext-2",
+        question_text: "Which of the following are valid sorting algorithms?",
+        question_type: "MSQ",
+        options: [
+          { text: "Bubble Sort", is_correct: true },
+          { text: "Quick Sort", is_correct: true },
+          { text: "Binary Search", is_correct: false },
+          { text: "Merge Sort", is_correct: true },
+        ],
+        marks: 2, difficulty: "MEDIUM", confidence: 83, needs_review: false, approved: false,
+      },
+      {
+        id: "ext-3",
+        question_text: "A binary tree can have at most 2 children per node.",
+        question_type: "TRUE_FALSE",
+        options: [
+          { text: "True", is_correct: true },
+          { text: "False", is_correct: false },
+        ],
+        marks: 1, difficulty: "EASY", confidence: 74, needs_review: true, approved: false,
+      },
+    ];
+    setExtracted(mock);
+    setStatus("review");
+  };
+
+  const toggleApprove = (id: string) => {
+    setExtracted((list) => list.map((q) => q.id === id ? { ...q, approved: !q.approved } : q));
+  };
+
+  const approveAll = () => setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
+
+  const saveApproved = async () => {
+    const approved = extracted.filter((q) => q.approved);
+    if (!approved.length) return setError("Approve at least one question first.");
+    setStatus("saving");
+    // Pass approved questions up — parent will add them to the exam
+    onImported(approved);
+    setStatus("idle");
+    setExtracted([]);
+  };
+
+  const confColor = (c: number) => c >= 85 ? "#059669" : c >= 70 ? "#d97706" : "#dc2626";
+
+  if (status === "idle") {
+    return (
+      <div className="import-dropzone" onClick={() => fileRef.current?.click()}>
+        <input
+          ref={fileRef} type="file" accept=".pdf,.docx" hidden
+          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+        />
+        <i className="ti ti-file-upload import-drop-icon" />
+        <div className="import-drop-title">Import Questions from PDF or DOCX</div>
+        <div className="import-drop-sub">AI-powered extraction · Supports MCQ, MSQ, True/False</div>
+        <button className="btn btn-secondary" type="button">
+          <i className="ti ti-upload" /> Choose File
+        </button>
+      </div>
+    );
+  }
+
+  if (status === "uploading" || status === "extracting") {
+    return (
+      <div className="import-processing">
+        <span className="spinner" />
+        <div className="import-proc-title">
+          {status === "uploading" ? "Uploading file…" : "Extracting questions with AI…"}
+        </div>
+        <div className="import-proc-sub">This takes 10–30 seconds for most documents</div>
+      </div>
+    );
+  }
+
+  if (status === "review") {
+    const approved = extracted.filter((q) => q.approved).length;
+    const avgConf = Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length);
+    return (
+      <div className="import-review">
+        <div className="import-review-summary">
+          <div className="import-summary-card"><span className="is-val">{extracted.length}</span><span className="is-lbl">Questions Found</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter(q => q.question_type === "MCQ").length}</span><span className="is-lbl">MCQ</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter(q => q.question_type === "MSQ").length}</span><span className="is-lbl">MSQ</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter(q => q.question_type === "TRUE_FALSE").length}</span><span className="is-lbl">T/F</span></div>
+          <div className="import-summary-card"><span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span><span className="is-lbl">Avg Confidence</span></div>
+          <div className="import-summary-card"><span className="is-val">{approved}</span><span className="is-lbl">Approved</span></div>
+        </div>
+        <div className="import-table-wrap">
+          <div className="import-table-actions">
+            <button className="btn btn-sm btn-secondary" onClick={approveAll}>
+              <i className="ti ti-check-all" /> Approve All
+            </button>
+          </div>
+          <table className="import-table">
+            <thead>
+              <tr>
+                <th style={{ width: 36 }}></th>
+                <th>Question</th>
+                <th>Type</th>
+                <th>Marks</th>
+                <th>Answer</th>
+                <th>Confidence</th>
+                <th>Approve</th>
+              </tr>
+            </thead>
+            <tbody>
+              {extracted.map((q) => (
+                <tr key={q.id} className={q.needs_review ? "row-review" : ""}>
+                  <td>
+                    {q.needs_review && <i className="ti ti-alert-triangle" style={{ color: "#d97706" }} title="Needs review" />}
+                  </td>
+                  <td className="q-text-cell">{q.question_text.slice(0, 80)}…</td>
+                  <td><span className="q-type-badge">{q.question_type}</span></td>
+                  <td>{q.marks}</td>
+                  <td className="ans-cell">
+                    {q.options.filter(o => o.is_correct).map(o => o.text).join(", ")}
+                  </td>
+                  <td>
+                    <span className="conf-badge" style={{ color: confColor(q.confidence), borderColor: confColor(q.confidence) }}>
+                      {q.confidence}%
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      className={`approve-btn ${q.approved ? "approved" : ""}`}
+                      onClick={() => toggleApprove(q.id)}
+                    >
+                      {q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {error && <div className="form-error">{error}</div>}
+        <div className="import-review-actions">
+          <button className="btn btn-secondary" onClick={() => { setStatus("idle"); setExtracted([]); }}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={saveApproved} disabled={approved === 0}>
+            <i className="ti ti-check" /> Save {approved} Question{approved !== 1 ? "s" : ""} to Repository
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "saving") {
+    return <div className="import-processing"><span className="spinner" /><div>Saving questions…</div></div>;
+  }
+
+  return null;
+}
+
+// ── Auto-generate Panel ────────────────────────────────────────────────────
+function AutoGeneratePanel({ questions, onGenerated }: {
+  questions: Question[]; onGenerated: (selected: Question[]) => void;
+}) {
+  const [mcqCount, setMcqCount] = useState(10);
+  const [msqCount, setMsqCount] = useState(5);
+  const [tfCount, setTfCount] = useState(5);
+  const [difficulty, setDifficulty] = useState<"MIXED" | Difficulty>("MIXED");
+  const [error, setError] = useState("");
+
+  const generate = () => {
+    setError("");
+    const pool = [...questions];
+    const pick = (type: QuestionType, count: number) => {
+      let candidates = pool.filter((q) => q.question_type === type && q.is_active);
+      if (difficulty !== "MIXED") candidates = candidates.filter((q) => q.difficulty === difficulty);
+      // Shuffle
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      }
+      return candidates.slice(0, count);
+    };
+    const selected = [
+      ...pick("MCQ", mcqCount),
+      ...pick("MSQ", msqCount),
+      ...pick("TRUE_FALSE", tfCount),
+    ];
+    if (selected.length === 0) return setError("No questions match the criteria. Add more questions to the repository first.");
+    onGenerated(selected);
+  };
+
+  return (
+    <div className="auto-gen-panel">
+      <div className="auto-gen-header">
+        <i className="ti ti-wand" />
+        <div>
+          <div className="auto-gen-title">Auto-Generate Exam Paper</div>
+          <div className="auto-gen-sub">System randomly selects questions from your repository based on the criteria below</div>
+        </div>
+      </div>
+      <div className="form-grid-2col">
+        <div className="form-field">
+          <label>MCQ Count</label>
+          <input type="number" className="form-input" min={0} max={50} value={mcqCount}
+            onChange={(e) => setMcqCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter(q => q.question_type === "MCQ").length} available</span>
+        </div>
+        <div className="form-field">
+          <label>MSQ Count</label>
+          <input type="number" className="form-input" min={0} max={30} value={msqCount}
+            onChange={(e) => setMsqCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter(q => q.question_type === "MSQ").length} available</span>
+        </div>
+        <div className="form-field">
+          <label>True/False Count</label>
+          <input type="number" className="form-input" min={0} max={30} value={tfCount}
+            onChange={(e) => setTfCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter(q => q.question_type === "TRUE_FALSE").length} available</span>
+        </div>
+        <div className="form-field">
+          <label>Difficulty Mix</label>
+          <select className="form-select" value={difficulty} onChange={(e) => setDifficulty(e.target.value as any)}>
+            <option value="MIXED">Mixed (Recommended)</option>
+            <option value="EASY">Easy Only</option>
+            <option value="MEDIUM">Medium Only</option>
+            <option value="HARD">Hard Only</option>
+          </select>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <button className="btn btn-primary" onClick={generate}>
+        <i className="ti ti-wand" /> Generate Paper ({mcqCount + msqCount + tfCount} questions)
+      </button>
+    </div>
+  );
+}
+
+// ── Step 2: Question Management ────────────────────────────────────────────
+function StepQuestions({
+  courseId, selectedIds, onToggle, onAddNew, onImported,
+}: {
+  courseId: string;
+  selectedIds: Set<string>;
+  onToggle: (q: Question) => void;
+  onAddNew: (q: Question) => void;
+  onImported: (qs: ExtractedQuestion[]) => void;
+}) {
+  const [tab, setTab] = useState<"select" | "create" | "import" | "auto">("select");
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterDiff, setFilterDiff] = useState("");
+  const { data: questions = [], isLoading } = useQuestions(courseId ? { course_id: courseId } : undefined);
+
+  const filtered = questions.filter((q) => {
+    const matchSearch = !search || q.question_text.toLowerCase().includes(search.toLowerCase());
+    const matchType = !filterType || q.question_type === filterType;
+    const matchDiff = !filterDiff || q.difficulty === filterDiff;
+    return matchSearch && matchType && matchDiff;
+  });
+
+  const tabs = [
+    { id: "select", label: "Select Existing", icon: "ti-list-search" },
+    { id: "create", label: "Create Question", icon: "ti-pencil-plus" },
+    { id: "import", label: "Import from PDF", icon: "ti-file-upload" },
+    { id: "auto",   label: "Auto-Generate",   icon: "ti-wand" },
+  ] as const;
+
+  return (
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Question Management</h3>
+        <p>Select questions from your repository, create new ones, or import from a PDF.</p>
+        <div className="selected-count-badge">
+          {selectedIds.size} question{selectedIds.size !== 1 ? "s" : ""} selected for this exam
+        </div>
+      </div>
+      <div className="q-tabs">
+        {tabs.map((t) => (
+          <button key={t.id} className={`q-tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+            <i className={`ti ${t.icon}`} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "select" && (
+        <div className="q-select-panel">
+          <div className="q-filters">
+            <input className="form-input q-search" placeholder="Search questions…"
+              value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select className="form-select" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+              <option value="">All Types</option>
+              <option value="MCQ">MCQ</option>
+              <option value="MSQ">MSQ</option>
+              <option value="TRUE_FALSE">True / False</option>
+            </select>
+            <select className="form-select" value={filterDiff} onChange={(e) => setFilterDiff(e.target.value)}>
+              <option value="">All Difficulty</option>
+              <option value="EASY">Easy</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HARD">Hard</option>
+            </select>
+            {selectedIds.size > 0 && (
+              <button className="btn btn-sm btn-secondary" onClick={() => questions.forEach((q) => { if (selectedIds.has(q.id)) onToggle(q); })}>
+                Clear Selection
+              </button>
+            )}
+          </div>
+          {isLoading ? (
+            <div className="loading-state"><span className="spinner" /> Loading questions…</div>
+          ) : filtered.length === 0 ? (
+            <div className="empty-state" style={{ padding: "40px 0" }}>
+              <i className="ti ti-books" style={{ fontSize: 36, color: "#ccc" }} />
+              <div className="empty-state-title">No questions found</div>
+              <div className="empty-state-text">
+                {questions.length === 0
+                  ? "Your repository is empty. Create questions or import from a PDF."
+                  : "Try adjusting your filters."}
+              </div>
+            </div>
+          ) : (
+            <div className="q-list">
+              {filtered.map((q) => (
+                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "create" && (
+        <CreateQuestionForm
+          courseId={courseId}
+          onSaved={(q) => { onAddNew(q); setTab("select"); }}
+        />
+      )}
+
+      {tab === "import" && (
+        <PdfImportPanel
+          courseId={courseId}
+          onImported={(qs) => { onImported(qs); setTab("select"); }}
+        />
+      )}
+
+      {tab === "auto" && (
+        <AutoGeneratePanel
+          questions={questions}
+          onGenerated={(selected) => { selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); }); setTab("select"); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Step 3: Rules ─────────────────────────────────────────────────────────
+function StepRules({ rules, onChange }: {
+  rules: Record<string, any>;
+  onChange: (r: Record<string, any>) => void;
+}) {
+  const rule = (key: string, label: string, type: "bool" | "num" = "bool", min?: number) => (
+    <div className="form-field rule-field">
+      <div className="rule-label">{label}</div>
+      {type === "bool"
+        ? <label className="toggle-switch">
+            <input type="checkbox" checked={!!rules[key]}
+              onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
+            <span className="toggle-slider" />
+          </label>
+        : <input type="number" className="form-input rule-num" min={min ?? 0} value={rules[key] ?? 0}
+            onChange={(e) => onChange({ ...rules, [key]: +e.target.value })} />
+      }
+    </div>
+  );
+
+  return (
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Exam Rules &amp; Proctoring</h3>
+        <p>Configure exam environment rules and anti-cheating settings.</p>
+      </div>
+      <div className="rules-grid">
+        <div className="rules-section">
+          <h4 className="rules-section-title"><i className="ti ti-layout-board" /> Navigation</h4>
+          {rule("allow_backtrack", "Allow question backtracking")}
+          {rule("mark_for_review", "Allow mark for review")}
+        </div>
+        <div className="rules-section">
+          <h4 className="rules-section-title"><i className="ti ti-shield" /> Proctoring</h4>
+          {rule("fullscreen_required", "Require fullscreen mode")}
+          {rule("proctoring_enabled", "Enable AI proctoring")}
+          {rule("camera_required", "Require camera access")}
+          {rule("microphone_required", "Require microphone")}
+        </div>
+        <div className="rules-section">
+          <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
+          {rule("max_tab_switches", "Max tab switches allowed", "num", 0)}
+          {rule("auto_save_interval_sec", "Auto-save interval (sec)", "num", 10)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 4: Schedule ──────────────────────────────────────────────────────
+function StepSchedule({ departments, schedule, onChange }: {
+  departments: { id: string; name: string; code: string }[];
+  schedule: Record<string, any>;
+  onChange: (s: Record<string, any>) => void;
+}) {
+  return (
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Exam Schedule</h3>
+        <p>Set when and for which department this exam is available.</p>
+      </div>
+      <div className="form-grid-2col">
+        <div className="form-field">
+          <label>Department *</label>
+          <select className="form-select" value={schedule.department_id ?? ""} onChange={(e) => onChange({ ...schedule, department_id: e.target.value })}>
+            <option value="">Select department…</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+        <div className="form-field">
+          <label>Registration Deadline</label>
+          <input type="datetime-local" className="form-input"
+            value={schedule.registration_deadline ?? ""}
+            onChange={(e) => onChange({ ...schedule, registration_deadline: e.target.value })} />
+        </div>
+        <div className="form-field">
+          <label>Start Time *</label>
+          <input type="datetime-local" className="form-input"
+            value={schedule.start_time ?? ""}
+            onChange={(e) => onChange({ ...schedule, start_time: e.target.value })} />
+        </div>
+        <div className="form-field">
+          <label>End Time *</label>
+          <input type="datetime-local" className="form-input"
+            value={schedule.end_time ?? ""}
+            onChange={(e) => onChange({ ...schedule, end_time: e.target.value })} />
+        </div>
+      </div>
+      <div className="form-field">
+        <label className="checkbox-label">
+          <input type="checkbox" checked={!!schedule.is_published}
+            onChange={(e) => onChange({ ...schedule, is_published: e.target.checked })} />
+          Publish immediately (students will see this exam)
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 5: Preview ────────────────────────────────────────────────────────
+function StepPreview({ form, selectedQuestions, schedule, examId }: {
+  form: ExamForm;
+  selectedQuestions: Question[];
+  schedule: Record<string, any>;
+  examId: string | null;
+}) {
+  const totalMarks = selectedQuestions.reduce((s, q) => s + q.marks, 0);
+  const byType = selectedQuestions.reduce((acc, q) => {
+    acc[q.question_type] = (acc[q.question_type] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return (
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Exam Preview</h3>
+        <p>Review all settings before publishing.</p>
+      </div>
+      {examId ? (
+        <div className="preview-success">
+          <i className="ti ti-circle-check" style={{ fontSize: 40, color: "#059669" }} />
+          <div className="preview-success-title">Exam Created Successfully!</div>
+          <div className="preview-success-sub">Exam ID: {examId}</div>
+        </div>
+      ) : (
+        <div className="preview-grid">
+          <div className="preview-card">
+            <h4>Exam Info</h4>
+            <div className="preview-rows">
+              <div className="preview-row"><span>Title</span><strong>{form.title || "—"}</strong></div>
+              <div className="preview-row"><span>Type</span><strong>{form.exam_type}</strong></div>
+              <div className="preview-row"><span>Duration</span><strong>{form.duration_minutes} min</strong></div>
+              <div className="preview-row"><span>Total Marks (form)</span><strong>{form.total_marks}</strong></div>
+              <div className="preview-row"><span>Questions Marks Total</span><strong>{totalMarks}</strong></div>
+              <div className="preview-row"><span>Pass Marks</span><strong>{form.pass_marks}</strong></div>
+            </div>
+          </div>
+          <div className="preview-card">
+            <h4>Questions ({selectedQuestions.length})</h4>
+            <div className="preview-rows">
+              {Object.entries(byType).map(([type, count]) => (
+                <div key={type} className="preview-row"><span>{type}</span><strong>{count}</strong></div>
+              ))}
+              {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
+            </div>
+          </div>
+          <div className="preview-card">
+            <h4>Schedule</h4>
+            <div className="preview-rows">
+              <div className="preview-row"><span>Start</span><strong>{schedule.start_time || "—"}</strong></div>
+              <div className="preview-row"><span>End</span><strong>{schedule.end_time || "—"}</strong></div>
+              <div className="preview-row"><span>Published</span><strong>{schedule.is_published ? "Yes" : "No (Draft)"}</strong></div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────
 export default function CreateExam() {
   const navigate = useNavigate();
-  const { data: portal } = useFacultyDashboard();
-  const courses = portal?.courses ?? [];
-  const departments = portal?.departments ?? [];
+  const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
+  const [currentStep, setCurrentStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [examId, setExamId] = useState<string | null>(null);
+  const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
+  const selectedIds = new Set(selectedQuestions.map((q) => q.id));
 
-  const [step, setStep] = useState(0);
-  const [examDraft, setExamDraft] = useState<ExamDraft>({
+  const [form, setForm] = useState<ExamForm>({
     title: "",
     course_id: "",
     exam_type: "MID_SEMESTER",
@@ -861,190 +992,195 @@ export default function CreateExam() {
     total_marks: 80,
     pass_marks: 32,
     instructions: "",
-    shuffle_questions: true,
-    shuffle_options: true,
+    shuffle_questions: false,
+    shuffle_options: false,
   });
-  const [sections, setSections] = useState<SectionDraft[]>([]);
-  const [rules, setRules] = useState<RuleDraft>({
+
+  const [rules, setRules] = useState({
     allow_backtrack: true,
     mark_for_review: true,
-    require_fullscreen: true,
-    enable_proctoring: true,
-    camera_required: true,
+    fullscreen_required: false,
+    proctoring_enabled: false,
+    camera_required: false,
     microphone_required: false,
     max_tab_switches: 3,
-    auto_save_interval_seconds: 30,
+    auto_save_interval_sec: 30,
   });
-  const [schedule, setSchedule] = useState<ScheduleDraft>({
+
+  const [schedule, setSchedule] = useState<Record<string, any>>({
+    department_id: "",
     start_time: "",
     end_time: "",
-    department_ids: [],
+    registration_deadline: "",
+    is_published: false,
   });
-  const [isSaving, setIsSaving] = useState(false);
 
-  const createExamMut = useCreateExam();
-  const createSectionMut = useCreateSection();
-  const upsertRulesMut = useUpsertRules();
-  const createScheduleMut = useCreateSchedule();
+  const departments = portal?.departments ?? [];
 
-  const handleSave = async () => {
-    setIsSaving(true);
+  const toggleQuestion = (q: Question) => {
+    setSelectedQuestions((prev) =>
+      prev.some((p) => p.id === q.id)
+        ? prev.filter((p) => p.id !== q.id)
+        : [...prev, q]
+    );
+  };
+
+  const handleImported = (qs: ExtractedQuestion[]) => {
+    // For now just show a success toast — real impl would save to repo and select
+    console.log("Imported:", qs.length, "questions");
+  };
+
+  const saveExam = async () => {
+    setSaving(true);
+    setSaveError("");
     try {
       // 1. Create exam
-      const exam = await createExamMut.mutateAsync({
-        title: examDraft.title,
-        course_id: examDraft.course_id,
-        exam_type: examDraft.exam_type,
-        duration_minutes: examDraft.duration_minutes,
-        total_marks: examDraft.total_marks,
-        pass_marks: examDraft.pass_marks,
-        instructions: examDraft.instructions,
-        shuffle_questions: examDraft.shuffle_questions,
-        shuffle_options: examDraft.shuffle_options,
-        status: "DRAFT",
-        semester: new Date().getFullYear().toString(),
+      const examData = await facultyApi.createExam({
+        title: form.title,
+        course_id: form.course_id || null,
+        total_marks: form.total_marks,
+        pass_marks: form.pass_marks,
+        duration_minutes: form.duration_minutes,
+        shuffle_questions: form.shuffle_questions,
+        shuffle_options: form.shuffle_options,
+        instructions: form.instructions || null,
       });
-      const examId = (exam as any).id ?? (exam as any).exam_id;
 
-      // 2. Create sections
-      for (const sec of sections) {
-        await createSectionMut.mutateAsync({
-          exam_id: examId,
-          section_title: sec.title,
-          question_type: sec.question_type,
-          question_count: sec.question_count,
-          marks_per_question: sec.marks_per_question,
-          total_marks: sec.question_count * sec.marks_per_question,
+      const newExamId = examData.id;
+
+      // 2. Add questions
+      for (let i = 0; i < selectedQuestions.length; i++) {
+        const q = selectedQuestions[i];
+        await facultyApi.addQuestionToExam(newExamId, {
+          question_id: q.id,
+          order_index: i,
         });
       }
 
       // 3. Upsert rules
-      await upsertRulesMut.mutateAsync({
-        exam_id: examId,
-        ...rules,
-      });
+      await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
 
-      // 4. Create schedule if times provided
-      if (schedule.start_time && schedule.end_time) {
-        for (const deptId of schedule.department_ids.length > 0
-          ? schedule.department_ids
-          : [""]) {
-          await createScheduleMut.mutateAsync({
-            exam_id: examId,
-            start_time: new Date(schedule.start_time).toISOString(),
-            end_time: new Date(schedule.end_time).toISOString(),
-            ...(deptId ? { department_id: deptId } : {}),
-          });
-        }
+      // 4. Create schedule if provided
+      if (schedule.department_id && schedule.start_time && schedule.end_time) {
+        await facultyApi.createSchedule({
+          exam_id: newExamId,
+          department_id: schedule.department_id,
+          start_time: new Date(schedule.start_time).toISOString(),
+          end_time: new Date(schedule.end_time).toISOString(),
+          registration_deadline: schedule.registration_deadline
+            ? new Date(schedule.registration_deadline).toISOString()
+            : null,
+          is_published: schedule.is_published,
+        });
       }
 
-      navigate("/faculty/dashboard");
-    } catch {
-      // Error handled by react-query
+      setExamId(newExamId);
+    } catch (e: any) {
+      setSaveError(e?.message ?? "Failed to create exam. Check all fields.");
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   };
 
-  const nextStep = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
-  const prevStep = () => setStep((s) => Math.max(s - 1, 0));
+  const canProceed = () => {
+    if (currentStep === 0) return form.title && form.total_marks > 0 && form.pass_marks > 0;
+    return true;
+  };
 
-  const renderStep = () => {
-    switch (step) {
-      case 0:
-        return (
-          <StepBasicInfo
-            draft={examDraft}
-            setDraft={setExamDraft}
-            courses={courses}
-            onNext={nextStep}
-          />
-        );
-      case 1:
-        return (
-          <StepSections
-            sections={sections}
-            setSections={setSections}
-            onBack={prevStep}
-            onNext={nextStep}
-          />
-        );
-      case 2:
-        return <StepQuestions onBack={prevStep} onNext={nextStep} />;
-      case 3:
-        return (
-          <StepRules
-            rules={rules}
-            setRules={setRules}
-            onBack={prevStep}
-            onNext={nextStep}
-          />
-        );
-      case 4:
-        return (
-          <StepSchedule
-            schedule={schedule}
-            setSchedule={setSchedule}
-            departments={departments}
-            onBack={prevStep}
-            onNext={nextStep}
-          />
-        );
-      case 5:
-        return (
-          <StepPreview
-            draft={examDraft}
-            sections={sections}
-            rules={rules}
-            schedule={schedule}
-            departments={departments}
-            courses={courses}
-            isSaving={isSaving}
-            onBack={prevStep}
-            onSave={handleSave}
-          />
-        );
-      default:
-        return null;
-    }
+  const next = () => {
+    if (currentStep === STEPS.length - 1) saveExam();
+    else setCurrentStep((s) => s + 1);
   };
 
   return (
     <FacultyLayout activePage="create-exam">
-      <div className="page-header" style={{ marginBottom: 24 }}>
-        <div className="page-header-left">
-          <div className="page-title">Create New Exam</div>
-          <div className="page-subtitle">
-            Step {step + 1} of {STEPS.length} · {STEPS[step]}
-          </div>
-        </div>
-        <div className="page-header-actions">
-          <button className="btn btn-secondary btn-sm" onClick={() => navigate("/faculty/dashboard")}>
-            <i className="ti ti-device-floppy" /> Save Draft
-          </button>
-        </div>
-      </div>
+      <PageState loading={portalLoading}>
+        <div className="create-exam-workspace">
+          {/* Repository Overview */}
+          <RepositoryOverview portal={portal} />
 
-      {/* Wizard Steps */}
-      <div className="wizard-steps">
-        {STEPS.map((label, i) => (
-          <div key={label} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 100 }}>
-            <div
-              className={`step-item ${i < step ? "done" : ""} ${i === step ? "active" : ""}`}
-              style={{ cursor: i < step ? "pointer" : "default" }}
-              onClick={() => i < step && setStep(i)}
-            >
-              <div className="step-num">
-                {i < step ? <i className="ti ti-check" style={{ fontSize: 12 }} /> : i + 1}
+          {/* Workspace Card */}
+          <div className="workspace-card">
+            <div className="workspace-header">
+              <div>
+                <h2 className="workspace-title">Create New Exam</h2>
+                <p className="workspace-sub">
+                  {examId ? "Exam created — share with students via schedule." : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
+                </p>
               </div>
-              <div className="step-label">{label}</div>
+              {!examId && (
+                <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")}>
+                  <i className="ti ti-x" /> Cancel
+                </button>
+              )}
             </div>
-            {i < STEPS.length - 1 && <div className={`step-connector ${i < step ? "done" : ""}`} />}
-          </div>
-        ))}
-      </div>
 
-      <div className="wizard-body">{renderStep()}</div>
+            <Stepper steps={STEPS} current={currentStep} onStep={setCurrentStep} />
+
+            {/* Step content */}
+            <div className="workspace-body">
+              {currentStep === 0 && (
+                <StepExamInfo form={form} onChange={(p) => setForm((f) => ({ ...f, ...p }))} />
+              )}
+              {currentStep === 1 && (
+                <StepQuestions
+                  courseId={form.course_id}
+                  selectedIds={selectedIds}
+                  onToggle={toggleQuestion}
+                  onAddNew={(q) => { if (!selectedIds.has(q.id)) setSelectedQuestions((p) => [...p, q]); }}
+                  onImported={handleImported}
+                />
+              )}
+              {currentStep === 2 && (
+                <StepRules rules={rules} onChange={setRules} />
+              )}
+              {currentStep === 3 && (
+                <StepSchedule departments={departments} schedule={schedule} onChange={setSchedule} />
+              )}
+              {currentStep === 4 && (
+                <StepPreview form={form} selectedQuestions={selectedQuestions} schedule={schedule} examId={examId} />
+              )}
+            </div>
+
+            {/* Navigation */}
+            {!examId && (
+              <div className="workspace-footer">
+                <div className="footer-left">
+                  {currentStep > 0 && (
+                    <button className="btn btn-secondary" onClick={() => setCurrentStep((s) => s - 1)}>
+                      <i className="ti ti-chevron-left" /> Back
+                    </button>
+                  )}
+                </div>
+                <div className="footer-center">
+                  {saveError && <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>}
+                </div>
+                <div className="footer-right">
+                  {currentStep < STEPS.length - 1 ? (
+                    <button className="btn btn-primary" onClick={next} disabled={!canProceed()}>
+                      Next <i className="ti ti-chevron-right" />
+                    </button>
+                  ) : (
+                    <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId}>
+                      {saving ? <><span className="spinner-sm" /> Creating…</> : <><i className="ti ti-check" /> Create Exam</>}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {examId && (
+              <div className="workspace-footer">
+                <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")}>
+                  <i className="ti ti-home" /> Back to Dashboard
+                </button>
+                <button className="btn btn-secondary" onClick={() => navigate("/faculty/schedules")}>
+                  <i className="ti ti-calendar" /> Manage Schedules
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </PageState>
     </FacultyLayout>
   );
 }
