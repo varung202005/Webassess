@@ -1,48 +1,23 @@
-"""
-Questions endpoints — Question Bank.
-
-WHO DOES WHAT:
-  - Create / edit question form  → FRONTEND (UI form) + BACKEND (POST/PATCH)
-  - Question list / filters      → FRONTEND (renders) + BACKEND (query with filters)
-  - Add options to a question    → BACKEND (POST /questions/{id}/options)
-  - Soft delete question         → BACKEND only (sets is_active=FALSE)
-  - Tag topics to question       → BACKEND only
-  - Extract questions from PDF/DOCX → BACKEND (POST /questions/extract)
-
-  NOTE: Never hard-delete questions — they may be linked to past exam_questions.
-
-EXTRACTION PIPELINE (text-based PDFs only — no image OCR):
-  - pdfplumber  → extracts text from text-based PDF pages (fast, accurate)
-  - python-docx → extracts text from DOCX files
-  - Rule-based regex parser detects MCQ/MSQ/TRUE_FALSE questions, options,
-    correct answers (inline markers OR answer-key section), and marks.
-
-  WHY NO TESSERACT HERE:
-    The PDFs uploaded are faculty-authored text PDFs (not scans).
-    pdfplumber extracts text directly from the PDF content stream —
-    no image conversion needed, no OCR errors on numbers/letters.
-    Tesseract is only useful for scanned image PDFs; adding it here
-    introduced mis-reads of option labels and answer numbers.
-"""
 import io
 import re
+import os
+import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional, List, Literal
 from uuid import UUID
-
+from app.core.config import settings   # <-- add this line
 import pdfplumber
 from docx import Document as DocxDocument
-
 from app.core.security import require_faculty
 from app.db.supabase import get_supabase_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-QuestionType = Literal["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER", "LONG_ANSWER"]
-Difficulty    = Literal["EASY", "MEDIUM", "HARD"]
+QuestionType          = Literal["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER", "LONG_ANSWER"]
+Difficulty            = Literal["EASY", "MEDIUM", "HARD"]
 ExtractedQuestionType = Literal["MCQ", "MSQ", "TRUE_FALSE"]
 
 
@@ -53,12 +28,10 @@ class OptionCreate(BaseModel):
     is_correct: bool
     order_index: int
 
-
 class TopicCreate(BaseModel):
     topic: str
     subject: Optional[str] = None
     chapter: Optional[str] = None
-
 
 class QuestionCreate(BaseModel):
     course_id: Optional[UUID] = None
@@ -70,7 +43,6 @@ class QuestionCreate(BaseModel):
     options: Optional[List[OptionCreate]] = []
     topics: Optional[List[TopicCreate]] = []
 
-
 class QuestionUpdate(BaseModel):
     question_text: Optional[str] = None
     marks: Optional[int] = None
@@ -78,11 +50,9 @@ class QuestionUpdate(BaseModel):
     difficulty: Optional[Difficulty] = None
     is_active: Optional[bool] = None
 
-
 class ExtractedOption(BaseModel):
     text: str
     is_correct: bool
-
 
 class ExtractedQuestion(BaseModel):
     id: str
@@ -142,7 +112,6 @@ async def create_question(
     current_user: dict = Depends(require_faculty),
 ):
     supabase = get_supabase_admin()
-
     q_data = {
         "created_by": current_user["user_id"],
         "course_id": str(body.course_id) if body.course_id else None,
@@ -154,11 +123,10 @@ async def create_question(
         "is_active": True,
     }
     q_result = supabase.table("questions").insert(q_data).execute()
-    question = q_result.data[0]
-    qid = question["id"]
+    qid = q_result.data[0]["id"]
 
     if body.options:
-        options_data = [
+        supabase.table("question_options").insert([
             {
                 "question_id": qid,
                 "option_text": o.option_text,
@@ -166,15 +134,18 @@ async def create_question(
                 "order_index": o.order_index,
             }
             for o in body.options
-        ]
-        supabase.table("question_options").insert(options_data).execute()
+        ]).execute()
 
     if body.topics:
-        topics_data = [
-            {"question_id": qid, "topic": t.topic, "subject": t.subject, "chapter": t.chapter}
+        supabase.table("question_topics").insert([
+            {
+                "question_id": qid,
+                "topic": t.topic,
+                "subject": t.subject,
+                "chapter": t.chapter,
+            }
             for t in body.topics
-        ]
-        supabase.table("question_topics").insert(topics_data).execute()
+        ]).execute()
 
     return {"message": "Question created", "question_id": qid}
 
@@ -195,7 +166,6 @@ async def update_question(
 
 @router.delete("/{question_id}")
 async def soft_delete_question(question_id: UUID, _: dict = Depends(require_faculty)):
-    """Soft delete — sets is_active=FALSE. NEVER hard delete questions."""
     supabase = get_supabase_admin()
     supabase.table("questions").update({"is_active": False}).eq("id", str(question_id)).execute()
     return {"message": "Question deactivated"}
@@ -205,36 +175,27 @@ async def soft_delete_question(question_id: UUID, _: dict = Depends(require_facu
 
 def _extract_pdf_text(content: bytes) -> str:
     """
-    Extract text from a text-based PDF using pdfplumber.
-
-    pdfplumber reads the actual text content stream from the PDF — it does NOT
-    do image conversion or OCR. This is exactly what we want for faculty-authored
-    PDFs (Word exports, LaTeX, Google Docs exports). It preserves line breaks and
-    spacing which is critical for our regex parser to split questions from options.
-
-    Layout analysis (layout=True in extract_text) keeps option lines on their own
-    lines instead of merging them into a single paragraph.
+    Extract full text from a text-based PDF using pdfplumber.
+    layout=True preserves spatial ordering — critical so question numbers
+    stay on their own lines (Google Forms PDF structure).
     """
-    text_parts: list[str] = []
+    parts: list[str] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         for page in pdf.pages:
-            # layout=True preserves spatial text ordering — critical for Q&A structure
-            page_text = page.extract_text(layout=True) or ""
-            page_text = page_text.strip()
-            if page_text:
-                text_parts.append(page_text)
-    return "\n\n".join(text_parts)
+            text = page.extract_text(layout=True) or ""
+            text = text.strip()
+            if text:
+                parts.append(text)
+    return "\n\n".join(parts)
 
 
 def _extract_docx_text(content: bytes) -> str:
-    """Extract text from a DOCX preserving paragraph order."""
     doc = DocxDocument(io.BytesIO(content))
     parts: list[str] = []
     for para in doc.paragraphs:
         t = para.text.strip()
         if t:
             parts.append(t)
-    # Also pull table cell text (some exams use tables for options)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -245,279 +206,516 @@ def _extract_docx_text(content: bytes) -> str:
 
 
 # ── Regex Patterns ────────────────────────────────────────────────────────────
-#
-# DESIGN NOTES:
-#
-# QUESTION_START_RE  — must only match lines where a NUMBER starts a new question.
-#   We require the number to be at the very start of the line (after optional
-#   whitespace) and followed by a period, closing paren, or colon, then whitespace.
-#   We DON'T match "Q1" style here because "Q" can appear inside option text.
-#   Using \b after the number prevents "10." inside a sentence from matching.
-#
-# OPTION_RE — matches lines that are answer options (A. / (A) / A) / A:).
-#   The key fix vs the old version: we require the option letter to be ALONE
-#   (not preceded by other letters/digits) so "Stack" or "B-tree" don't match.
-#   We also capture multi-word option text to the END of the line.
-#
-# CORRECT_MARKER_RE — strips inline correct-answer markers from option text.
-#   Supports: asterisk (*), checkmarks (✓ ✔), (correct), [correct], (ans), (answer).
-#   Must be searched on the RAW text before stripping, then removed.
-#
-# ANSWER_KEY_ENTRY_RE — matches lines inside an "Answer Key" section.
-#   Format: "1. B" / "2) A, C" / "3 - True" / "1: D"
-#   We use a strict end-of-line anchor ($) so partial matches inside sentences
-#   don't fire.
 
-# Matches question start lines: "1." / "1)" / "1:" at start of line
-QUESTION_START_RE = re.compile(
-    r"(?m)^[ \t]*(\d{1,3})[.):\]]\s+",
+# Lines to discard from Google Forms PDFs
+SKIP_LINE_RE = re.compile(
+    r"(?i)^("
+    r"mark\s+only\s+one\s+oval\.?"
+    r"|mark\s+all\s+that\s+apply\.?"
+    r"|required\s+question"
+    r"|\*\s*indicates\s+required"
+    r"|this\s+(form|content)\s+(doesn'?t|is\s+neither)"
+    r"|this\s+content\s+is\s+neither"
+    r"|google\s*\.?\s*forms?"
+    r"|dear\s+students"
+    r"|the\s+quiz\s+will\s+be\s+open"
+    r"|start\s+time\s*:"
+    r"|stop\s+time\s*:"
+    r"|all\s+the\s+best"
+    r"|roll\s+no\.?\s*\*?"
+    r"|name\s*\*?"
+    r"|email\s*\*?"
+    r"|once\s+submit"
+    r"|you\s+have\s+to\s+(be|wait)"
+    r"|its?\s+responsibility"
+    r"|there\s+will\s+be\s+no\s+make"
+    r"|the\s+attendance\s+is\s+mandatory"
+    r"|forms\s*$"
+    r")\s*$",
 )
 
-# Matches option lines: "A." / "(A)" / "A)" / "A:" — letter must be word-boundary isolated
-OPTION_RE = re.compile(
-    r"(?m)^[ \t]*[\(\[]?([A-Da-d])[\).\:\]]\s+(.+)$"
+# "4." or "4. 1 point" or "4. Some question text"
+QUESTION_NUM_RE = re.compile(r"^[ \t]*(\d{1,3})\.\s*(.*)?$")
+
+# Marks/points annotation anywhere in a line
+MARKS_RE = re.compile(r"(?i)\b(\d+)\s*(?:points?|marks?)\b")
+
+# True/False question hint
+TRUE_FALSE_RE = re.compile(r"(?i)\btrue\s*/?\s*false\b")
+
+# Standard A/B/C/D option label (for non-Google-Forms PDFs)
+OPTION_LABEL_RE = re.compile(r"^[ \t]*[\(\[]?([A-Da-d])[\).\:\]][ \t]+(.+)$")
+
+# Inline correct-answer markers (standard PDFs)
+CORRECT_MARKER_RE = re.compile(
+    r"(?i)[ \t]*(?:[*\u2713\u2714]+[ \t]*"
+    r"|\(correct\)|\[correct\]"
+    r"|\(ans(?:wer)?\)|\[ans(?:wer)?\])[ \t]*$"
 )
 
-# Answer key section header
+# Answer key section header (standard PDFs)
 ANSWER_KEY_HEADER_RE = re.compile(
     r"(?im)^[ \t]*(answer[\s_-]*key|answers?|solutions?|key)[ \t]*[:\-]?[ \t]*$"
 )
 
-# Answer key entries: "1. B"  "2) A, C"  "3 - True"
+# Single answer key entry: "1. B" / "2) A, C" / "3 - True"
 ANSWER_KEY_ENTRY_RE = re.compile(
-    r"(?im)^[ \t]*(\d{1,3})[ \t]*[.):\-][ \t]*([A-Da-d](?:[ \t]*[,\/][ \t]*[A-Da-d])*|true|false)[ \t]*$"
+    r"(?im)^[ \t]*(\d{1,3})[ \t]*[.):\-][ \t]*"
+    r"([A-Da-d](?:[ \t]*[,\/][ \t]*[A-Da-d])*|true|false)[ \t]*$"
 )
 
-# Inline correct-answer markers on option text (stripped before storing)
-CORRECT_MARKER_RE = re.compile(
-    r"(?i)[ \t]*(?:[*✓✔]+[ \t]*|\(correct\)|\[correct\]|\(ans(?:wer)?\)|\[ans(?:wer)?\])[ \t]*$"
-)
 
-# Marks annotation: "[2 marks]" / "(2 Marks)" / "(2M)"
-MARKS_RE = re.compile(r"(?i)[\(\[][ \t]*(\d+)[ \t]*m(?:arks?)?[ \t]*[\)\]]")
+# ── Format Detection ──────────────────────────────────────────────────────────
 
-# True/False hint in question body
-TRUE_FALSE_HINT_RE = re.compile(r"(?i)\btrue[ \t]*[/\-or]*[ \t]*false\b")
-
-
-# ── Parser ────────────────────────────────────────────────────────────────────
-
-def _parse_answer_key(text: str) -> tuple[str, dict[int, list[str]]]:
+def _detect_format(text: str) -> str:
     """
-    Detect and strip a trailing Answer Key section.
-    Returns (body_text_without_key, {q_num: [correct_letters_or_TF]}).
+    Returns 'google_forms' or 'standard'.
+    Google Forms PDFs always contain 'mark only one oval' and related strings.
     """
-    header_match = ANSWER_KEY_HEADER_RE.search(text)
-    if not header_match:
-        return text, {}
+    lower = text.lower()
+    hits = sum(1 for phrase in [
+        "mark only one oval",
+        "mark all that apply",
+        "this form doesn",
+        "google forms",
+        "indicates required question",
+    ] if phrase in lower)
+    return "google_forms" if hits >= 2 else "standard"
 
-    body = text[: header_match.start()]
-    key_section = text[header_match.end():]
 
-    answer_map: dict[int, list[str]] = {}
-    for entry in ANSWER_KEY_ENTRY_RE.finditer(key_section):
-        q_num = int(entry.group(1))
-        raw = entry.group(2).strip().lower()
-        if raw in ("true", "false"):
-            answer_map[q_num] = [raw.upper()]
+def _is_header_page(page_text: str) -> bool:
+    """
+    True if a page contains only quiz header/instructions and no question numbers.
+    Used to skip the first 1-2 pages of Google Forms PDFs.
+    """
+    lines = [l.strip() for l in page_text.splitlines() if l.strip()]
+    if any(QUESTION_NUM_RE.match(l) for l in lines):
+        return False
+    keywords = [
+        "quiz", "dear students", "roll no", "name", "email",
+        "start time", "stop time", "all the best", "open only for",
+        "auto-submission", "10 mins",
+    ]
+    hits = sum(1 for kw in keywords if any(kw in l.lower() for l in lines))
+    return hits >= 3
+
+
+# ── Google Forms Parser ───────────────────────────────────────────────────────
+
+def _parse_google_forms(full_text: str) -> list[dict]:
+    """
+    Parse Google Forms PDF structure:
+      - Skip header pages
+      - Discard noise lines (Mark only one oval, etc.)
+      - Question number may be alone on its line ("4.")
+        with question text on the NEXT line
+      - Options are plain text lines with NO A/B/C/D labels
+      - "1 point" annotations stripped from question numbers
+
+    Returns list of raw question dicts (no correct answers yet).
+    """
+    # Skip header-only pages
+    pages = full_text.split("\n\n")
+    content_lines: list[str] = []
+    for page in pages:
+        if _is_header_page(page):
+            logger.debug("Skipping header page")
         else:
-            letters = [
-                p.strip().upper()
-                for p in re.split(r"[,\/]", raw)
-                if p.strip()
-            ]
-            answer_map[q_num] = letters
+            content_lines.extend(page.splitlines())
 
-    return body, answer_map
+    # Strip noise lines
+    cleaned: list[str] = []
+    for raw in content_lines:
+        line = raw.strip()
+        if line and not SKIP_LINE_RE.match(line):
+            cleaned.append(line)
 
+    questions: list[dict] = []
+    current: dict | None = None
+    awaiting_question_text = False  # True when number was alone on its line
 
-def _parse_single_question(
-    number: int,
-    block: str,
-    answer_key: dict[int, list[str]],
-) -> Optional[dict]:
-    """
-    Parse a single question block (text between two question-number markers).
-
-    Steps:
-      1. Split lines into question-text lines vs option lines.
-         Option lines are identified by OPTION_RE. Everything before the first
-         option line is the question text.
-      2. Strip inline correct-answer markers from option text.
-      3. If an answer key exists for this number, apply it (overrides inline marks).
-      4. Detect TRUE_FALSE, MCQ, or MSQ.
-      5. Score confidence.
-    """
-    # ── 1. Split question text vs options ──────────────────────────────────
-    raw_lines = [ln.rstrip() for ln in block.splitlines() if ln.strip()]
-    if not raw_lines:
-        return None
-
-    option_matches: list[re.Match] = []
-    question_lines: list[str] = []
-    seen_first_option = False
-
-    for ln in raw_lines:
-        m = OPTION_RE.match(ln)
+    for line in cleaned:
+        m = QUESTION_NUM_RE.match(line)
         if m:
-            seen_first_option = True
-            option_matches.append(m)
-        elif not seen_first_option:
-            # Still in question body — strip trailing marks annotation
-            clean = MARKS_RE.sub("", ln).strip()
-            if clean:
-                question_lines.append(clean)
-        # Lines after the first option but not matching OPTION_RE are ignored
-        # (e.g. continuation lines — rare in well-formatted PDFs)
+            # Save previous question before starting a new one
+            if current and current.get("question_text"):
+                questions.append(current)
 
-    question_text = " ".join(question_lines).strip()
-    if not question_text:
-        return None
+            number = int(m.group(1))
+            rest   = (m.group(2) or "").strip()
 
-    # ── 2. Extract marks from raw block ───────────────────────────────────
-    marks = 1
-    mm = MARKS_RE.search(block)
-    if mm:
-        try:
-            marks = int(mm.group(1))
-        except ValueError:
+            # Extract marks from rest ("1 point" -> marks=1, rest="")
             marks = 1
+            mm = MARKS_RE.search(rest)
+            if mm:
+                marks = int(mm.group(1))
+                rest  = MARKS_RE.sub("", rest).strip()
 
-    # ── 3. Build raw options, strip inline correct markers ─────────────────
-    raw_options: list[dict] = []
-    for m in option_matches:
-        letter = m.group(1).upper()
-        opt_text = m.group(2)
-        # Check for correct marker BEFORE stripping
-        is_correct_inline = bool(CORRECT_MARKER_RE.search(opt_text))
-        opt_text = CORRECT_MARKER_RE.sub("", opt_text).strip()
+            current = {
+                "number":       number,
+                "question_text": rest,   # empty when number is alone on its line
+                "options":      [],
+                "marks":        marks,
+                "has_correct":  False,
+                "ai_answered":  False,
+            }
+            awaiting_question_text = not bool(rest)
+            continue
+
+        if current is None:
+            continue  # before first question (title page lines)
+
+        # If we haven't got question text yet, this line IS the question
+        if awaiting_question_text and not current["question_text"]:
+            current["question_text"] = MARKS_RE.sub("", line).strip()
+            awaiting_question_text = False
+            continue
+
+        # Every subsequent non-empty, non-skipped line is an option
+        opt_text = MARKS_RE.sub("", line).strip()
         if opt_text:
-            raw_options.append({
-                "letter": letter,
-                "text": opt_text,
-                "is_correct": is_correct_inline,
+            current["options"].append({
+                "text":       opt_text,
+                "is_correct": False,
             })
 
-    # ── 4. Apply answer key (takes priority over inline markers) ───────────
-    key_entry = answer_key.get(number)  # e.g. ["B"] or ["A","C"] or ["TRUE"]
+    # Don't forget the last question
+    if current and current.get("question_text"):
+        questions.append(current)
 
-    if key_entry and key_entry not in (["TRUE"], ["FALSE"]):
-        # Reset all, then mark correct from key
-        for opt in raw_options:
-            opt["is_correct"] = opt["letter"] in key_entry
+    logger.info("Google Forms parser found %d questions", len(questions))
+    return questions
 
-    # ── 5. Detect question type ────────────────────────────────────────────
-    is_tf_hint = bool(TRUE_FALSE_HINT_RE.search(block))
-    option_texts_lower = {o["text"].strip().lower() for o in raw_options}
 
-    looks_like_tf = (
-        is_tf_hint
-        or option_texts_lower <= {"true", "false"}  # only true/false options present
-        or (
-            not raw_options
-            and question_text.strip().lower().endswith(("true.", "false.", "(true)", "(false)"))
+# ── Standard MCQ Parser ───────────────────────────────────────────────────────
+
+def _parse_standard(full_text: str) -> list[dict]:
+    """
+    Parse standard MCQ PDF with A/B/C/D option labels.
+    Handles inline correct markers (*) and trailing Answer Key sections.
+    """
+    # Strip answer key section first
+    answer_key: dict[int, list[str]] = {}
+    hm = ANSWER_KEY_HEADER_RE.search(full_text)
+    if hm:
+        key_section = full_text[hm.end():]
+        full_text   = full_text[: hm.start()]
+        for entry in ANSWER_KEY_ENTRY_RE.finditer(key_section):
+            q_num = int(entry.group(1))
+            raw   = entry.group(2).strip().lower()
+            if raw in ("true", "false"):
+                answer_key[q_num] = [raw.upper()]
+            else:
+                answer_key[q_num] = [
+                    p.strip().upper()
+                    for p in re.split(r"[,\/]", raw) if p.strip()
+                ]
+
+    # Split on question numbers
+    q_start_re = re.compile(r"(?m)^[ \t]*(\d{1,3})[.):\]]\s+")
+    starts = list(q_start_re.finditer(full_text))
+
+    questions: list[dict] = []
+    for i, m in enumerate(starts):
+        number    = int(m.group(1))
+        block_end = starts[i + 1].start() if i + 1 < len(starts) else len(full_text)
+        block     = full_text[m.end(): block_end]
+
+        lines    = [l.strip() for l in block.splitlines() if l.strip()]
+        opts: list[dict] = []
+        q_lines: list[str] = []
+        seen_opt = False
+
+        for ln in lines:
+            lm = OPTION_LABEL_RE.match(ln)
+            if lm:
+                seen_opt = True
+                letter   = lm.group(1).upper()
+                opt_text = lm.group(2).strip()
+                is_corr  = bool(CORRECT_MARKER_RE.search(opt_text))
+                opt_text = CORRECT_MARKER_RE.sub("", opt_text).strip()
+                opts.append({"letter": letter, "text": opt_text, "is_correct": is_corr})
+            elif not seen_opt:
+                clean = MARKS_RE.sub("", ln).strip()
+                if clean:
+                    q_lines.append(clean)
+
+        q_text = " ".join(q_lines).strip()
+        if not q_text or len(opts) < 2:
+            continue
+
+        marks = 1
+        mm = MARKS_RE.search(block)
+        if mm:
+            try: marks = int(mm.group(1))
+            except: pass
+
+        # Apply answer key (overrides inline markers)
+        key = answer_key.get(number)
+        if key and key not in (["TRUE"], ["FALSE"]):
+            for opt in opts:
+                opt["is_correct"] = opt.get("letter") in key
+
+        has_correct = any(o["is_correct"] for o in opts)
+
+        questions.append({
+            "number":       number,
+            "question_text": q_text,
+            "options":      opts,
+            "marks":        marks,
+            "has_correct":  has_correct,
+            "ai_answered":  False,
+        })
+
+    logger.info("Standard parser found %d questions", len(questions))
+    return questions
+
+
+# ── Groq AI Answer Inference ──────────────────────────────────────────────────
+
+
+import requests
+
+def _infer_answers_with_groq(raw_questions: list[dict]) -> list[dict]:
+    api_key = settings.GROQ_API_KEY.strip()
+    if not api_key:
+        logger.warning("GROQ_API_KEY not set — skipping AI answer inference")
+        return raw_questions
+
+    lines: list[str] = []
+    for i, q in enumerate(raw_questions):
+        opts_str = " | ".join(
+            f"[{j}] {o['text']}" for j, o in enumerate(q["options"])
         )
+        lines.append(f"Q{i}: {q['question_text']} OPTIONS: {opts_str}")
+
+    questions_block = "\n".join(lines)
+
+    system_prompt = (
+        "You are an expert academic tutor. "
+        "Given multiple-choice questions, identify the correct answer(s) for each. "
+        "Reply ONLY with a JSON array — no prose, no markdown fences. "
+        "Format: [{\"q\":0,\"correct\":[2]},{\"q\":1,\"correct\":[0]}, ...] "
+        "where numbers are 0-based indices. "
+        "Always include one correct index per question. "
+        "Use multiple indices only when the question explicitly says 'select all that apply'."
     )
 
-    if looks_like_tf:
-        # Determine correct answer for T/F
-        tf_correct: Optional[str] = None
-
-        if key_entry and key_entry[0] in ("TRUE", "FALSE"):
-            tf_correct = key_entry[0]
-        else:
-            # Try inline-marked options
-            for opt in raw_options:
-                if opt["is_correct"]:
-                    val = opt["text"].strip().lower()
-                    if val in ("true", "false"):
-                        tf_correct = val.upper()
-                        break
-
-        options = [
-            {"text": "True",  "is_correct": tf_correct == "TRUE"},
-            {"text": "False", "is_correct": tf_correct == "FALSE"},
-        ]
-        question_type = "TRUE_FALSE"
-        has_correct = tf_correct is not None
-
-    else:
-        if len(raw_options) < 2:
-            # Not enough options — skip this block
-            return None
-
-        options = [{"text": o["text"], "is_correct": o["is_correct"]} for o in raw_options]
-        correct_count = sum(1 for o in options if o["is_correct"])
-        question_type = "MSQ" if correct_count > 1 else "MCQ"
-        has_correct = correct_count > 0
-
-    # ── 6. Confidence scoring ──────────────────────────────────────────────
-    confidence = 50
-    if len(question_text) > 10:
-        confidence += 10          # has substantial question text
-    if len(question_text) > 30:
-        confidence += 5           # even more text
-    if question_type == "TRUE_FALSE" or len(options) >= 4:
-        confidence += 15          # well-formed options
-    elif len(options) >= 2:
-        confidence += 8
-    if has_correct:
-        confidence += 20          # correct answer identified
-    if key_entry:
-        confidence += 5           # came from answer key — more reliable
-    confidence = max(0, min(100, confidence))
-
-    needs_review = not has_correct or confidence < 75
-
-    # ── 7. Difficulty heuristic ────────────────────────────────────────────
-    word_count = len(question_text.split())
-    if word_count < 10:
-        difficulty: Difficulty = "EASY"
-    elif word_count < 25:
-        difficulty = "MEDIUM"
-    else:
-        difficulty = "HARD"
-
-    return {
-        "id": f"ext-{number}",
-        "question_text": question_text,
-        "question_type": question_type,
-        "options": options,
-        "marks": marks,
-        "difficulty": difficulty,
-        "confidence": confidence,
-        "needs_review": needs_review,
-        "approved": False,
+    payload = {
+        "model":       "llama-3.1-8b-instant",
+        "temperature": 0,
+        "max_tokens":  1024,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Answer these {len(raw_questions)} questions:\n\n"
+                    f"{questions_block}\n\n"
+                    "JSON array only:"
+                ),
+            },
+        ],
     }
 
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type":  "application/json",
+                "User-Agent":    "Mozilla/5.0 (compatible; ExamPortal/1.0)",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
 
-def _parse_questions_from_text(text: str) -> list[dict]:
-    """
-    Split the full document text into per-question blocks and parse each.
+        raw_json = body["choices"][0]["message"]["content"].strip()
+        if raw_json.startswith("```"):
+            raw_json = re.sub(r"```[a-z]*\n?", "", raw_json).strip().rstrip("`").strip()
 
-    The splitter uses QUESTION_START_RE which matches lines like "1. " / "2) " etc.
-    Each block is the text between two consecutive question-start markers.
-    """
-    # First strip any answer key section so its numbers don't confuse the splitter
-    body_text, answer_key = _parse_answer_key(text)
+        answers: list[dict] = json.loads(raw_json)
 
-    starts = list(QUESTION_START_RE.finditer(body_text))
-    if not starts:
-        logger.warning("No question-start markers found in extracted text.")
-        return []
+        for ans in answers:
+            q_idx   = ans.get("q")
+            correct = ans.get("correct", [])
+            if not isinstance(q_idx, int) or q_idx >= len(raw_questions):
+                continue
+            q = raw_questions[q_idx]
+            for j, opt in enumerate(q["options"]):
+                opt["is_correct"] = (j in correct)
+            q["has_correct"] = bool(correct)
+            q["ai_answered"] = True
 
+        answered = sum(1 for q in raw_questions if q.get("ai_answered"))
+        logger.info("Groq answered %d / %d questions", answered, len(raw_questions))
+
+    except requests.exceptions.HTTPError as e:
+        logger.error("Groq API HTTP error %s: %s", e.response.status_code, e.response.text[:300])
+    except json.JSONDecodeError as e:
+        logger.error("Groq returned invalid JSON: %s", e)
+    except Exception as e:
+        logger.error("Groq inference failed: %s", e, exc_info=True)
+
+    return raw_questions
+    # Build compact prompt — one line per question to minimize tokens
+    lines: list[str] = []
+    for i, q in enumerate(raw_questions):
+        opts_str = " | ".join(
+            f"[{j}] {o['text']}" for j, o in enumerate(q["options"])
+        )
+        lines.append(f"Q{i}: {q['question_text']} OPTIONS: {opts_str}")
+
+    questions_block = "\n".join(lines)
+
+    system_prompt = (
+        "You are an expert academic tutor. "
+        "Given multiple-choice questions, identify the correct answer(s) for each. "
+        "Reply ONLY with a JSON array — no prose, no markdown fences. "
+        "Format: [{\"q\":0,\"correct\":[2]},{\"q\":1,\"correct\":[0]}, ...] "
+        "where numbers are 0-based indices. "
+        "Always include one correct index per question. "
+        "Use multiple indices only when the question explicitly says 'select all that apply'."
+    )
+
+    payload = {
+        "model":       "llama-3.1-8b-instant",
+        "temperature": 0,
+        "max_tokens":  1024,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Answer these {len(raw_questions)} questions:\n\n"
+                    f"{questions_block}\n\n"
+                    "JSON array only:"
+                ),
+            },
+        ],
+    }
+
+    import urllib.request, urllib.error
+
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode())
+
+        raw_json = body["choices"][0]["message"]["content"].strip()
+
+        # Strip accidental markdown fences
+        if raw_json.startswith("```"):
+            raw_json = re.sub(r"```[a-z]*\n?", "", raw_json).strip().rstrip("`").strip()
+
+        answers: list[dict] = json.loads(raw_json)
+
+        for ans in answers:
+            q_idx   = ans.get("q")
+            correct = ans.get("correct", [])
+            if not isinstance(q_idx, int) or q_idx >= len(raw_questions):
+                continue
+            q = raw_questions[q_idx]
+            for j, opt in enumerate(q["options"]):
+                opt["is_correct"] = (j in correct)
+            q["has_correct"] = bool(correct)
+            q["ai_answered"] = True
+
+        answered = sum(1 for q in raw_questions if q.get("ai_answered"))
+        logger.info("Groq answered %d / %d questions", answered, len(raw_questions))
+
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode(errors="ignore")
+        logger.error("Groq API HTTP error %s: %s", e.code, body_text[:300])
+        # Non-fatal — questions returned with needs_review=True
+    except json.JSONDecodeError as e:
+        logger.error("Groq returned invalid JSON: %s", e)
+    except Exception as e:
+        logger.error("Groq inference failed: %s", e, exc_info=True)
+
+    return raw_questions
+
+
+# ── Finalize to ExtractedQuestion ─────────────────────────────────────────────
+
+def _finalize(raw_questions: list[dict]) -> list[dict]:
+    """Convert raw parsed question dicts to ExtractedQuestion-compatible dicts."""
     results: list[dict] = []
-    for i, m in enumerate(starts):
-        number = int(m.group(1))
-        block_start = m.end()
-        block_end = starts[i + 1].start() if i + 1 < len(starts) else len(body_text)
-        block = body_text[block_start:block_end]
 
-        parsed = _parse_single_question(number, block, answer_key)
-        if parsed:
-            results.append(parsed)
+    for q in raw_questions:
+        q_text  = q.get("question_text", "").strip()
+        options = q.get("options", [])
+        marks   = q.get("marks", 1)
+        number  = q.get("number", len(results) + 1)
+
+        if not q_text or len(options) < 2:
+            logger.debug("Skipping Q%s — insufficient text or options", number)
+            continue
+
+        opt_texts_lower = {o["text"].strip().lower() for o in options}
+        is_tf = opt_texts_lower <= {"true", "false"} or bool(TRUE_FALSE_RE.search(q_text))
+
+        if is_tf:
+            question_type = "TRUE_FALSE"
+            tf_correct: str | None = None
+            for opt in options:
+                if opt.get("is_correct"):
+                    val = opt["text"].strip().capitalize()
+                    if val in ("True", "False"):
+                        tf_correct = val
+                        break
+            final_opts = [
+                {"text": "True",  "is_correct": tf_correct == "True"},
+                {"text": "False", "is_correct": tf_correct == "False"},
+            ]
         else:
-            logger.debug("Skipped question block #%d (could not parse)", number)
+            correct_count = sum(1 for o in options if o.get("is_correct"))
+            question_type = "MSQ" if correct_count > 1 else "MCQ"
+            final_opts = [
+                {"text": o["text"].strip(), "is_correct": o.get("is_correct", False)}
+                for o in options
+                if o.get("text", "").strip()
+            ]
+
+        has_correct = any(o["is_correct"] for o in final_opts)
+
+        # Confidence scoring
+        conf = 40
+        if len(q_text) > 15:         conf += 10
+        if len(q_text) > 40:         conf += 5
+        if len(final_opts) >= 4:     conf += 10
+        elif len(final_opts) >= 2:   conf += 5
+        if has_correct:              conf += 25
+        if q.get("ai_answered"):     conf += 10   # Groq answered it
+        conf = min(conf, 95)
+
+        needs_review = not has_correct or conf < 70
+
+        wc = len(q_text.split())
+        difficulty = "EASY" if wc < 12 else ("MEDIUM" if wc < 30 else "HARD")
+
+        results.append({
+            "id":            f"ext-{number}",
+            "question_text": q_text,
+            "question_type": question_type,
+            "options":       final_opts,
+            "marks":         marks,
+            "difficulty":    difficulty,
+            "confidence":    conf,
+            "needs_review":  needs_review,
+            "approved":      False,
+        })
 
     return results
 
@@ -532,48 +730,39 @@ async def extract_questions_from_file(
     """
     Upload a text-based PDF or DOCX and extract structured exam questions.
 
-    Extraction pipeline:
-      PDF  → pdfplumber (direct text extraction — no OCR, no image conversion)
-      DOCX → python-docx paragraph walker
-      Both → regex rule-based parser (MCQ / MSQ / TRUE_FALSE)
+    AUTO-DETECTS two PDF formats:
+    ─────────────────────────────
+    Google Forms PDF  — no A/B/C/D labels, "Mark only one oval." present
+                        Correct answers inferred by Groq AI (FREE, llama-3.1-8b-instant)
 
-    PDF must be text-based (exported from Word, LaTeX, Google Docs, etc.).
-    Scanned image-only PDFs are not supported.
+    Standard MCQ PDF  — options labeled A. B. C. D.
+                        Correct answers from inline * markers or Answer Key section
 
-    Recommended question format for best results:
-        1. Question text here? [2 marks]
-        A. Option one
-        B. Option two *        ← asterisk or (correct) marks the right answer
-        C. Option three
-        D. Option four
-
-    Or use a trailing Answer Key section:
-        Answer Key:
-        1. B
-        2. A, C
-        3. True
+    If Groq is unavailable (GROQ_API_KEY not set), questions are returned
+    without correct answers — faculty selects them in the review table.
     """
     filename = (file.filename or "").lower()
-    content = await file.read()
+    content  = await file.read()
 
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    # ── 1. Extract raw text ───────────────────────────────────────────────────
     if filename.endswith(".pdf"):
         try:
-            text = _extract_pdf_text(content)
+            full_text = _extract_pdf_text(content)
         except Exception as exc:
-            logger.error("PDF text extraction failed: %s", exc, exc_info=True)
+            logger.error("PDF extraction failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Could not read this PDF. Make sure it is a text-based PDF "
-                    "(not a scanned image) and is not password-protected."
+                    "Could not read this PDF. Ensure it is text-based "
+                    "(exported from Word/Google Docs/LaTeX) and not password-protected."
                 ),
             )
     elif filename.endswith(".docx"):
         try:
-            text = _extract_docx_text(content)
+            full_text = _extract_docx_text(content)
         except Exception as exc:
             logger.error("DOCX extraction failed: %s", exc, exc_info=True)
             raise HTTPException(status_code=400, detail="Could not read this DOCX file.")
@@ -583,29 +772,57 @@ async def extract_questions_from_file(
             detail="Only PDF and DOCX files are supported.",
         )
 
-    if not text.strip():
+    if not full_text.strip():
         raise HTTPException(
             status_code=400,
             detail=(
-                "No text could be extracted from this document. "
-                "If it is a scanned PDF, please convert it to a text-based PDF first."
+                "No text could be extracted. "
+                "Ensure the PDF is text-based, not a scanned image."
             ),
         )
 
-    logger.info("Extracted %d characters of text from %s", len(text), filename)
+    logger.info("Extracted %d chars from '%s'", len(full_text), filename)
 
-    extracted = _parse_questions_from_text(text)
+    # ── 2. Detect format and parse ────────────────────────────────────────────
+    fmt = _detect_format(full_text)
+    logger.info("Detected PDF format: %s", fmt)
+
+    raw_questions = (
+        _parse_google_forms(full_text)
+        if fmt == "google_forms"
+        else _parse_standard(full_text)
+    )
+
+    if not raw_questions:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No questions could be identified. "
+                "Ensure questions are numbered (1., 2., ...) and "
+                "the PDF is a text-based export."
+            ),
+        )
+
+    # ── 3. AI answer inference for questions without confirmed answers ─────────
+    missing_answers = [q for q in raw_questions if not q.get("has_correct")]
+    if missing_answers:
+        logger.info(
+            "%d / %d questions need AI answer inference",
+            len(missing_answers), len(raw_questions),
+        )
+        raw_questions = _infer_answers_with_groq(raw_questions)
+
+    # ── 4. Finalize ───────────────────────────────────────────────────────────
+    extracted = _finalize(raw_questions)
 
     if not extracted:
         raise HTTPException(
             status_code=422,
             detail=(
-                "No questions could be identified in this document. "
-                "Ensure questions are numbered (e.g. '1.', '2.') and options "
-                "are labeled A–D. Correct answers should be marked with * or "
-                "listed in an 'Answer Key' section at the end."
+                "Questions were found but could not be structured. "
+                "Each question needs at least 2 options."
             ),
         )
 
-    logger.info("Parsed %d questions from %s", len(extracted), filename)
+    logger.info("Returning %d extracted questions from '%s'", len(extracted), filename)
     return extracted
