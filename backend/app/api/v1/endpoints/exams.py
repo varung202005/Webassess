@@ -1,31 +1,24 @@
-"""
-Exams endpoints.
-
-WHO DOES WHAT:
-  - Exam creation form    → FRONTEND (UI) + BACKEND (POST)
-  - Status transitions    → BACKEND only (DRAFT→REVIEW→PUBLISHED→ARCHIVED)
-  - Add questions         → BACKEND (POST /exams/{id}/questions)
-  - Student exam list     → BACKEND (filters by registration)
-  - Faculty exam list     → BACKEND (filters by created_by)
-"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, model_validator
 from typing import Optional, List, Literal
 from uuid import UUID
+import logging
 
 from app.core.security import require_faculty, require_admin, get_current_user_with_roles
 from app.db.supabase import get_supabase_admin
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ExamStatus = Literal["DRAFT", "REVIEW", "PUBLISHED", "ARCHIVED"]
+ExamType   = Literal["MID_SEMESTER", "END_SEMESTER", "QUIZ", "ASSIGNMENT", "PRACTICE", "PLACEMENT", "ENTRANCE"]
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class ExamCreate(BaseModel):
     title: str
-    course_id: UUID
+    course_id: Optional[UUID] = None   # CHANGED: now optional — exams can exist without a course
     total_marks: int
     pass_marks: int
     duration_minutes: int
@@ -33,6 +26,7 @@ class ExamCreate(BaseModel):
     shuffle_options: bool = False
     instructions: Optional[str] = None
     semester: Optional[int] = None
+    exam_type: Optional[ExamType] = "MID_SEMESTER"   # NEW — from migration
 
     @model_validator(mode="after")
     def validate_marks(self):
@@ -50,6 +44,7 @@ class ExamUpdate(BaseModel):
     shuffle_options: Optional[bool] = None
     instructions: Optional[str] = None
     semester: Optional[int] = None
+    exam_type: Optional[ExamType] = None             # NEW
 
 
 class ExamQuestionAdd(BaseModel):
@@ -110,12 +105,22 @@ async def create_exam(
     supabase = get_supabase_admin()
     data = {
         **body.model_dump(),
-        "course_id": str(body.course_id),
+        "course_id": str(body.course_id) if body.course_id else None,  # CHANGED: allow NULL course
         "created_by": current_user["user_id"],
         "status": "DRAFT",
     }
-    result = supabase.table("exams").insert(data).execute()
-    return result.data[0]
+    # Remove exam_type if the column doesn't exist yet (migration not applied)
+    try:
+        result = supabase.table("exams").insert(data).execute()
+        return result.data[0]
+    except Exception as e:
+        if "exam_type" in str(e):
+            # Migration not yet applied — insert without exam_type
+            logger.warning("exam_type column missing — insert without it. Run migration 20260613_exam_enhancements.sql")
+            data.pop("exam_type", None)
+            result = supabase.table("exams").insert(data).execute()
+            return result.data[0]
+        raise
 
 
 @router.patch("/{exam_id}")
@@ -124,7 +129,7 @@ async def update_exam(
     body: ExamUpdate,
     _: dict = Depends(require_faculty),
 ):
-    """Update exam details. Only allowed when status is DRAFT."""
+    """Update exam details. Only allowed when status is DRAFT or REVIEW."""
     supabase = get_supabase_admin()
 
     exam = supabase.table("exams").select("status").eq("id", str(exam_id)).single().execute()
@@ -134,15 +139,22 @@ async def update_exam(
         raise HTTPException(status_code=400, detail="Cannot edit a PUBLISHED or ARCHIVED exam")
 
     data = body.model_dump(exclude_none=True)
-    result = supabase.table("exams").update(data).eq("id", str(exam_id)).execute()
-    return result.data[0]
+    try:
+        result = supabase.table("exams").update(data).eq("id", str(exam_id)).execute()
+        return result.data[0]
+    except Exception as e:
+        if "exam_type" in str(e):
+            data.pop("exam_type", None)
+            result = supabase.table("exams").update(data).eq("id", str(exam_id)).execute()
+            return result.data[0]
+        raise
 
 
 @router.patch("/{exam_id}/status", dependencies=[Depends(require_faculty)])
 async def change_exam_status(exam_id: UUID, body: StatusTransition):
     """
     Status transition: DRAFT → REVIEW → PUBLISHED → ARCHIVED.
-    BACKEND enforces valid transitions. BACKEND responsibility.
+    BACKEND enforces valid transitions.
     """
     supabase = get_supabase_admin()
     valid_transitions = {
@@ -171,43 +183,35 @@ async def get_exam_questions(
     exam_id: UUID,
     current_user: dict = Depends(get_current_user_with_roles),
 ):
-    """
-    Returns all questions for an exam with effective marks.
-    This is the key query from Phase 4 of the DB design.
-    BACKEND responsibility.
-    """
+    """Returns all questions for an exam with effective marks."""
     supabase = get_supabase_admin()
-    # Use Supabase's RPC or a joined query
     result = (
         supabase.table("exam_questions")
         .select(
             "order_index, marks_override, "
-            "questions(id, question_text, question_type, marks, question_options(*)), "
+            "questions(id, question_text, question_type, marks, negative_marks, question_options(*)), "
             "exam_sections(title)"
         )
         .eq("exam_id", str(exam_id))
         .order("order_index")
         .execute()
     )
-    # Compute effective_marks in Python (COALESCE equivalent)
     for row in result.data:
+        q = row.get("questions") or {}
         if "Student" in current_user["roles"]:
-            for option in row.get("questions", {}).get("question_options", []):
+            for option in q.get("question_options", []):
                 option.pop("is_correct", None)
         row["effective_marks"] = (
             row["marks_override"]
             if row["marks_override"] is not None
-            else row["questions"]["marks"]
+            else q.get("marks", 0)
         )
     return result.data
 
 
 @router.post("/{exam_id}/questions", dependencies=[Depends(require_faculty)])
 async def add_question_to_exam(exam_id: UUID, body: ExamQuestionAdd):
-    """
-    Add a question to an exam (bridge table insert).
-    BACKEND responsibility.
-    """
+    """Add a question to an exam (bridge table insert)."""
     supabase = get_supabase_admin()
     data = {
         "exam_id": str(exam_id),
@@ -223,5 +227,8 @@ async def add_question_to_exam(exam_id: UUID, body: ExamQuestionAdd):
 @router.delete("/{exam_id}/questions/{question_id}", dependencies=[Depends(require_faculty)])
 async def remove_question_from_exam(exam_id: UUID, question_id: UUID):
     supabase = get_supabase_admin()
-    supabase.table("exam_questions").delete().eq("exam_id", str(exam_id)).eq("question_id", str(question_id)).execute()
+    supabase.table("exam_questions").delete()\
+        .eq("exam_id", str(exam_id))\
+        .eq("question_id", str(question_id))\
+        .execute()
     return {"message": "Question removed from exam"}
