@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional, List, Literal
 from uuid import UUID
-from app.core.config import settings   # <-- add this line
+from app.core.config import settings
 import pdfplumber
 from docx import Document as DocxDocument
 from app.core.security import require_faculty
@@ -19,6 +19,24 @@ router = APIRouter()
 QuestionType          = Literal["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER", "LONG_ANSWER"]
 Difficulty            = Literal["EASY", "MEDIUM", "HARD"]
 ExtractedQuestionType = Literal["MCQ", "MSQ", "TRUE_FALSE"]
+
+
+# ── Sanitize helper ───────────────────────────────────────────────────────────
+
+def sanitize(text: str | None) -> str | None:
+    """
+    Strip characters that PostgreSQL cannot store in a `text` column.
+
+    PostgreSQL raises error code 22P05 ("unsupported Unicode escape sequence")
+    when a string contains the NULL byte U+0000.  pdfplumber occasionally
+    produces these from ligature glyphs or corrupt PDF glyph tables.
+
+    We also strip the Unicode replacement character U+FFFD which can appear
+    for the same reason and is usually unwanted in question text.
+    """
+    if text is None:
+        return None
+    return text.replace("\x00", "").replace("\ufffd", "")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -112,15 +130,18 @@ async def create_question(
     current_user: dict = Depends(require_faculty),
 ):
     supabase = get_supabase_admin()
+
+    # FIX: sanitize() removes U+0000 null bytes that pdfplumber can embed in
+    # extracted text, which PostgreSQL rejects with error code 22P05.
     q_data = {
-        "created_by": current_user["user_id"],
-        "course_id": str(body.course_id) if body.course_id else None,
-        "question_type": body.question_type,
-        "question_text": body.question_text,
-        "marks": body.marks,
+        "created_by":     current_user["user_id"],
+        "course_id":      str(body.course_id) if body.course_id else None,
+        "question_type":  body.question_type,
+        "question_text":  sanitize(body.question_text),   # ← FIX
+        "marks":          body.marks,
         "negative_marks": body.negative_marks,
-        "difficulty": body.difficulty,
-        "is_active": True,
+        "difficulty":     body.difficulty,
+        "is_active":      True,
     }
     q_result = supabase.table("questions").insert(q_data).execute()
     qid = q_result.data[0]["id"]
@@ -129,8 +150,8 @@ async def create_question(
         supabase.table("question_options").insert([
             {
                 "question_id": qid,
-                "option_text": o.option_text,
-                "is_correct": o.is_correct,
+                "option_text": sanitize(o.option_text),   # ← FIX
+                "is_correct":  o.is_correct,
                 "order_index": o.order_index,
             }
             for o in body.options
@@ -140,9 +161,9 @@ async def create_question(
         supabase.table("question_topics").insert([
             {
                 "question_id": qid,
-                "topic": t.topic,
-                "subject": t.subject,
-                "chapter": t.chapter,
+                "topic":       sanitize(t.topic),         # ← FIX
+                "subject":     sanitize(t.subject),       # ← FIX
+                "chapter":     sanitize(t.chapter),       # ← FIX
             }
             for t in body.topics
         ]).execute()
@@ -174,11 +195,6 @@ async def soft_delete_question(question_id: UUID, _: dict = Depends(require_facu
 # ── Text Extraction ───────────────────────────────────────────────────────────
 
 def _extract_pdf_text(content: bytes) -> str:
-    """
-    Extract full text from a text-based PDF using pdfplumber.
-    layout=True preserves spatial ordering — critical so question numbers
-    stay on their own lines (Google Forms PDF structure).
-    """
     parts: list[str] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         for page in pdf.pages:
@@ -207,7 +223,6 @@ def _extract_docx_text(content: bytes) -> str:
 
 # ── Regex Patterns ────────────────────────────────────────────────────────────
 
-# Lines to discard from Google Forms PDFs
 SKIP_LINE_RE = re.compile(
     r"(?i)^("
     r"mark\s+only\s+one\s+oval\.?"
@@ -234,31 +249,18 @@ SKIP_LINE_RE = re.compile(
     r")\s*$",
 )
 
-# "4." or "4. 1 point" or "4. Some question text"
-QUESTION_NUM_RE = re.compile(r"^[ \t]*(\d{1,3})\.\s*(.*)?$")
-
-# Marks/points annotation anywhere in a line
-MARKS_RE = re.compile(r"(?i)\b(\d+)\s*(?:points?|marks?)\b")
-
-# True/False question hint
-TRUE_FALSE_RE = re.compile(r"(?i)\btrue\s*/?\s*false\b")
-
-# Standard A/B/C/D option label (for non-Google-Forms PDFs)
-OPTION_LABEL_RE = re.compile(r"^[ \t]*[\(\[]?([A-Da-d])[\).\:\]][ \t]+(.+)$")
-
-# Inline correct-answer markers (standard PDFs)
+QUESTION_NUM_RE  = re.compile(r"^[ \t]*(\d{1,3})\.\s*(.*)?$")
+MARKS_RE         = re.compile(r"(?i)\b(\d+)\s*(?:points?|marks?)\b")
+TRUE_FALSE_RE    = re.compile(r"(?i)\btrue\s*/?\s*false\b")
+OPTION_LABEL_RE  = re.compile(r"^[ \t]*[\(\[]?([A-Da-d])[\).\:\]][ \t]+(.+)$")
 CORRECT_MARKER_RE = re.compile(
     r"(?i)[ \t]*(?:[*\u2713\u2714]+[ \t]*"
     r"|\(correct\)|\[correct\]"
     r"|\(ans(?:wer)?\)|\[ans(?:wer)?\])[ \t]*$"
 )
-
-# Answer key section header (standard PDFs)
 ANSWER_KEY_HEADER_RE = re.compile(
     r"(?im)^[ \t]*(answer[\s_-]*key|answers?|solutions?|key)[ \t]*[:\-]?[ \t]*$"
 )
-
-# Single answer key entry: "1. B" / "2) A, C" / "3 - True"
 ANSWER_KEY_ENTRY_RE = re.compile(
     r"(?im)^[ \t]*(\d{1,3})[ \t]*[.):\-][ \t]*"
     r"([A-Da-d](?:[ \t]*[,\/][ \t]*[A-Da-d])*|true|false)[ \t]*$"
@@ -268,10 +270,6 @@ ANSWER_KEY_ENTRY_RE = re.compile(
 # ── Format Detection ──────────────────────────────────────────────────────────
 
 def _detect_format(text: str) -> str:
-    """
-    Returns 'google_forms' or 'standard'.
-    Google Forms PDFs always contain 'mark only one oval' and related strings.
-    """
     lower = text.lower()
     hits = sum(1 for phrase in [
         "mark only one oval",
@@ -284,10 +282,6 @@ def _detect_format(text: str) -> str:
 
 
 def _is_header_page(page_text: str) -> bool:
-    """
-    True if a page contains only quiz header/instructions and no question numbers.
-    Used to skip the first 1-2 pages of Google Forms PDFs.
-    """
     lines = [l.strip() for l in page_text.splitlines() if l.strip()]
     if any(QUESTION_NUM_RE.match(l) for l in lines):
         return False
@@ -303,18 +297,6 @@ def _is_header_page(page_text: str) -> bool:
 # ── Google Forms Parser ───────────────────────────────────────────────────────
 
 def _parse_google_forms(full_text: str) -> list[dict]:
-    """
-    Parse Google Forms PDF structure:
-      - Skip header pages
-      - Discard noise lines (Mark only one oval, etc.)
-      - Question number may be alone on its line ("4.")
-        with question text on the NEXT line
-      - Options are plain text lines with NO A/B/C/D labels
-      - "1 point" annotations stripped from question numbers
-
-    Returns list of raw question dicts (no correct answers yet).
-    """
-    # Skip header-only pages
     pages = full_text.split("\n\n")
     content_lines: list[str] = []
     for page in pages:
@@ -323,8 +305,6 @@ def _parse_google_forms(full_text: str) -> list[dict]:
         else:
             content_lines.extend(page.splitlines())
 
-    # Strip noise lines (including standalone '*' required-field markers,
-    # which Google Forms sometimes places on their own line)
     STANDALONE_ASTERISK_RE = re.compile(r"^\*+$")
     cleaned: list[str] = []
     for raw in content_lines:
@@ -337,82 +317,60 @@ def _parse_google_forms(full_text: str) -> list[dict]:
 
     questions: list[dict] = []
     current: dict | None = None
-    awaiting_question_text = False  # True when number was alone on its line
+    awaiting_question_text = False
 
     for line in cleaned:
         m = QUESTION_NUM_RE.match(line)
         if m:
-            # Save previous question before starting a new one
             if current and current.get("question_text"):
                 questions.append(current)
 
             number = int(m.group(1))
             rest   = (m.group(2) or "").strip()
 
-            # Extract marks from rest ("1 point" -> marks=1, rest="")
             marks = 1
             mm = MARKS_RE.search(rest)
             if mm:
                 marks = int(mm.group(1))
                 rest  = MARKS_RE.sub("", rest).strip()
 
-            # Strip a trailing required-field '*' from the question text,
-            # e.g. "Some question text *" -> "Some question text"
             rest = re.sub(r"\s*\*+\s*$", "", rest).strip()
 
             current = {
-                "number":       number,
-                "question_text": rest,   # empty when number is alone on its line
-                "options":      [],
-                "marks":        marks,
-                "has_correct":  False,
-                "ai_answered":  False,
+                "number":        number,
+                "question_text": rest,
+                "options":       [],
+                "marks":         marks,
+                "has_correct":   False,
+                "ai_answered":   False,
             }
             awaiting_question_text = not bool(rest)
             continue
 
         if current is None:
-            continue  # before first question (title page lines)
+            continue
 
-        # If we haven't got question text yet, this line IS the question
         if awaiting_question_text and not current["question_text"]:
             q_text = MARKS_RE.sub("", line).strip()
-            # Strip a trailing required-field '*' from the question text
             q_text = re.sub(r"\s*\*+\s*$", "", q_text).strip()
             if not q_text:
-                # Line was just the '*' marker — keep waiting for real text
                 continue
             current["question_text"] = q_text
             awaiting_question_text = False
             continue
 
-        # Every subsequent non-empty, non-skipped line is an option
         opt_text = MARKS_RE.sub("", line).strip()
-        # Strip a trailing required-field '*' from option text too
         opt_text = re.sub(r"\s*\*+\s*$", "", opt_text).strip()
         if not opt_text:
             continue
 
-        # If this line looks like a wrapped continuation of the previous
-        # option's text — it starts with a lowercase letter — merge it
-        # into the previous option instead of treating it as a brand-new
-        # option. This handles long options that wrap across two lines in
-        # the PDF, which otherwise get split into fragments like
-        # "0. When the goal is to" / "1. find the shortest path...".
-        # (Deliberately conservative: only merges on a lowercase start,
-        # since legitimate options almost always start with a capital
-        # letter, digit, or quote.)
         prev_opts = current["options"]
         if prev_opts and opt_text[0].islower():
             prev_opts[-1]["text"] = (prev_opts[-1]["text"].rstrip() + " " + opt_text).strip()
             continue
 
-        current["options"].append({
-            "text":       opt_text,
-            "is_correct": False,
-        })
+        current["options"].append({"text": opt_text, "is_correct": False})
 
-    # Don't forget the last question
     if current and current.get("question_text"):
         questions.append(current)
 
@@ -423,11 +381,6 @@ def _parse_google_forms(full_text: str) -> list[dict]:
 # ── Standard MCQ Parser ───────────────────────────────────────────────────────
 
 def _parse_standard(full_text: str) -> list[dict]:
-    """
-    Parse standard MCQ PDF with A/B/C/D option labels.
-    Handles inline correct markers (*) and trailing Answer Key sections.
-    """
-    # Strip answer key section first
     answer_key: dict[int, list[str]] = {}
     hm = ANSWER_KEY_HEADER_RE.search(full_text)
     if hm:
@@ -444,7 +397,6 @@ def _parse_standard(full_text: str) -> list[dict]:
                     for p in re.split(r"[,\/]", raw) if p.strip()
                 ]
 
-    # Split on question numbers
     q_start_re = re.compile(r"(?m)^[ \t]*(\d{1,3})[.):\]]\s+")
     starts = list(q_start_re.finditer(full_text))
 
@@ -483,7 +435,6 @@ def _parse_standard(full_text: str) -> list[dict]:
             try: marks = int(mm.group(1))
             except: pass
 
-        # Apply answer key (overrides inline markers)
         key = answer_key.get(number)
         if key and key not in (["TRUE"], ["FALSE"]):
             for opt in opts:
@@ -492,12 +443,12 @@ def _parse_standard(full_text: str) -> list[dict]:
         has_correct = any(o["is_correct"] for o in opts)
 
         questions.append({
-            "number":       number,
+            "number":        number,
             "question_text": q_text,
-            "options":      opts,
-            "marks":        marks,
-            "has_correct":  has_correct,
-            "ai_answered":  False,
+            "options":       opts,
+            "marks":         marks,
+            "has_correct":   has_correct,
+            "ai_answered":   False,
         })
 
     logger.info("Standard parser found %d questions", len(questions))
@@ -510,39 +461,20 @@ import requests
 import time
 import unicodedata
 
-GROQ_BATCH_SIZE = 1  # one question per Groq call
+GROQ_BATCH_SIZE = 1
 
 
 def _clean_text(text: str) -> str:
-    """
-    Normalize text before sending to Groq:
-      - NFKC normalization converts ligatures like 'ﬁ' -> 'fi', 'ﬂ' -> 'fl'
-        (these PDF-extraction artifacts seem to confuse the model badly).
-      - Collapse repeated whitespace.
-    """
     text = unicodedata.normalize("NFKC", text)
+    # Also strip null bytes here as a second line of defence
+    text = text.replace("\x00", "").replace("\ufffd", "")
     return re.sub(r"\s+", " ", text).strip()
 
 
 def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float, attempt: int, strict: bool = False) -> bool:
-    """
-    Make one Groq call for a single question. Asks the model to reply with
-    PLAIN TEXT option number(s) only — no JSON. This avoids the
-    "[0] ... [1] ..." bracket syntax in the prompt being mistaken for JSON
-    array literals, which was causing the model to produce fake
-    function-call JSON instead of an answer.
-
-    If `strict` is True, uses an even more constrained prompt/format aimed
-    at questions where the model keeps echoing option text instead of a
-    number.
-
-    Returns True if a usable (non-empty) answer was extracted and applied.
-    Raises on HTTP errors so the caller can retry.
-    """
     q = batch[0]
     q_text = _clean_text(q["question_text"])
 
-    # Use "0. text" instead of "[0] text" — avoids bracket/array confusion.
     opts_lines = [
         f"{j}. {_clean_text(o['text'])}" for j, o in enumerate(q["options"])
     ]
@@ -558,8 +490,7 @@ def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float,
             "You are an expert academic tutor answering a multiple-choice question. "
             "Reply with ONLY the option number(s) of the correct answer, as the "
             "very first thing in your reply. "
-            "If more than one option is correct (e.g. the question says "
-            "'select all that apply'), reply with the numbers separated by commas, "
+            "If more than one option is correct, reply with the numbers separated by commas, "
             "such as '0,2'. "
             "Do not include any words, explanations, labels, punctuation, or "
             "formatting — reply with the number(s) only, and always pick at "
@@ -576,7 +507,6 @@ def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float,
         )
         max_tokens = 12
     else:
-        # Ultra-strict final attempt: force a single digit, nothing else.
         system_prompt = (
             "You answer multiple-choice questions. "
             "You must respond with EXACTLY ONE CHARACTER: a single digit "
@@ -597,7 +527,7 @@ def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float,
         "max_tokens":  max_tokens,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user",   "content": user_content},
         ],
     }
 
@@ -619,8 +549,6 @@ def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float,
     body = resp.json()
 
     content = body["choices"][0]["message"]["content"].strip()
-
-    # Extract option numbers, e.g. "0", "0,2", "Option 0 and 2", "0, 2"
     nums = [int(n) for n in re.findall(r"\d+", content)]
     correct = sorted({n for n in nums if 0 <= n < len(q["options"])})
 
@@ -637,11 +565,6 @@ def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float,
 
 
 def _infer_answers_batch(api_key: str, batch: list[dict], offset: int) -> None:
-    """
-    Send ONE question to Groq and update is_correct flags in-place.
-    Tries up to 3 times: two normal attempts at different temperatures,
-    then one ultra-strict "single digit only" attempt as a last resort.
-    """
     for attempt, (temperature, strict) in enumerate(
         ((0, False), (0.5, False), (0.2, True)), start=1
     ):
@@ -656,14 +579,6 @@ def _infer_answers_batch(api_key: str, batch: list[dict], offset: int) -> None:
 
 
 def _infer_answers_with_groq(raw_questions: list[dict]) -> list[dict]:
-    """
-    Send questions + options to Groq (FREE tier), one question per call,
-    asking for a plain-text option number rather than JSON.
-
-    Returns raw_questions with is_correct flags updated on each option.
-    Falls back gracefully (needs_review=True) if Groq is unavailable
-    or a particular question fails after retries.
-    """
     api_key = settings.GROQ_API_KEY.strip()
     if not api_key:
         logger.warning("GROQ_API_KEY not set — skipping AI answer inference")
@@ -675,20 +590,16 @@ def _infer_answers_with_groq(raw_questions: list[dict]) -> list[dict]:
             _infer_answers_batch(api_key, batch, offset=start)
         except Exception as e:
             logger.error("Groq inference failed (batch @%d): %s", start, e, exc_info=True)
-
-        # Small delay to stay comfortably within free-tier rate limits
         time.sleep(0.2)
 
     answered = sum(1 for q in raw_questions if q.get("ai_answered") and q.get("has_correct"))
     logger.info("Groq answered %d / %d questions", answered, len(raw_questions))
-
     return raw_questions
 
 
 # ── Finalize to ExtractedQuestion ─────────────────────────────────────────────
 
 def _finalize(raw_questions: list[dict]) -> list[dict]:
-    """Convert raw parsed question dicts to ExtractedQuestion-compatible dicts."""
     results: list[dict] = []
 
     for q in raw_questions:
@@ -728,14 +639,13 @@ def _finalize(raw_questions: list[dict]) -> list[dict]:
 
         has_correct = any(o["is_correct"] for o in final_opts)
 
-        # Confidence scoring
         conf = 40
-        if len(q_text) > 15:         conf += 10
-        if len(q_text) > 40:         conf += 5
-        if len(final_opts) >= 4:     conf += 10
-        elif len(final_opts) >= 2:   conf += 5
-        if has_correct:              conf += 25
-        if q.get("ai_answered"):     conf += 10   # Groq answered it
+        if len(q_text) > 15:       conf += 10
+        if len(q_text) > 40:       conf += 5
+        if len(final_opts) >= 4:   conf += 10
+        elif len(final_opts) >= 2: conf += 5
+        if has_correct:            conf += 25
+        if q.get("ai_answered"):   conf += 10
         conf = min(conf, 95)
 
         needs_review = not has_correct or conf < 70
@@ -765,27 +675,12 @@ async def extract_questions_from_file(
     file: UploadFile = File(...),
     _: dict = Depends(require_faculty),
 ):
-    """
-    Upload a text-based PDF or DOCX and extract structured exam questions.
-
-    AUTO-DETECTS two PDF formats:
-    ─────────────────────────────
-    Google Forms PDF  — no A/B/C/D labels, "Mark only one oval." present
-                        Correct answers inferred by Groq AI (FREE, llama-3.1-8b-instant)
-
-    Standard MCQ PDF  — options labeled A. B. C. D.
-                        Correct answers from inline * markers or Answer Key section
-
-    If Groq is unavailable (GROQ_API_KEY not set), questions are returned
-    without correct answers — faculty selects them in the review table.
-    """
     filename = (file.filename or "").lower()
     content  = await file.read()
 
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # ── 1. Extract raw text ───────────────────────────────────────────────────
     if filename.endswith(".pdf"):
         try:
             full_text = _extract_pdf_text(content)
@@ -805,10 +700,7 @@ async def extract_questions_from_file(
             logger.error("DOCX extraction failed: %s", exc, exc_info=True)
             raise HTTPException(status_code=400, detail="Could not read this DOCX file.")
     else:
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF and DOCX files are supported.",
-        )
+        raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported.")
 
     if not full_text.strip():
         raise HTTPException(
@@ -821,7 +713,6 @@ async def extract_questions_from_file(
 
     logger.info("Extracted %d chars from '%s'", len(full_text), filename)
 
-    # ── 2. Detect format and parse ────────────────────────────────────────────
     fmt = _detect_format(full_text)
     logger.info("Detected PDF format: %s", fmt)
 
@@ -841,7 +732,6 @@ async def extract_questions_from_file(
             ),
         )
 
-    # ── 3. AI answer inference for questions without confirmed answers ─────────
     missing_answers = [q for q in raw_questions if not q.get("has_correct")]
     if missing_answers:
         logger.info(
@@ -850,7 +740,6 @@ async def extract_questions_from_file(
         )
         raw_questions = _infer_answers_with_groq(raw_questions)
 
-    # ── 4. Finalize ───────────────────────────────────────────────────────────
     extracted = _finalize(raw_questions)
 
     if not extracted:
