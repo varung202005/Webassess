@@ -323,12 +323,17 @@ def _parse_google_forms(full_text: str) -> list[dict]:
         else:
             content_lines.extend(page.splitlines())
 
-    # Strip noise lines
+    # Strip noise lines (including standalone '*' required-field markers,
+    # which Google Forms sometimes places on their own line)
+    STANDALONE_ASTERISK_RE = re.compile(r"^\*+$")
     cleaned: list[str] = []
     for raw in content_lines:
         line = raw.strip()
-        if line and not SKIP_LINE_RE.match(line):
-            cleaned.append(line)
+        if not line or SKIP_LINE_RE.match(line):
+            continue
+        if STANDALONE_ASTERISK_RE.match(line):
+            continue
+        cleaned.append(line)
 
     questions: list[dict] = []
     current: dict | None = None
@@ -351,6 +356,10 @@ def _parse_google_forms(full_text: str) -> list[dict]:
                 marks = int(mm.group(1))
                 rest  = MARKS_RE.sub("", rest).strip()
 
+            # Strip a trailing required-field '*' from the question text,
+            # e.g. "Some question text *" -> "Some question text"
+            rest = re.sub(r"\s*\*+\s*$", "", rest).strip()
+
             current = {
                 "number":       number,
                 "question_text": rest,   # empty when number is alone on its line
@@ -367,17 +376,41 @@ def _parse_google_forms(full_text: str) -> list[dict]:
 
         # If we haven't got question text yet, this line IS the question
         if awaiting_question_text and not current["question_text"]:
-            current["question_text"] = MARKS_RE.sub("", line).strip()
+            q_text = MARKS_RE.sub("", line).strip()
+            # Strip a trailing required-field '*' from the question text
+            q_text = re.sub(r"\s*\*+\s*$", "", q_text).strip()
+            if not q_text:
+                # Line was just the '*' marker — keep waiting for real text
+                continue
+            current["question_text"] = q_text
             awaiting_question_text = False
             continue
 
         # Every subsequent non-empty, non-skipped line is an option
         opt_text = MARKS_RE.sub("", line).strip()
-        if opt_text:
-            current["options"].append({
-                "text":       opt_text,
-                "is_correct": False,
-            })
+        # Strip a trailing required-field '*' from option text too
+        opt_text = re.sub(r"\s*\*+\s*$", "", opt_text).strip()
+        if not opt_text:
+            continue
+
+        # If this line looks like a wrapped continuation of the previous
+        # option's text — it starts with a lowercase letter — merge it
+        # into the previous option instead of treating it as a brand-new
+        # option. This handles long options that wrap across two lines in
+        # the PDF, which otherwise get split into fragments like
+        # "0. When the goal is to" / "1. find the shortest path...".
+        # (Deliberately conservative: only merges on a lowercase start,
+        # since legitimate options almost always start with a capital
+        # letter, digit, or quote.)
+        prev_opts = current["options"]
+        if prev_opts and opt_text[0].islower():
+            prev_opts[-1]["text"] = (prev_opts[-1]["text"].rstrip() + " " + opt_text).strip()
+            continue
+
+        current["options"].append({
+            "text":       opt_text,
+            "is_correct": False,
+        })
 
     # Don't forget the last question
     if current and current.get("question_text"):
@@ -473,176 +506,181 @@ def _parse_standard(full_text: str) -> list[dict]:
 
 # ── Groq AI Answer Inference ──────────────────────────────────────────────────
 
-
 import requests
+import time
+import unicodedata
+
+GROQ_BATCH_SIZE = 1  # one question per Groq call
+
+
+def _clean_text(text: str) -> str:
+    """
+    Normalize text before sending to Groq:
+      - NFKC normalization converts ligatures like 'ﬁ' -> 'fi', 'ﬂ' -> 'fl'
+        (these PDF-extraction artifacts seem to confuse the model badly).
+      - Collapse repeated whitespace.
+    """
+    text = unicodedata.normalize("NFKC", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float, attempt: int, strict: bool = False) -> bool:
+    """
+    Make one Groq call for a single question. Asks the model to reply with
+    PLAIN TEXT option number(s) only — no JSON. This avoids the
+    "[0] ... [1] ..." bracket syntax in the prompt being mistaken for JSON
+    array literals, which was causing the model to produce fake
+    function-call JSON instead of an answer.
+
+    If `strict` is True, uses an even more constrained prompt/format aimed
+    at questions where the model keeps echoing option text instead of a
+    number.
+
+    Returns True if a usable (non-empty) answer was extracted and applied.
+    Raises on HTTP errors so the caller can retry.
+    """
+    q = batch[0]
+    q_text = _clean_text(q["question_text"])
+
+    # Use "0. text" instead of "[0] text" — avoids bracket/array confusion.
+    opts_lines = [
+        f"{j}. {_clean_text(o['text'])}" for j, o in enumerate(q["options"])
+    ]
+    opts_block = "\n".join(opts_lines)
+
+    if attempt == 1:
+        print(f"### Q@{offset} text={q_text!r}", flush=True)
+        for ol in opts_lines:
+            print(f"### Q@{offset} opt: {ol!r}", flush=True)
+
+    if not strict:
+        system_prompt = (
+            "You are an expert academic tutor answering a multiple-choice question. "
+            "Reply with ONLY the option number(s) of the correct answer, as the "
+            "very first thing in your reply. "
+            "If more than one option is correct (e.g. the question says "
+            "'select all that apply'), reply with the numbers separated by commas, "
+            "such as '0,2'. "
+            "Do not include any words, explanations, labels, punctuation, or "
+            "formatting — reply with the number(s) only, and always pick at "
+            "least one number even if you are unsure.\n\n"
+            "Example:\n"
+            "Question: What is 2+2?\n"
+            "Options:\n0. 3\n1. 4\n2. 5\n3. 6\n"
+            "Correct option number(s): 1"
+        )
+        user_content = (
+            f"Question: {q_text}\n\n"
+            f"Options:\n{opts_block}\n\n"
+            "Correct option number(s):"
+        )
+        max_tokens = 12
+    else:
+        # Ultra-strict final attempt: force a single digit, nothing else.
+        system_prompt = (
+            "You answer multiple-choice questions. "
+            "You must respond with EXACTLY ONE CHARACTER: a single digit "
+            "from 0 to 9, indicating the index of the correct option. "
+            "Output nothing else — no words, no punctuation, no newline, "
+            "just one digit."
+        )
+        user_content = (
+            f"Question: {q_text}\n"
+            f"Options:\n{opts_block}\n"
+            "Answer (single digit only):"
+        )
+        max_tokens = 3
+
+    payload = {
+        "model":       "llama-3.3-70b-versatile",
+        "temperature": temperature,
+        "max_tokens":  max_tokens,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    }
+
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+            "User-Agent":    "Mozilla/5.0 (compatible; ExamPortal/1.0)",
+        },
+        timeout=30,
+    )
+
+    print(f"### Groq batch@{offset} attempt {attempt} status:", resp.status_code, flush=True)
+    print(f"### Groq batch@{offset} attempt {attempt} raw text:", resp.text[:500], flush=True)
+
+    resp.raise_for_status()
+    body = resp.json()
+
+    content = body["choices"][0]["message"]["content"].strip()
+
+    # Extract option numbers, e.g. "0", "0,2", "Option 0 and 2", "0, 2"
+    nums = [int(n) for n in re.findall(r"\d+", content)]
+    correct = sorted({n for n in nums if 0 <= n < len(q["options"])})
+
+    if not correct:
+        print(f"### Groq batch@{offset} attempt {attempt} no usable answer "
+              f"(content={content!r})", flush=True)
+        return False
+
+    for j, opt in enumerate(q["options"]):
+        opt["is_correct"] = (j in correct)
+    q["has_correct"]  = True
+    q["ai_answered"]  = True
+    return True
+
+
+def _infer_answers_batch(api_key: str, batch: list[dict], offset: int) -> None:
+    """
+    Send ONE question to Groq and update is_correct flags in-place.
+    Tries up to 3 times: two normal attempts at different temperatures,
+    then one ultra-strict "single digit only" attempt as a last resort.
+    """
+    for attempt, (temperature, strict) in enumerate(
+        ((0, False), (0.5, False), (0.2, True)), start=1
+    ):
+        try:
+            if _call_groq(api_key, batch, offset, temperature, attempt, strict=strict):
+                return
+        except (requests.exceptions.HTTPError, json.JSONDecodeError) as e:
+            print(f"### Groq batch@{offset} attempt {attempt} failed: {e}", flush=True)
+        time.sleep(0.2)
+
+    logger.warning("Groq could not produce a confident answer for batch @%d", offset)
+
 
 def _infer_answers_with_groq(raw_questions: list[dict]) -> list[dict]:
+    """
+    Send questions + options to Groq (FREE tier), one question per call,
+    asking for a plain-text option number rather than JSON.
+
+    Returns raw_questions with is_correct flags updated on each option.
+    Falls back gracefully (needs_review=True) if Groq is unavailable
+    or a particular question fails after retries.
+    """
     api_key = settings.GROQ_API_KEY.strip()
     if not api_key:
         logger.warning("GROQ_API_KEY not set — skipping AI answer inference")
         return raw_questions
 
-    lines: list[str] = []
-    for i, q in enumerate(raw_questions):
-        opts_str = " | ".join(
-            f"[{j}] {o['text']}" for j, o in enumerate(q["options"])
-        )
-        lines.append(f"Q{i}: {q['question_text']} OPTIONS: {opts_str}")
+    for start in range(0, len(raw_questions), GROQ_BATCH_SIZE):
+        batch = raw_questions[start:start + GROQ_BATCH_SIZE]
+        try:
+            _infer_answers_batch(api_key, batch, offset=start)
+        except Exception as e:
+            logger.error("Groq inference failed (batch @%d): %s", start, e, exc_info=True)
 
-    questions_block = "\n".join(lines)
+        # Small delay to stay comfortably within free-tier rate limits
+        time.sleep(0.2)
 
-    system_prompt = (
-        "You are an expert academic tutor. "
-        "Given multiple-choice questions, identify the correct answer(s) for each. "
-        "Reply ONLY with a JSON array — no prose, no markdown fences. "
-        "Format: [{\"q\":0,\"correct\":[2]},{\"q\":1,\"correct\":[0]}, ...] "
-        "where numbers are 0-based indices. "
-        "Always include one correct index per question. "
-        "Use multiple indices only when the question explicitly says 'select all that apply'."
-    )
-
-    payload = {
-        "model":       "llama-3.1-8b-instant",
-        "temperature": 0,
-        "max_tokens":  1024,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"Answer these {len(raw_questions)} questions:\n\n"
-                    f"{questions_block}\n\n"
-                    "JSON array only:"
-                ),
-            },
-        ],
-    }
-
-    try:
-        resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type":  "application/json",
-                "User-Agent":    "Mozilla/5.0 (compatible; ExamPortal/1.0)",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-
-        raw_json = body["choices"][0]["message"]["content"].strip()
-        if raw_json.startswith("```"):
-            raw_json = re.sub(r"```[a-z]*\n?", "", raw_json).strip().rstrip("`").strip()
-
-        answers: list[dict] = json.loads(raw_json)
-
-        for ans in answers:
-            q_idx   = ans.get("q")
-            correct = ans.get("correct", [])
-            if not isinstance(q_idx, int) or q_idx >= len(raw_questions):
-                continue
-            q = raw_questions[q_idx]
-            for j, opt in enumerate(q["options"]):
-                opt["is_correct"] = (j in correct)
-            q["has_correct"] = bool(correct)
-            q["ai_answered"] = True
-
-        answered = sum(1 for q in raw_questions if q.get("ai_answered"))
-        logger.info("Groq answered %d / %d questions", answered, len(raw_questions))
-
-    except requests.exceptions.HTTPError as e:
-        logger.error("Groq API HTTP error %s: %s", e.response.status_code, e.response.text[:300])
-    except json.JSONDecodeError as e:
-        logger.error("Groq returned invalid JSON: %s", e)
-    except Exception as e:
-        logger.error("Groq inference failed: %s", e, exc_info=True)
-
-    return raw_questions
-    # Build compact prompt — one line per question to minimize tokens
-    lines: list[str] = []
-    for i, q in enumerate(raw_questions):
-        opts_str = " | ".join(
-            f"[{j}] {o['text']}" for j, o in enumerate(q["options"])
-        )
-        lines.append(f"Q{i}: {q['question_text']} OPTIONS: {opts_str}")
-
-    questions_block = "\n".join(lines)
-
-    system_prompt = (
-        "You are an expert academic tutor. "
-        "Given multiple-choice questions, identify the correct answer(s) for each. "
-        "Reply ONLY with a JSON array — no prose, no markdown fences. "
-        "Format: [{\"q\":0,\"correct\":[2]},{\"q\":1,\"correct\":[0]}, ...] "
-        "where numbers are 0-based indices. "
-        "Always include one correct index per question. "
-        "Use multiple indices only when the question explicitly says 'select all that apply'."
-    )
-
-    payload = {
-        "model":       "llama-3.1-8b-instant",
-        "temperature": 0,
-        "max_tokens":  1024,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"Answer these {len(raw_questions)} questions:\n\n"
-                    f"{questions_block}\n\n"
-                    "JSON array only:"
-                ),
-            },
-        ],
-    }
-
-    import urllib.request, urllib.error
-
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type":  "application/json",
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode())
-
-        raw_json = body["choices"][0]["message"]["content"].strip()
-
-        # Strip accidental markdown fences
-        if raw_json.startswith("```"):
-            raw_json = re.sub(r"```[a-z]*\n?", "", raw_json).strip().rstrip("`").strip()
-
-        answers: list[dict] = json.loads(raw_json)
-
-        for ans in answers:
-            q_idx   = ans.get("q")
-            correct = ans.get("correct", [])
-            if not isinstance(q_idx, int) or q_idx >= len(raw_questions):
-                continue
-            q = raw_questions[q_idx]
-            for j, opt in enumerate(q["options"]):
-                opt["is_correct"] = (j in correct)
-            q["has_correct"] = bool(correct)
-            q["ai_answered"] = True
-
-        answered = sum(1 for q in raw_questions if q.get("ai_answered"))
-        logger.info("Groq answered %d / %d questions", answered, len(raw_questions))
-
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode(errors="ignore")
-        logger.error("Groq API HTTP error %s: %s", e.code, body_text[:300])
-        # Non-fatal — questions returned with needs_review=True
-    except json.JSONDecodeError as e:
-        logger.error("Groq returned invalid JSON: %s", e)
-    except Exception as e:
-        logger.error("Groq inference failed: %s", e, exc_info=True)
+    answered = sum(1 for q in raw_questions if q.get("ai_answered") and q.get("has_correct"))
+    logger.info("Groq answered %d / %d questions", answered, len(raw_questions))
 
     return raw_questions
 
@@ -706,7 +744,7 @@ def _finalize(raw_questions: list[dict]) -> list[dict]:
         difficulty = "EASY" if wc < 12 else ("MEDIUM" if wc < 30 else "HARD")
 
         results.append({
-            "id":            f"ext-{number}",
+            "id":            f"ext-{len(results) + 1}",
             "question_text": q_text,
             "question_type": question_type,
             "options":       final_opts,

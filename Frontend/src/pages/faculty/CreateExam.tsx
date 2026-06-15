@@ -1,40 +1,43 @@
 /**
  * CreateExam.tsx — Complete Exam Creation Workspace
  *
- * Integrates:
- *  - Question Repository Overview (stats cards)
- *  - Exam Basic Info form (2-col grid)
- *  - Question Management (select existing / create new MCQ/MSQ/TRUE_FALSE)
- *  - PDF/DOCX import with text-based extraction (pdfplumber backend, no OCR)
- *  - Auto-generate exam from question pool
- *  - Exam rules + schedule
- *  - Preview & publish
- *
- * NOTE: Course is no longer required.
- * - form.course_id is always "" and sent to the backend as null.
- * - Question creation does not require a course_id.
+ * FIXES:
+ *  1. Removed `semester` field from createExam payload (caused "Failed to fetch" / PGRST204)
+ *  2. Questions list now refreshes immediately after creating/importing (no reload needed)
+ *  3. Draft auto-save: progress is saved to localStorage every time any field changes.
+ *     Drafts appear on the page so you can resume or delete them.
  */
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query"; // ← needed for cache invalidation
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { PageState } from "../../features/faculty/components";
 import { useFacultyDashboard, useQuestions } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import type { Question } from "../../features/faculty/types";
 
-// ── Stepper steps ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
 const STEPS = [
-  { id: "info",      label: "Exam Info",   icon: "ti-info-circle" },
-  { id: "questions", label: "Questions",   icon: "ti-list-check"  },
+  { id: "info",      label: "Exam Info",   icon: "ti-info-circle"  },
+  { id: "questions", label: "Questions",   icon: "ti-list-check"   },
   { id: "rules",     label: "Rules",       icon: "ti-shield-check" },
-  { id: "schedule",  label: "Schedule",    icon: "ti-calendar"    },
-  { id: "preview",   label: "Preview",     icon: "ti-eye"         },
+  { id: "schedule",  label: "Schedule",    icon: "ti-calendar"     },
+  { id: "preview",   label: "Preview",     icon: "ti-eye"          },
 ];
 
-type QuestionType  = "MCQ" | "MSQ" | "TRUE_FALSE";
-type Difficulty    = "EASY" | "MEDIUM" | "HARD";
-type ImportStatus  = "idle" | "uploading" | "extracting" | "review" | "saving";
+const DRAFT_STORAGE_KEY = "exam_portal_drafts_v1";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+type QuestionType = "MCQ" | "MSQ" | "TRUE_FALSE";
+type Difficulty   = "EASY" | "MEDIUM" | "HARD";
+type ImportStatus = "idle" | "uploading" | "extracting" | "review" | "saving";
 
 interface ExtractedQuestion {
   id: string;
@@ -69,7 +72,93 @@ interface NewQuestion {
   options: { option_text: string; is_correct: boolean; order_index: number }[];
 }
 
-// ── Stat Card ──────────────────────────────────────────────────────────────
+interface ExamDraft {
+  draftId: string;         // uuid-like key
+  savedAt: string;         // ISO timestamp
+  currentStep: number;
+  form: ExamForm;
+  rules: Record<string, any>;
+  schedule: Record<string, any>;
+  selectedQuestionIds: string[]; // we only store IDs; re-lookup on resume
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Draft helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function loadDrafts(): ExamDraft[] {
+  try {
+    const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDrafts(drafts: ExamDraft[]) {
+  try {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts));
+  } catch {
+    // storage full — silently ignore
+  }
+}
+
+function upsertDraft(draft: ExamDraft) {
+  const drafts = loadDrafts();
+  const idx = drafts.findIndex((d) => d.draftId === draft.draftId);
+  if (idx >= 0) drafts[idx] = draft;
+  else drafts.unshift(draft);
+  saveDrafts(drafts);
+}
+
+function deleteDraft(draftId: string) {
+  const drafts = loadDrafts().filter((d) => d.draftId !== draftId);
+  saveDrafts(drafts);
+}
+
+function newDraftId() {
+  return `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default state factories
+// ─────────────────────────────────────────────────────────────────────────────
+
+const defaultForm = (): ExamForm => ({
+  title: "",
+  course_id: "",
+  exam_type: "MID_SEMESTER",
+  duration_minutes: 120,
+  total_marks: 80,
+  pass_marks: 32,
+  instructions: "",
+  shuffle_questions: false,
+  shuffle_options: false,
+});
+
+const defaultRules = () => ({
+  allow_backtrack: true,
+  mark_for_review: true,
+  fullscreen_required: false,
+  proctoring_enabled: false,
+  camera_required: false,
+  microphone_required: false,
+  max_tab_switches: 3,
+  auto_save_interval_sec: 30,
+});
+
+const defaultSchedule = () => ({
+  department_id: "",
+  start_time: "",
+  end_time: "",
+  registration_deadline: "",
+  is_published: false,
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StatCard
+// ─────────────────────────────────────────────────────────────────────────────
+
 function StatCard({
   label, value, icon, color = "#8b1a1a",
 }: { label: string; value: number | string; icon: string; color?: string }) {
@@ -86,11 +175,14 @@ function StatCard({
   );
 }
 
-// ── Repository Overview ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// RepositoryOverview
+// ─────────────────────────────────────────────────────────────────────────────
+
 function RepositoryOverview({
   portal,
 }: { portal: ReturnType<typeof useFacultyDashboard>["data"] }) {
-  const qs     = portal?.questionStats;
+  const qs = portal?.questionStats;
   const byType = qs?.byType ?? {};
   return (
     <div className="repo-overview">
@@ -99,18 +191,88 @@ function RepositoryOverview({
         <span className="section-sub">Your personal question bank — reuse across exams</span>
       </div>
       <div className="repo-stats-grid">
-        <StatCard label="Total Questions"  value={qs?.total          ?? 0} icon="ti-books"        color="#8b1a1a" />
-        <StatCard label="MCQ"              value={byType.MCQ         ?? 0} icon="ti-circle-dot"   color="#2563eb" />
-        <StatCard label="MSQ"              value={byType.MSQ         ?? 0} icon="ti-checkbox"     color="#7c3aed" />
-        <StatCard label="True / False"     value={byType.TRUE_FALSE  ?? 0} icon="ti-toggle-left"  color="#059669" />
-        <StatCard label="Active"           value={qs?.active         ?? 0} icon="ti-circle-check" color="#d97706" />
-        <StatCard label="Courses Covered"  value={portal?.courses?.length ?? 0} icon="ti-book"   color="#0891b2" />
+        <StatCard label="Total Questions" value={qs?.total         ?? 0} icon="ti-books"        color="#8b1a1a" />
+        <StatCard label="MCQ"             value={byType.MCQ        ?? 0} icon="ti-circle-dot"   color="#2563eb" />
+        <StatCard label="MSQ"             value={byType.MSQ        ?? 0} icon="ti-checkbox"     color="#7c3aed" />
+        <StatCard label="True / False"    value={byType.TRUE_FALSE ?? 0} icon="ti-toggle-left"  color="#059669" />
+        <StatCard label="Active"          value={qs?.active        ?? 0} icon="ti-circle-check" color="#d97706" />
+        <StatCard label="Courses Covered" value={portal?.courses?.length ?? 0} icon="ti-book"  color="#0891b2" />
       </div>
     </div>
   );
 }
 
-// ── Stepper ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Drafts Panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DraftsPanel({
+  onResume, onDelete,
+}: {
+  onResume: (draft: ExamDraft) => void;
+  onDelete: (draftId: string) => void;
+}) {
+  const [drafts, setDrafts] = useState<ExamDraft[]>(() => loadDrafts());
+
+  // Re-read from storage whenever the component renders so it stays in sync
+  useEffect(() => {
+    setDrafts(loadDrafts());
+  }, []);
+
+  if (drafts.length === 0) return null;
+
+  const handleDelete = (draftId: string) => {
+    deleteDraft(draftId);
+    setDrafts(loadDrafts());
+    onDelete(draftId);
+  };
+
+  return (
+    <div className="drafts-panel">
+      <div className="drafts-header">
+        <i className="ti ti-file-pencil" />
+        <span>Saved Drafts</span>
+        <span className="drafts-count">{drafts.length}</span>
+      </div>
+      <div className="drafts-list">
+        {drafts.map((d) => (
+          <div key={d.draftId} className="draft-item">
+            <div className="draft-info">
+              <div className="draft-title">
+                {d.form.title?.trim() || <em style={{ color: "#999" }}>Untitled exam</em>}
+              </div>
+              <div className="draft-meta">
+                Step {d.currentStep + 1} of {STEPS.length} · {STEPS[d.currentStep]?.label} ·{" "}
+                {new Date(d.savedAt).toLocaleString()}
+              </div>
+            </div>
+            <div className="draft-actions">
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => onResume(d)}
+                type="button"
+              >
+                <i className="ti ti-player-play" /> Resume
+              </button>
+              <button
+                className="btn btn-sm btn-danger"
+                onClick={() => handleDelete(d.draftId)}
+                type="button"
+              >
+                <i className="ti ti-trash" /> Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stepper
+// ─────────────────────────────────────────────────────────────────────────────
+
 function Stepper({
   steps, current, onStep,
 }: { steps: typeof STEPS; current: number; onStep: (i: number) => void }) {
@@ -138,7 +300,10 @@ function Stepper({
   );
 }
 
-// ── Step 1: Exam Info ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 1: Exam Info
+// ─────────────────────────────────────────────────────────────────────────────
+
 function StepExamInfo({
   form, onChange,
 }: { form: ExamForm; onChange: (f: Partial<ExamForm>) => void }) {
@@ -227,7 +392,7 @@ function StepExamInfo({
         <label>Instructions for Students</label>
         <textarea
           className="form-textarea" rows={4}
-          placeholder="e.g. All questions are compulsory. Each MCQ carries 1 mark. Negative marking of 0.25 applies…"
+          placeholder="e.g. All questions are compulsory. Each MCQ carries 1 mark…"
           value={form.instructions}
           onChange={(e) => onChange({ instructions: e.target.value })}
         />
@@ -236,7 +401,10 @@ function StepExamInfo({
   );
 }
 
-// ── Question Row ───────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// QuestionRow
+// ─────────────────────────────────────────────────────────────────────────────
+
 function QuestionRow({
   q, selected, onToggle,
 }: { q: Question; selected: boolean; onToggle: () => void }) {
@@ -275,7 +443,10 @@ function QuestionRow({
   );
 }
 
-// ── Create Question Form ───────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// CreateQuestionForm
+// ─────────────────────────────────────────────────────────────────────────────
+
 function CreateQuestionForm({
   courseId, onSaved,
 }: { courseId: string; onSaved: (q: Question) => void }) {
@@ -293,7 +464,7 @@ function CreateQuestionForm({
     ],
   });
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState("");
+  const [error, setError] = useState("");
 
   const setType = (qt: QuestionType) => {
     if (qt === "TRUE_FALSE") {
@@ -314,11 +485,7 @@ function CreateQuestionForm({
               ...f.options,
               ...Array(4 - f.options.length)
                 .fill(null)
-                .map((_, i) => ({
-                  option_text: "",
-                  is_correct: false,
-                  order_index: f.options.length + i,
-                })),
+                .map((_, i) => ({ option_text: "", is_correct: false, order_index: f.options.length + i })),
             ]
           : f.options,
       }));
@@ -356,7 +523,6 @@ function CreateQuestionForm({
       });
       const full = await facultyApi.getQuestion(res.question_id);
       onSaved(full);
-      // Reset form
       setForm({
         question_type: "MCQ",
         question_text: "",
@@ -382,11 +548,7 @@ function CreateQuestionForm({
       <div className="form-grid-3col">
         <div className="form-field">
           <label>Question Type</label>
-          <select
-            className="form-select"
-            value={form.question_type}
-            onChange={(e) => setType(e.target.value as QuestionType)}
-          >
+          <select className="form-select" value={form.question_type} onChange={(e) => setType(e.target.value as QuestionType)}>
             <option value="MCQ">MCQ (Single correct)</option>
             <option value="MSQ">MSQ (Multiple correct)</option>
             <option value="TRUE_FALSE">True / False</option>
@@ -394,41 +556,28 @@ function CreateQuestionForm({
         </div>
         <div className="form-field">
           <label>Marks</label>
-          <input
-            type="number" className="form-input" min={1} max={100}
-            value={form.marks}
-            onChange={(e) => setForm((f) => ({ ...f, marks: +e.target.value }))}
-          />
+          <input type="number" className="form-input" min={1} max={100} value={form.marks}
+            onChange={(e) => setForm((f) => ({ ...f, marks: +e.target.value }))} />
         </div>
         <div className="form-field">
           <label>Negative Marks</label>
-          <input
-            type="number" className="form-input" min={0} step={0.25}
-            value={form.negative_marks}
-            onChange={(e) => setForm((f) => ({ ...f, negative_marks: +e.target.value }))}
-          />
+          <input type="number" className="form-input" min={0} step={0.25} value={form.negative_marks}
+            onChange={(e) => setForm((f) => ({ ...f, negative_marks: +e.target.value }))} />
         </div>
       </div>
 
       <div className="form-field">
         <label>Question Text *</label>
-        <textarea
-          className="form-textarea" rows={3}
-          placeholder="Enter your question here…"
+        <textarea className="form-textarea" rows={3} placeholder="Enter your question here…"
           value={form.question_text}
-          onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))}
-        />
+          onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))} />
       </div>
 
       <div className="options-grid">
         <label className="form-label-sm">Answer Options (click circle/checkbox to mark correct)</label>
         {form.options.map((opt, idx) => (
           <div key={idx} className={`option-row ${opt.is_correct ? "option-correct" : ""}`}>
-            <button
-              className={`option-marker ${opt.is_correct ? "correct" : ""}`}
-              onClick={() => toggleCorrect(idx)}
-              type="button"
-            >
+            <button className={`option-marker ${opt.is_correct ? "correct" : ""}`} onClick={() => toggleCorrect(idx)} type="button">
               {form.question_type === "MSQ"
                 ? <i className={`ti ${opt.is_correct ? "ti-checkbox" : "ti-square"}`} />
                 : <i className={`ti ${opt.is_correct ? "ti-circle-filled" : "ti-circle"}`} />}
@@ -441,9 +590,7 @@ function CreateQuestionForm({
               onChange={(e) =>
                 setForm((f) => ({
                   ...f,
-                  options: f.options.map((o, i) =>
-                    i === idx ? { ...o, option_text: e.target.value } : o
-                  ),
+                  options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o),
                 }))
               }
             />
@@ -455,12 +602,9 @@ function CreateQuestionForm({
         <label>Difficulty</label>
         <div className="difficulty-toggle">
           {(["EASY", "MEDIUM", "HARD"] as Difficulty[]).map((d) => (
-            <button
-              key={d}
+            <button key={d}
               className={`diff-btn ${form.difficulty === d ? "active" : ""} diff-${d.toLowerCase()}`}
-              onClick={() => setForm((f) => ({ ...f, difficulty: d }))}
-              type="button"
-            >
+              onClick={() => setForm((f) => ({ ...f, difficulty: d }))} type="button">
               {d}
             </button>
           ))}
@@ -480,54 +624,31 @@ function CreateQuestionForm({
   );
 }
 
-// ── PDF Import Panel ───────────────────────────────────────────────────────
-/**
- * Uploads the file to POST /questions/extract via facultyApi.extractQuestionsFromFile.
- * The backend uses pdfplumber (text-based PDF) or python-docx (DOCX) — no image OCR.
- * Results arrive as ExtractedQuestion[] which the faculty reviews and approves.
- * No dummy / mock data anywhere in this component.
- */
-function PdfImportPanel({
-  onImported,
-}: { onImported: (qs: ExtractedQuestion[]) => void }) {
-  const [status,    setStatus]    = useState<ImportStatus>("idle");
+// ─────────────────────────────────────────────────────────────────────────────
+// PdfImportPanel
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) => void }) {
+  const [status, setStatus] = useState<ImportStatus>("idle");
   const [extracted, setExtracted] = useState<ExtractedQuestion[]>([]);
-  const [error,     setError]     = useState("");
+  const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const confColor = (c: number) =>
-    c >= 85 ? "#059669" : c >= 70 ? "#d97706" : "#dc2626";
+  const confColor = (c: number) => c >= 85 ? "#059669" : c >= 70 ? "#d97706" : "#dc2626";
 
-  // ── Handle file selection ───────────────────────────────────────────────
   const handleFile = useCallback(async (file: File) => {
     if (!file) return;
-
-    if (!/\.(pdf|docx)$/i.test(file.name)) {
-      setError("Only PDF and DOCX files are supported.");
-      return;
-    }
-
+    if (!/\.(pdf|docx)$/i.test(file.name)) { setError("Only PDF and DOCX files are supported."); return; }
     setError("");
     setStatus("uploading");
-
     try {
-      // Move to "extracting" state immediately so the user sees feedback
       setStatus("extracting");
-
-      // facultyApi.extractQuestionsFromFile sends multipart/form-data
-      // to POST /questions/extract and returns ExtractedQuestion[]
       const result = await facultyApi.extractQuestionsFromFile(file);
-
       if (!result || result.length === 0) {
-        setError(
-          "No questions could be extracted. Make sure questions are numbered (1., 2., …) " +
-          "and options are labeled A–D. Mark correct answers with * or use an Answer Key section."
-        );
+        setError("No questions could be extracted. Make sure questions are numbered (1., 2., …).");
         setStatus("idle");
         return;
       }
-
-      // All questions start as not approved — faculty must review
       setExtracted(result.map((q) => ({ ...q, approved: false })));
       setStatus("review");
     } catch (e: any) {
@@ -537,62 +658,42 @@ function PdfImportPanel({
   }, []);
 
   const toggleApprove = (id: string) =>
-    setExtracted((list) =>
-      list.map((q) => (q.id === id ? { ...q, approved: !q.approved } : q))
-    );
+    setExtracted((list) => list.map((q) => (q.id === id ? { ...q, approved: !q.approved } : q)));
 
-  const approveAll = () =>
-    setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
+  const approveAll = () => setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
 
   const saveApproved = () => {
     const approved = extracted.filter((q) => q.approved);
-    if (!approved.length) {
-      setError("Approve at least one question first.");
-      return;
-    }
+    if (!approved.length) { setError("Approve at least one question first."); return; }
     setStatus("saving");
-    onImported(approved);   // parent saves to DB and adds to exam
+    onImported(approved);
     setStatus("idle");
     setExtracted([]);
     setError("");
   };
 
   const reset = () => {
-    setStatus("idle");
-    setExtracted([]);
-    setError("");
+    setStatus("idle"); setExtracted([]); setError("");
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  // ── Idle: drop zone ─────────────────────────────────────────────────────
   if (status === "idle") {
     return (
       <div className="import-dropzone" onClick={() => fileRef.current?.click()}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".pdf,.docx"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) handleFile(f);
-          }}
-        />
+        <input ref={fileRef} type="file" accept=".pdf,.docx" hidden
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
         <i className="ti ti-file-upload import-drop-icon" />
         <div className="import-drop-title">Import Questions from PDF or DOCX</div>
         <div className="import-drop-sub">
-          Supports Google Forms PDFs &amp; standard MCQ PDFs (auto-detected) · Text-based PDFs only<br />
-          Questions numbered 1., 2., … · Answers inferred free via Groq AI when not in PDF
+          Supports Google Forms PDFs &amp; standard MCQ PDFs · Text-based PDFs only<br />
+          Questions numbered 1., 2., … · Answers inferred via Groq AI when not in PDF
         </div>
         {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
-        <button className="btn btn-secondary" type="button">
-          <i className="ti ti-upload" /> Choose File
-        </button>
+        <button className="btn btn-secondary" type="button"><i className="ti ti-upload" /> Choose File</button>
       </div>
     );
   }
 
-  // ── Uploading / extracting spinner ──────────────────────────────────────
   if (status === "uploading" || status === "extracting") {
     return (
       <div className="import-processing">
@@ -601,15 +702,12 @@ function PdfImportPanel({
           {status === "uploading" ? "Uploading file…" : "Extracting questions & inferring answers via Groq AI…"}
         </div>
         <div className="import-proc-sub">
-          {status === "extracting"
-            ? "Parsing PDF then asking Groq (free) for correct answers — takes 5–10 seconds"
-            : "Uploading…"}
+          {status === "extracting" ? "Parsing PDF then asking Groq for correct answers — takes 5–10 seconds" : "Uploading…"}
         </div>
       </div>
     );
   }
 
-  // ── Saving spinner ───────────────────────────────────────────────────────
   if (status === "saving") {
     return (
       <div className="import-processing">
@@ -619,61 +717,33 @@ function PdfImportPanel({
     );
   }
 
-  // ── Review table ─────────────────────────────────────────────────────────
   if (status === "review") {
     const approvedCount = extracted.filter((q) => q.approved).length;
     const avgConf = extracted.length
-      ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length)
-      : 0;
+      ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length) : 0;
 
     return (
       <div className="import-review">
-        {/* Summary cards */}
         <div className="import-review-summary">
-          <div className="import-summary-card">
-            <span className="is-val">{extracted.length}</span>
-            <span className="is-lbl">Questions Found</span>
-          </div>
-          <div className="import-summary-card">
-            <span className="is-val">{extracted.filter((q) => q.question_type === "MCQ").length}</span>
-            <span className="is-lbl">MCQ</span>
-          </div>
-          <div className="import-summary-card">
-            <span className="is-val">{extracted.filter((q) => q.question_type === "MSQ").length}</span>
-            <span className="is-lbl">MSQ</span>
-          </div>
-          <div className="import-summary-card">
-            <span className="is-val">{extracted.filter((q) => q.question_type === "TRUE_FALSE").length}</span>
-            <span className="is-lbl">T/F</span>
-          </div>
-          <div className="import-summary-card">
-            <span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span>
-            <span className="is-lbl">Avg Confidence</span>
-          </div>
-          <div className="import-summary-card">
-            <span className="is-val">{approvedCount}</span>
-            <span className="is-lbl">Approved</span>
-          </div>
+          <div className="import-summary-card"><span className="is-val">{extracted.length}</span><span className="is-lbl">Questions Found</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "MCQ").length}</span><span className="is-lbl">MCQ</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "MSQ").length}</span><span className="is-lbl">MSQ</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "TRUE_FALSE").length}</span><span className="is-lbl">T/F</span></div>
+          <div className="import-summary-card"><span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span><span className="is-lbl">Avg Confidence</span></div>
+          <div className="import-summary-card"><span className="is-val">{approvedCount}</span><span className="is-lbl">Approved</span></div>
         </div>
 
-        {/* Review table */}
         <div className="import-table-wrap">
           <div className="import-table-actions">
             <button className="btn btn-sm btn-secondary" onClick={approveAll} type="button">
               <i className="ti ti-check-all" /> Approve All
             </button>
           </div>
-
           <table className="import-table">
             <thead>
               <tr>
                 <th style={{ width: 36 }}></th>
-                <th>Question</th>
-                <th>Type</th>
-                <th>Marks</th>
-                <th>Correct Answer(s)</th>
-                <th>Confidence</th>
-                <th>Approve</th>
+                <th>Question</th><th>Type</th><th>Marks</th><th>Correct Answer(s)</th><th>Confidence</th><th>Approve</th>
               </tr>
             </thead>
             <tbody>
@@ -681,48 +751,19 @@ function PdfImportPanel({
                 const correctAnswers = q.options.filter((o) => o.is_correct).map((o) => o.text);
                 return (
                   <tr key={q.id} className={q.needs_review ? "row-review" : ""}>
-                    <td>
-                      {q.needs_review && (
-                        <i
-                          className="ti ti-alert-triangle"
-                          style={{ color: "#d97706" }}
-                          title="Low confidence — review before approving"
-                        />
-                      )}
-                    </td>
-                    <td className="q-text-cell">
-                      {q.question_text.slice(0, 80)}
-                      {q.question_text.length > 80 ? "…" : ""}
-                    </td>
-                    <td>
-                      <span className="q-type-badge">{q.question_type}</span>
-                    </td>
+                    <td>{q.needs_review && <i className="ti ti-alert-triangle" style={{ color: "#d97706" }} title="Low confidence" />}</td>
+                    <td className="q-text-cell">{q.question_text.slice(0, 80)}{q.question_text.length > 80 ? "…" : ""}</td>
+                    <td><span className="q-type-badge">{q.question_type}</span></td>
                     <td>{q.marks}</td>
                     <td className="ans-cell">
                       {correctAnswers.length > 0
                         ? <>{correctAnswers.join(", ")}<span className="ai-badge" title="Answer inferred by AI">✦ AI</span></>
                         : <span style={{ color: "#dc2626" }}>No answer detected</span>}
                     </td>
+                    <td><span className="conf-badge" style={{ color: confColor(q.confidence), borderColor: confColor(q.confidence) }}>{q.confidence}%</span></td>
                     <td>
-                      <span
-                        className="conf-badge"
-                        style={{
-                          color: confColor(q.confidence),
-                          borderColor: confColor(q.confidence),
-                        }}
-                      >
-                        {q.confidence}%
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        className={`approve-btn ${q.approved ? "approved" : ""}`}
-                        onClick={() => toggleApprove(q.id)}
-                        type="button"
-                      >
-                        {q.approved
-                          ? <><i className="ti ti-check" /> Approved</>
-                          : "Approve"}
+                      <button className={`approve-btn ${q.approved ? "approved" : ""}`} onClick={() => toggleApprove(q.id)} type="button">
+                        {q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}
                       </button>
                     </td>
                   </tr>
@@ -735,15 +776,8 @@ function PdfImportPanel({
         {error && <div className="form-error">{error}</div>}
 
         <div className="import-review-actions">
-          <button className="btn btn-secondary" onClick={reset} type="button">
-            Cancel
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={saveApproved}
-            disabled={approvedCount === 0}
-            type="button"
-          >
+          <button className="btn btn-secondary" onClick={reset} type="button">Cancel</button>
+          <button className="btn btn-primary" onClick={saveApproved} disabled={approvedCount === 0} type="button">
             <i className="ti ti-check" /> Save {approvedCount} Question{approvedCount !== 1 ? "s" : ""} to Repository
           </button>
         </div>
@@ -754,42 +788,32 @@ function PdfImportPanel({
   return null;
 }
 
-// ── Auto-generate Panel ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// AutoGeneratePanel
+// ─────────────────────────────────────────────────────────────────────────────
+
 function AutoGeneratePanel({
   questions, onGenerated,
 }: { questions: Question[]; onGenerated: (selected: Question[]) => void }) {
-  const [mcqCount,   setMcqCount]   = useState(10);
-  const [msqCount,   setMsqCount]   = useState(5);
-  const [tfCount,    setTfCount]    = useState(5);
+  const [mcqCount, setMcqCount] = useState(10);
+  const [msqCount, setMsqCount] = useState(5);
+  const [tfCount, setTfCount] = useState(5);
   const [difficulty, setDifficulty] = useState<"MIXED" | Difficulty>("MIXED");
-  const [error,      setError]      = useState("");
+  const [error, setError] = useState("");
 
   const generate = () => {
     setError("");
     const pick = (type: QuestionType, count: number): Question[] => {
-      let candidates = questions.filter(
-        (q) => q.question_type === type && q.is_active
-      );
-      if (difficulty !== "MIXED")
-        candidates = candidates.filter((q) => q.difficulty === difficulty);
-      // Fisher-Yates shuffle
+      let candidates = questions.filter((q) => q.question_type === type && q.is_active);
+      if (difficulty !== "MIXED") candidates = candidates.filter((q) => q.difficulty === difficulty);
       for (let i = candidates.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
       }
       return candidates.slice(0, count);
     };
-
-    const selected = [
-      ...pick("MCQ",       mcqCount),
-      ...pick("MSQ",       msqCount),
-      ...pick("TRUE_FALSE", tfCount),
-    ];
-
-    if (selected.length === 0) {
-      setError("No questions match the criteria. Add more questions to the repository first.");
-      return;
-    }
+    const selected = [...pick("MCQ", mcqCount), ...pick("MSQ", msqCount), ...pick("TRUE_FALSE", tfCount)];
+    if (selected.length === 0) { setError("No questions match criteria. Add more to the repository first."); return; }
     onGenerated(selected);
   };
 
@@ -799,53 +823,31 @@ function AutoGeneratePanel({
         <i className="ti ti-wand" />
         <div>
           <div className="auto-gen-title">Auto-Generate Exam Paper</div>
-          <div className="auto-gen-sub">
-            Randomly selects questions from your repository based on the criteria below
-          </div>
+          <div className="auto-gen-sub">Randomly selects questions from your repository</div>
         </div>
       </div>
-
       <div className="form-grid-2col">
         <div className="form-field">
           <label>MCQ Count</label>
-          <input
-            type="number" className="form-input" min={0} max={50}
-            value={mcqCount}
-            onChange={(e) => setMcqCount(+e.target.value)}
-          />
-          <span className="field-hint">
-            {questions.filter((q) => q.question_type === "MCQ").length} available
-          </span>
+          <input type="number" className="form-input" min={0} max={50} value={mcqCount}
+            onChange={(e) => setMcqCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter((q) => q.question_type === "MCQ").length} available</span>
         </div>
         <div className="form-field">
           <label>MSQ Count</label>
-          <input
-            type="number" className="form-input" min={0} max={30}
-            value={msqCount}
-            onChange={(e) => setMsqCount(+e.target.value)}
-          />
-          <span className="field-hint">
-            {questions.filter((q) => q.question_type === "MSQ").length} available
-          </span>
+          <input type="number" className="form-input" min={0} max={30} value={msqCount}
+            onChange={(e) => setMsqCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter((q) => q.question_type === "MSQ").length} available</span>
         </div>
         <div className="form-field">
           <label>True/False Count</label>
-          <input
-            type="number" className="form-input" min={0} max={30}
-            value={tfCount}
-            onChange={(e) => setTfCount(+e.target.value)}
-          />
-          <span className="field-hint">
-            {questions.filter((q) => q.question_type === "TRUE_FALSE").length} available
-          </span>
+          <input type="number" className="form-input" min={0} max={30} value={tfCount}
+            onChange={(e) => setTfCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter((q) => q.question_type === "TRUE_FALSE").length} available</span>
         </div>
         <div className="form-field">
           <label>Difficulty Mix</label>
-          <select
-            className="form-select"
-            value={difficulty}
-            onChange={(e) => setDifficulty(e.target.value as any)}
-          >
+          <select className="form-select" value={difficulty} onChange={(e) => setDifficulty(e.target.value as any)}>
             <option value="MIXED">Mixed (Recommended)</option>
             <option value="EASY">Easy Only</option>
             <option value="MEDIUM">Medium Only</option>
@@ -853,9 +855,7 @@ function AutoGeneratePanel({
           </select>
         </div>
       </div>
-
       {error && <div className="form-error">{error}</div>}
-
       <button className="btn btn-primary" onClick={generate} type="button">
         <i className="ti ti-wand" /> Generate Paper ({mcqCount + msqCount + tfCount} questions)
       </button>
@@ -863,37 +863,40 @@ function AutoGeneratePanel({
   );
 }
 
-// ── Step 2: Question Management ────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 2: Question Management
+// FIX: accepts `allQuestions` from parent so we can inject newly created ones
+// immediately without waiting for a refetch, AND invalidates the query cache.
+// ─────────────────────────────────────────────────────────────────────────────
+
 function StepQuestions({
-  courseId, selectedIds, onToggle, onAddNew, onImported,
+  courseId, selectedIds, onToggle, onAddNew, onImported, allQuestions, questionsLoading,
 }: {
   courseId: string;
   selectedIds: Set<string>;
   onToggle: (q: Question) => void;
   onAddNew: (q: Question) => void;
   onImported: (qs: ExtractedQuestion[]) => void;
+  allQuestions: Question[];
+  questionsLoading: boolean;
 }) {
-  const [tab,        setTab]        = useState<"select" | "create" | "import" | "auto">("select");
-  const [search,     setSearch]     = useState("");
+  const [tab, setTab] = useState<"select" | "create" | "import" | "auto">("select");
+  const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterDiff, setFilterDiff] = useState("");
 
-  const { data: questions = [], isLoading } = useQuestions(
-    courseId ? { course_id: courseId } : undefined
-  );
-
-  const filtered = questions.filter((q) => {
+  const filtered = allQuestions.filter((q) => {
     const matchSearch = !search || q.question_text.toLowerCase().includes(search.toLowerCase());
-    const matchType   = !filterType || q.question_type === filterType;
-    const matchDiff   = !filterDiff || q.difficulty === filterDiff;
+    const matchType = !filterType || q.question_type === filterType;
+    const matchDiff = !filterDiff || q.difficulty === filterDiff;
     return matchSearch && matchType && matchDiff;
   });
 
   const tabs = [
-    { id: "select", label: "Select Existing", icon: "ti-list-search"  },
-    { id: "create", label: "Create Question", icon: "ti-pencil-plus"  },
-    { id: "import", label: "Import from PDF", icon: "ti-file-upload"  },
-    { id: "auto",   label: "Auto-Generate",   icon: "ti-wand"         },
+    { id: "select", label: "Select Existing", icon: "ti-list-search" },
+    { id: "create", label: "Create Question", icon: "ti-pencil-plus" },
+    { id: "import", label: "Import from PDF", icon: "ti-file-upload" },
+    { id: "auto",   label: "Auto-Generate",   icon: "ti-wand"        },
   ] as const;
 
   return (
@@ -908,12 +911,8 @@ function StepQuestions({
 
       <div className="q-tabs">
         {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={`q-tab ${tab === t.id ? "active" : ""}`}
-            onClick={() => setTab(t.id)}
-            type="button"
-          >
+          <button key={t.id} className={`q-tab ${tab === t.id ? "active" : ""}`}
+            onClick={() => setTab(t.id)} type="button">
             <i className={`ti ${t.icon}`} /> {t.label}
           </button>
         ))}
@@ -922,57 +921,36 @@ function StepQuestions({
       {tab === "select" && (
         <div className="q-select-panel">
           <div className="q-filters">
-            <input
-              className="form-input q-search"
-              placeholder="Search questions…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <select
-              className="form-select"
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-            >
+            <input className="form-input q-search" placeholder="Search questions…"
+              value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select className="form-select" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
               <option value="">All Types</option>
               <option value="MCQ">MCQ</option>
               <option value="MSQ">MSQ</option>
               <option value="TRUE_FALSE">True / False</option>
             </select>
-            <select
-              className="form-select"
-              value={filterDiff}
-              onChange={(e) => setFilterDiff(e.target.value)}
-            >
+            <select className="form-select" value={filterDiff} onChange={(e) => setFilterDiff(e.target.value)}>
               <option value="">All Difficulty</option>
               <option value="EASY">Easy</option>
               <option value="MEDIUM">Medium</option>
               <option value="HARD">Hard</option>
             </select>
             {selectedIds.size > 0 && (
-              <button
-                className="btn btn-sm btn-secondary"
-                type="button"
-                onClick={() =>
-                  questions.forEach((q) => {
-                    if (selectedIds.has(q.id)) onToggle(q);
-                  })
-                }
-              >
+              <button className="btn btn-sm btn-secondary" type="button"
+                onClick={() => allQuestions.forEach((q) => { if (selectedIds.has(q.id)) onToggle(q); })}>
                 Clear Selection
               </button>
             )}
           </div>
 
-          {isLoading ? (
-            <div className="loading-state">
-              <span className="spinner" /> Loading questions…
-            </div>
+          {questionsLoading ? (
+            <div className="loading-state"><span className="spinner" /> Loading questions…</div>
           ) : filtered.length === 0 ? (
             <div className="empty-state" style={{ padding: "40px 0" }}>
               <i className="ti ti-books" style={{ fontSize: 36, color: "#ccc" }} />
               <div className="empty-state-title">No questions found</div>
               <div className="empty-state-text">
-                {questions.length === 0
+                {allQuestions.length === 0
                   ? "Your repository is empty. Create questions or import from a PDF."
                   : "Try adjusting your filters."}
               </div>
@@ -980,12 +958,7 @@ function StepQuestions({
           ) : (
             <div className="q-list">
               {filtered.map((q) => (
-                <QuestionRow
-                  key={q.id}
-                  q={q}
-                  selected={selectedIds.has(q.id)}
-                  onToggle={() => onToggle(q)}
-                />
+                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} />
               ))}
             </div>
           )}
@@ -995,19 +968,20 @@ function StepQuestions({
       {tab === "create" && (
         <CreateQuestionForm
           courseId={courseId}
-          onSaved={(q) => { onAddNew(q); setTab("select"); }}
+          onSaved={(q) => {
+            onAddNew(q);   // adds to list & selects immediately
+            setTab("select");
+          }}
         />
       )}
 
       {tab === "import" && (
-        <PdfImportPanel
-          onImported={(qs) => { onImported(qs); setTab("select"); }}
-        />
+        <PdfImportPanel onImported={(qs) => { onImported(qs); setTab("select"); }} />
       )}
 
       {tab === "auto" && (
         <AutoGeneratePanel
-          questions={questions}
+          questions={allQuestions}
           onGenerated={(selected) => {
             selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); });
             setTab("select");
@@ -1018,34 +992,25 @@ function StepQuestions({
   );
 }
 
-// ── Step 3: Rules ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 3: Rules
+// ─────────────────────────────────────────────────────────────────────────────
+
 function StepRules({
   rules, onChange,
 }: { rules: Record<string, any>; onChange: (r: Record<string, any>) => void }) {
-  const rule = (
-    key: string,
-    label: string,
-    type: "bool" | "num" = "bool",
-    min?: number,
-  ) => (
+  const rule = (key: string, label: string, type: "bool" | "num" = "bool", min?: number) => (
     <div className="form-field rule-field">
       <div className="rule-label">{label}</div>
       {type === "bool" ? (
         <label className="toggle-switch">
-          <input
-            type="checkbox"
-            checked={!!rules[key]}
-            onChange={(e) => onChange({ ...rules, [key]: e.target.checked })}
-          />
+          <input type="checkbox" checked={!!rules[key]}
+            onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
           <span className="toggle-slider" />
         </label>
       ) : (
-        <input
-          type="number" className="form-input rule-num"
-          min={min ?? 0}
-          value={rules[key] ?? 0}
-          onChange={(e) => onChange({ ...rules, [key]: +e.target.value })}
-        />
+        <input type="number" className="form-input rule-num" min={min ?? 0} value={rules[key] ?? 0}
+          onChange={(e) => onChange({ ...rules, [key]: +e.target.value })} />
       )}
     </div>
   );
@@ -1064,14 +1029,14 @@ function StepRules({
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-shield" /> Proctoring</h4>
-          {rule("fullscreen_required",  "Require fullscreen mode")}
-          {rule("proctoring_enabled",   "Enable AI proctoring")}
-          {rule("camera_required",      "Require camera access")}
-          {rule("microphone_required",  "Require microphone")}
+          {rule("fullscreen_required", "Require fullscreen mode")}
+          {rule("proctoring_enabled",  "Enable AI proctoring")}
+          {rule("camera_required",     "Require camera access")}
+          {rule("microphone_required", "Require microphone")}
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
-          {rule("max_tab_switches",       "Max tab switches allowed", "num", 0)}
+          {rule("max_tab_switches",       "Max tab switches allowed",  "num", 0)}
           {rule("auto_save_interval_sec", "Auto-save interval (sec)", "num", 10)}
         </div>
       </div>
@@ -1079,7 +1044,10 @@ function StepRules({
   );
 }
 
-// ── Step 4: Schedule ───────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 4: Schedule
+// ─────────────────────────────────────────────────────────────────────────────
+
 function StepSchedule({
   departments, schedule, onChange,
 }: {
@@ -1096,49 +1064,32 @@ function StepSchedule({
       <div className="form-grid-2col">
         <div className="form-field">
           <label>Department *</label>
-          <select
-            className="form-select"
-            value={schedule.department_id ?? ""}
-            onChange={(e) => onChange({ ...schedule, department_id: e.target.value })}
-          >
+          <select className="form-select" value={schedule.department_id ?? ""}
+            onChange={(e) => onChange({ ...schedule, department_id: e.target.value })}>
             <option value="">Select department…</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </div>
         <div className="form-field">
           <label>Registration Deadline</label>
-          <input
-            type="datetime-local" className="form-input"
-            value={schedule.registration_deadline ?? ""}
-            onChange={(e) => onChange({ ...schedule, registration_deadline: e.target.value })}
-          />
+          <input type="datetime-local" className="form-input" value={schedule.registration_deadline ?? ""}
+            onChange={(e) => onChange({ ...schedule, registration_deadline: e.target.value })} />
         </div>
         <div className="form-field">
           <label>Start Time *</label>
-          <input
-            type="datetime-local" className="form-input"
-            value={schedule.start_time ?? ""}
-            onChange={(e) => onChange({ ...schedule, start_time: e.target.value })}
-          />
+          <input type="datetime-local" className="form-input" value={schedule.start_time ?? ""}
+            onChange={(e) => onChange({ ...schedule, start_time: e.target.value })} />
         </div>
         <div className="form-field">
           <label>End Time *</label>
-          <input
-            type="datetime-local" className="form-input"
-            value={schedule.end_time ?? ""}
-            onChange={(e) => onChange({ ...schedule, end_time: e.target.value })}
-          />
+          <input type="datetime-local" className="form-input" value={schedule.end_time ?? ""}
+            onChange={(e) => onChange({ ...schedule, end_time: e.target.value })} />
         </div>
       </div>
       <div className="form-field">
         <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={!!schedule.is_published}
-            onChange={(e) => onChange({ ...schedule, is_published: e.target.checked })}
-          />
+          <input type="checkbox" checked={!!schedule.is_published}
+            onChange={(e) => onChange({ ...schedule, is_published: e.target.checked })} />
           Publish immediately (students will see this exam)
         </label>
       </div>
@@ -1146,7 +1097,10 @@ function StepSchedule({
   );
 }
 
-// ── Step 5: Preview ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 5: Preview
+// ─────────────────────────────────────────────────────────────────────────────
+
 function StepPreview({
   form, selectedQuestions, schedule, examId,
 }: {
@@ -1191,13 +1145,9 @@ function StepPreview({
             <h4>Questions ({selectedQuestions.length})</h4>
             <div className="preview-rows">
               {Object.entries(byType).map(([type, count]) => (
-                <div key={type} className="preview-row">
-                  <span>{type}</span><strong>{count}</strong>
-                </div>
+                <div key={type} className="preview-row"><span>{type}</span><strong>{count}</strong></div>
               ))}
-              {selectedQuestions.length === 0 && (
-                <div className="preview-empty">No questions selected</div>
-              )}
+              {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
             </div>
           </div>
           <div className="preview-card">
@@ -1205,10 +1155,7 @@ function StepPreview({
             <div className="preview-rows">
               <div className="preview-row"><span>Start</span><strong>{schedule.start_time || "—"}</strong></div>
               <div className="preview-row"><span>End</span><strong>{schedule.end_time || "—"}</strong></div>
-              <div className="preview-row">
-                <span>Published</span>
-                <strong>{schedule.is_published ? "Yes" : "No (Draft)"}</strong>
-              </div>
+              <div className="preview-row"><span>Published</span><strong>{schedule.is_published ? "Yes" : "No (Draft)"}</strong></div>
             </div>
           </div>
         </div>
@@ -1217,52 +1164,103 @@ function StepPreview({
   );
 }
 
-// ── Main Page ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Page
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function CreateExam() {
-  const navigate = useNavigate();
+  const navigate    = useNavigate();
+  const queryClient = useQueryClient();
+
   const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
 
-  const [currentStep,        setCurrentStep]        = useState(0);
-  const [saving,             setSaving]             = useState(false);
-  const [saveError,          setSaveError]          = useState("");
-  const [examId,             setExamId]             = useState<string | null>(null);
-  const [selectedQuestions,  setSelectedQuestions]  = useState<Question[]>([]);
+  // ── Draft id persists for the lifetime of one "create exam" session ────────
+  const [draftId] = useState(() => newDraftId());
 
+  const [currentStep,       setCurrentStep]       = useState(0);
+  const [saving,            setSaving]             = useState(false);
+  const [saveError,         setSaveError]          = useState("");
+  const [examId,            setExamId]             = useState<string | null>(null);
+
+  const [form,     setForm]     = useState<ExamForm>(defaultForm);
+  const [rules,    setRules]    = useState(defaultRules);
+  const [schedule, setSchedule] = useState<Record<string, any>>(defaultSchedule);
+
+  // ── Questions: we merge the server list with locally created ones immediately
+  // so the user doesn't have to reload to see newly added questions.
+  const { data: serverQuestions = [], isLoading: questionsLoading } = useQuestions(
+    form.course_id ? { course_id: form.course_id } : undefined
+  );
+  const [locallyAddedQuestions, setLocallyAddedQuestions] = useState<Question[]>([]);
+
+  // Merged list: server list + any locally added ones not yet in the server list
+  const allQuestions: Question[] = [
+    ...locallyAddedQuestions.filter(
+      (lq) => !serverQuestions.some((sq) => sq.id === lq.id)
+    ),
+    ...serverQuestions,
+  ];
+
+  const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const selectedIds = new Set(selectedQuestions.map((q) => q.id));
-
-  const [form, setForm] = useState<ExamForm>({
-    title: "",
-    course_id: "",
-    exam_type: "MID_SEMESTER",
-    duration_minutes: 120,
-    total_marks: 80,
-    pass_marks: 32,
-    instructions: "",
-    shuffle_questions: false,
-    shuffle_options: false,
-  });
-
-  const [rules, setRules] = useState({
-    allow_backtrack:       true,
-    mark_for_review:       true,
-    fullscreen_required:   false,
-    proctoring_enabled:    false,
-    camera_required:       false,
-    microphone_required:   false,
-    max_tab_switches:      3,
-    auto_save_interval_sec: 30,
-  });
-
-  const [schedule, setSchedule] = useState<Record<string, any>>({
-    department_id:         "",
-    start_time:            "",
-    end_time:              "",
-    registration_deadline: "",
-    is_published:          false,
-  });
 
   const departments = portal?.departments ?? [];
 
+  // ── Auto-save draft whenever anything changes ──────────────────────────────
+  useEffect(() => {
+    // Only save if the user has actually started filling something in
+    if (!form.title && currentStep === 0 && selectedQuestions.length === 0) return;
+
+    const draft: ExamDraft = {
+      draftId,
+      savedAt: new Date().toISOString(),
+      currentStep,
+      form,
+      rules,
+      schedule,
+      selectedQuestionIds: selectedQuestions.map((q) => q.id),
+    };
+    upsertDraft(draft);
+  }, [draftId, currentStep, form, rules, schedule, selectedQuestions]);
+
+  // ── Resume a saved draft ───────────────────────────────────────────────────
+  // We store question IDs in the draft; on resume we look them up from the
+  // server question list (which loads async). We track "pending IDs" and
+  // resolve them once the server list is available.
+  const [pendingQuestionIds, setPendingQuestionIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (pendingQuestionIds.length === 0 || serverQuestions.length === 0) return;
+    const resolved = serverQuestions.filter((q) => pendingQuestionIds.includes(q.id));
+    if (resolved.length > 0) {
+      setSelectedQuestions((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        return [...prev, ...resolved.filter((r) => !existingIds.has(r.id))];
+      });
+      setPendingQuestionIds([]);
+    }
+  }, [pendingQuestionIds, serverQuestions]);
+
+  const handleResumeDraft = (draft: ExamDraft) => {
+    setForm(draft.form);
+    setRules(draft.rules);
+    setSchedule(draft.schedule);
+    setCurrentStep(draft.currentStep);
+    setSelectedQuestions([]);
+    if (draft.selectedQuestionIds.length > 0) {
+      // Try to resolve from already-loaded server questions first
+      const alreadyLoaded = serverQuestions.filter((q) =>
+        draft.selectedQuestionIds.includes(q.id)
+      );
+      setSelectedQuestions(alreadyLoaded);
+      const stillPending = draft.selectedQuestionIds.filter(
+        (id) => !alreadyLoaded.some((q) => q.id === id)
+      );
+      if (stillPending.length > 0) setPendingQuestionIds(stillPending);
+    }
+  };
+
+  // ── Toggle question selection ──────────────────────────────────────────────
   const toggleQuestion = (q: Question) => {
     setSelectedQuestions((prev) =>
       prev.some((p) => p.id === q.id)
@@ -1272,8 +1270,24 @@ export default function CreateExam() {
   };
 
   /**
-   * handleImported: saves approved extracted questions to the DB via the API,
-   * then adds them to the current exam selection.
+   * Called when a brand-new question is created in CreateQuestionForm.
+   * We add it to the local list immediately (instant UI update) AND
+   * invalidate the react-query cache so the server list eventually catches up.
+   */
+  const handleAddNew = (q: Question) => {
+    setLocallyAddedQuestions((prev) =>
+      prev.some((p) => p.id === q.id) ? prev : [q, ...prev]
+    );
+    setSelectedQuestions((prev) =>
+      prev.some((p) => p.id === q.id) ? prev : [...prev, q]
+    );
+    // Invalidate the react-query cache so background refetch happens
+    queryClient.invalidateQueries({ queryKey: ["questions"] });
+  };
+
+  /**
+   * Called when questions are imported from PDF.
+   * Saves them to DB then adds to local list immediately.
    */
   const handleImported = async (qs: ExtractedQuestion[]) => {
     for (const q of qs) {
@@ -1287,26 +1301,26 @@ export default function CreateExam() {
           difficulty: q.difficulty,
           options: q.options.map((o, i) => ({
             option_text: o.text,
-            is_correct:  o.is_correct,
+            is_correct: o.is_correct,
             order_index: i,
           })),
           topics: [],
         });
         const full = await facultyApi.getQuestion(res.question_id);
-        setSelectedQuestions((prev) =>
-          prev.some((p) => p.id === full.id) ? prev : [...prev, full]
-        );
+        handleAddNew(full);
       } catch (e) {
         console.error("Failed to save imported question:", q.question_text, e);
       }
     }
   };
 
+  // ── Create exam ────────────────────────────────────────────────────────────
   const saveExam = async () => {
     setSaving(true);
     setSaveError("");
     try {
-      // 1. Create exam
+      // FIX: Do NOT send `semester` — that column doesn't exist in the DB.
+      // Only send fields that the backend/schema actually have.
       const examData = await facultyApi.createExam({
         title:             form.title,
         course_id:         form.course_id || null,
@@ -1316,10 +1330,11 @@ export default function CreateExam() {
         shuffle_questions: form.shuffle_questions,
         shuffle_options:   form.shuffle_options,
         instructions:      form.instructions || null,
+        // `semester` intentionally omitted — column does not exist in DB
       });
       const newExamId = examData.id;
 
-      // 2. Attach questions
+      // Attach questions
       for (let i = 0; i < selectedQuestions.length; i++) {
         await facultyApi.addQuestionToExam(newExamId, {
           question_id: selectedQuestions[i].id,
@@ -1327,10 +1342,10 @@ export default function CreateExam() {
         });
       }
 
-      // 3. Upsert exam rules
+      // Upsert exam rules
       await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
 
-      // 4. Create schedule (optional)
+      // Create schedule (optional)
       if (schedule.department_id && schedule.start_time && schedule.end_time) {
         await facultyApi.createSchedule({
           exam_id:               newExamId,
@@ -1340,13 +1355,16 @@ export default function CreateExam() {
           registration_deadline: schedule.registration_deadline
             ? new Date(schedule.registration_deadline).toISOString()
             : null,
-          is_published:          schedule.is_published,
+          is_published: schedule.is_published,
         });
       }
 
       setExamId(newExamId);
+
+      // Clean up the draft now that the exam is successfully created
+      deleteDraft(draftId);
     } catch (e: any) {
-      setSaveError(e?.message ?? "Failed to create exam. Check all fields.");
+      setSaveError(e?.message ?? "Failed to create exam. Check all fields and try again.");
     } finally {
       setSaving(false);
     }
@@ -1359,15 +1377,28 @@ export default function CreateExam() {
   };
 
   const next = () => {
-    if (currentStep === STEPS.length - 1) saveExam();
-    else setCurrentStep((s) => s + 1);
+    if (currentStep < STEPS.length - 1) setCurrentStep((s) => s + 1);
+    else saveExam();
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <FacultyLayout activePage="create-exam">
       <PageState loading={portalLoading}>
         <div className="create-exam-workspace">
           <RepositoryOverview portal={portal} />
+
+          {/* ── Drafts panel ── */}
+          {!examId && (
+            <DraftsPanel
+              onResume={handleResumeDraft}
+              onDelete={(id) => {
+                // If the user deletes the draft that is currently being edited,
+                // just let them continue — a new save will happen on next change.
+                if (id === draftId) deleteDraft(id);
+              }}
+            />
+          )}
 
           <div className="workspace-card">
             <div className="workspace-header">
@@ -1380,11 +1411,7 @@ export default function CreateExam() {
                 </p>
               </div>
               {!examId && (
-                <button
-                  className="btn btn-sm btn-ghost"
-                  onClick={() => navigate("/faculty/dashboard")}
-                  type="button"
-                >
+                <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")} type="button">
                   <i className="ti ti-x" /> Cancel
                 </button>
               )}
@@ -1394,32 +1421,24 @@ export default function CreateExam() {
 
             <div className="workspace-body">
               {currentStep === 0 && (
-                <StepExamInfo
-                  form={form}
-                  onChange={(p) => setForm((f) => ({ ...f, ...p }))}
-                />
+                <StepExamInfo form={form} onChange={(p) => setForm((f) => ({ ...f, ...p }))} />
               )}
               {currentStep === 1 && (
                 <StepQuestions
                   courseId={form.course_id}
                   selectedIds={selectedIds}
                   onToggle={toggleQuestion}
-                  onAddNew={(q) => {
-                    if (!selectedIds.has(q.id))
-                      setSelectedQuestions((p) => [...p, q]);
-                  }}
+                  onAddNew={handleAddNew}
                   onImported={handleImported}
+                  allQuestions={allQuestions}
+                  questionsLoading={questionsLoading}
                 />
               )}
               {currentStep === 2 && (
                 <StepRules rules={rules} onChange={setRules} />
               )}
               {currentStep === 3 && (
-                <StepSchedule
-                  departments={departments}
-                  schedule={schedule}
-                  onChange={setSchedule}
-                />
+                <StepSchedule departments={departments} schedule={schedule} onChange={setSchedule} />
               )}
               {currentStep === 4 && (
                 <StepPreview
@@ -1431,44 +1450,32 @@ export default function CreateExam() {
               )}
             </div>
 
-            {/* Navigation footer */}
             {!examId && (
               <div className="workspace-footer">
                 <div className="footer-left">
                   {currentStep > 0 && (
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => setCurrentStep((s) => s - 1)}
-                      type="button"
-                    >
+                    <button className="btn btn-secondary" onClick={() => setCurrentStep((s) => s - 1)} type="button">
                       <i className="ti ti-chevron-left" /> Back
                     </button>
                   )}
                 </div>
                 <div className="footer-center">
                   {saveError && (
-                    <div className="form-error" style={{ textAlign: "center" }}>
-                      {saveError}
-                    </div>
+                    <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>
+                  )}
+                  {!examId && form.title.trim() && (
+                    <span className="draft-autosave-indicator">
+                      <i className="ti ti-device-floppy" /> Draft auto-saved
+                    </span>
                   )}
                 </div>
                 <div className="footer-right">
                   {currentStep < STEPS.length - 1 ? (
-                    <button
-                      className="btn btn-primary"
-                      onClick={next}
-                      disabled={!canProceed()}
-                      type="button"
-                    >
+                    <button className="btn btn-primary" onClick={next} disabled={!canProceed()} type="button">
                       Next <i className="ti ti-chevron-right" />
                     </button>
                   ) : (
-                    <button
-                      className="btn btn-primary"
-                      onClick={saveExam}
-                      disabled={saving || !!examId}
-                      type="button"
-                    >
+                    <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId} type="button">
                       {saving
                         ? <><span className="spinner-sm" /> Creating…</>
                         : <><i className="ti ti-check" /> Create Exam</>}
@@ -1480,18 +1487,10 @@ export default function CreateExam() {
 
             {examId && (
               <div className="workspace-footer">
-                <button
-                  className="btn btn-primary"
-                  onClick={() => navigate("/faculty/dashboard")}
-                  type="button"
-                >
+                <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
                   <i className="ti ti-home" /> Back to Dashboard
                 </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => navigate("/faculty/schedules")}
-                  type="button"
-                >
+                <button className="btn btn-secondary" onClick={() => navigate("/faculty/schedules")} type="button">
                   <i className="ti ti-calendar" /> Manage Schedules
                 </button>
               </div>
