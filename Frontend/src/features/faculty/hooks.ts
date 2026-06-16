@@ -3,6 +3,15 @@ import { facultyApi } from "./api";
 
 const FACULTY_PORTAL_KEY = ["faculty-portal"];
 
+// Centralised query keys — import these in any component that needs to
+// invalidate specific queries after a mutation (e.g. CreateExam.tsx).
+export const QUERY_KEYS = {
+  dashboard: FACULTY_PORTAL_KEY,
+  exams: (params?: object) => ["faculty-exams", params],
+  schedules: (params?: object) => ["faculty-schedules", params],
+  questions: (params?: object) => ["faculty-questions", params],
+};
+
 export function useFacultyDashboard() {
   return useQuery({
     queryKey: FACULTY_PORTAL_KEY,
@@ -41,7 +50,7 @@ export function useQuestions(params?: {
 
 export function useExams(params?: { course_id?: string; status?: string }) {
   return useQuery({
-    queryKey: ["faculty-exams", params],
+    queryKey: QUERY_KEYS.exams(params),
     queryFn: () => facultyApi.listExams(params),
     staleTime: 30_000,
   });
@@ -57,7 +66,7 @@ export function useExam(examId: string | undefined) {
 
 export function useSchedules(params?: { exam_id?: string; is_published?: boolean }) {
   return useQuery({
-    queryKey: ["faculty-schedules", params],
+    queryKey: QUERY_KEYS.schedules(params),
     queryFn: () => facultyApi.listSchedules(params),
     staleTime: 30_000,
   });

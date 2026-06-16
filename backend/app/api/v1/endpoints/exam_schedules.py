@@ -29,15 +29,22 @@ def _notify_students_for_schedule(supabase, schedule: dict):
         )
     except Exception:
         return
-    exam = (
-        supabase.table("exams")
-        .select("title")
-        .eq("id", schedule["exam_id"])
-        .single()
-        .execute()
-        .data
-    )
+    # FIX: guard students before fetching exam — avoids unnecessary DB call
     if not students:
+        return
+    # FIX: was .single() which raises if exam missing; .maybe_single() returns None safely
+    try:
+        exam = (
+            supabase.table("exams")
+            .select("title")
+            .eq("id", schedule["exam_id"])
+            .maybe_single()
+            .execute()
+            .data
+        )
+    except Exception:
+        exam = None
+    if not exam:
         return
     supabase.table("notifications").insert([
         {
@@ -83,7 +90,15 @@ async def list_schedules(
     current_user: dict = Depends(get_current_user_with_roles),
 ):
     supabase = get_supabase_admin()
-    query = supabase.table("exam_schedules").select("*, exams(title, duration_minutes), departments(name)")
+    # FIX: filter schedules to only exams created by the requesting faculty.
+    # Previously this returned ALL schedules across all faculty, so the
+    # Schedules page either showed other faculty's data or appeared empty
+    # because the frontend expected only the current faculty's records.
+    query = (
+        supabase.table("exam_schedules")
+        .select("*, exams!inner(title, duration_minutes, created_by), departments(name)")
+        .eq("exams.created_by", current_user["user_id"])
+    )
     if exam_id:
         query = query.eq("exam_id", str(exam_id))
     if is_published is not None:
