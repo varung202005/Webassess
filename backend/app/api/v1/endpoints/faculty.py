@@ -78,8 +78,8 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
         exams = (
             supabase.table("exams")
             .select(
-                "id,title,status,course_id,duration_minutes,total_marks,pass_marks,"
-                "semester,created_by,created_at,updated_at,instructions,"
+                "id,title,status,exam_type,course_id,duration_minutes,total_marks,pass_marks,"
+                "created_by,created_at,updated_at,instructions,"
                 "shuffle_questions,shuffle_options,courses(name,code)"
             )
             .eq("created_by", user_id)
@@ -170,7 +170,7 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     # ── Active sessions ───────────────────────────────────────────────────────
     active_sessions = []
     try:
-        for exam in exams[:5]:
+        for exam in exams:  # FIX: was exams[:5] — silently dropped schedules for newer exams
             scheds = (
                 supabase.table("exam_schedules")
                 .select("id,start_time,end_time")

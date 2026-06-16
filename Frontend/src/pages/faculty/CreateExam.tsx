@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query"; // ← needed for cache invalidation
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { PageState } from "../../features/faculty/components";
-import { useFacultyDashboard, useQuestions } from "../../features/faculty/hooks";
+import { useFacultyDashboard, useQuestions, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import type { Question } from "../../features/faculty/types";
 
@@ -203,68 +203,110 @@ function RepositoryOverview({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Drafts Panel
+// DraftsList — rendered inside the "Drafts" page tab (not a floating panel)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DraftsPanel({
-  onResume, onDelete,
+function DraftsList({
+  activeDraftId,
+  onResume,
+  onDelete,
+  onRefresh,
 }: {
+  activeDraftId: string;
   onResume: (draft: ExamDraft) => void;
   onDelete: (draftId: string) => void;
+  onRefresh: () => void;
 }) {
   const [drafts, setDrafts] = useState<ExamDraft[]>(() => loadDrafts());
 
-  // Re-read from storage whenever the component renders so it stays in sync
   useEffect(() => {
     setDrafts(loadDrafts());
-  }, []);
-
-  if (drafts.length === 0) return null;
+  }, [activeDraftId]); // re-read whenever the active draft id changes (e.g. after autosave)
 
   const handleDelete = (draftId: string) => {
     deleteDraft(draftId);
     setDrafts(loadDrafts());
     onDelete(draftId);
+    onRefresh();
   };
 
-  return (
-    <div className="drafts-panel">
-      <div className="drafts-header">
-        <i className="ti ti-file-pencil" />
-        <span>Saved Drafts</span>
-        <span className="drafts-count">{drafts.length}</span>
+  const stepLabel = (d: ExamDraft) =>
+    `Step ${d.currentStep + 1} of ${STEPS.length} · ${STEPS[d.currentStep]?.label ?? ""}`;
+
+  if (drafts.length === 0) {
+    return (
+      <div className="empty-state" style={{ padding: "60px 0" }}>
+        <i className="ti ti-file-off" style={{ fontSize: 40, color: "#ccc" }} />
+        <div className="empty-state-title" style={{ marginTop: 12 }}>No saved drafts</div>
+        <div className="empty-state-text">
+          Start creating an exam — it will auto-save here as you go.
+        </div>
       </div>
-      <div className="drafts-list">
-        {drafts.map((d) => (
-          <div key={d.draftId} className="draft-item">
-            <div className="draft-info">
-              <div className="draft-title">
-                {d.form.title?.trim() || <em style={{ color: "#999" }}>Untitled exam</em>}
+    );
+  }
+
+  return (
+    <div className="drafts-list-tab">
+      {drafts.map((d) => {
+        const isActive = d.draftId === activeDraftId;
+        return (
+          <div key={d.draftId} className={`draft-row ${isActive ? "draft-row-active" : ""}`}>
+            {/* Left: icon + info */}
+            <div className="draft-row-icon">
+              <i className="ti ti-file-text" />
+            </div>
+            <div className="draft-row-body">
+              <div className="draft-row-title">
+                {d.form.title?.trim() || <em style={{ color: "#aaa" }}>Untitled exam</em>}
+                {isActive && (
+                  <span className="draft-active-badge">Editing now</span>
+                )}
               </div>
-              <div className="draft-meta">
-                Step {d.currentStep + 1} of {STEPS.length} · {STEPS[d.currentStep]?.label} ·{" "}
-                {new Date(d.savedAt).toLocaleString()}
+              <div className="draft-row-meta">
+                <span><i className="ti ti-list-numbers" /> {stepLabel(d)}</span>
+                <span><i className="ti ti-clock" /> {new Date(d.savedAt).toLocaleString()}</span>
+                {d.selectedQuestionIds.length > 0 && (
+                  <span><i className="ti ti-books" /> {d.selectedQuestionIds.length} question{d.selectedQuestionIds.length !== 1 ? "s" : ""}</span>
+                )}
               </div>
             </div>
-            <div className="draft-actions">
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={() => onResume(d)}
-                type="button"
-              >
-                <i className="ti ti-player-play" /> Resume
-              </button>
-              <button
-                className="btn btn-sm btn-danger"
-                onClick={() => handleDelete(d.draftId)}
-                type="button"
-              >
-                <i className="ti ti-trash" /> Delete
-              </button>
+
+            {/* Right: progress bar + actions */}
+            <div className="draft-row-right">
+              <div className="draft-progress-wrap">
+                <div className="draft-progress-bar">
+                  <div
+                    className="draft-progress-fill"
+                    style={{ width: `${((d.currentStep + 1) / STEPS.length) * 100}%` }}
+                  />
+                </div>
+                <span className="draft-progress-label">
+                  {Math.round(((d.currentStep + 1) / STEPS.length) * 100)}%
+                </span>
+              </div>
+              <div className="draft-row-actions">
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => onResume(d)}
+                  type="button"
+                  disabled={isActive}
+                >
+                  <i className="ti ti-player-play" />
+                  {isActive ? "In progress" : "Resume"}
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost draft-delete-btn"
+                  onClick={() => handleDelete(d.draftId)}
+                  type="button"
+                  title="Delete draft"
+                >
+                  <i className="ti ti-trash" />
+                </button>
+              </div>
             </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -1281,8 +1323,8 @@ export default function CreateExam() {
     setSelectedQuestions((prev) =>
       prev.some((p) => p.id === q.id) ? prev : [...prev, q]
     );
-    // Invalidate the react-query cache so background refetch happens
-    queryClient.invalidateQueries({ queryKey: ["questions"] });
+    // FIX: was ["questions"] — never matched useQuestions key ["faculty-questions", params]
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.questions() });
   };
 
   /**
@@ -1324,6 +1366,7 @@ export default function CreateExam() {
       const examData = await facultyApi.createExam({
         title:             form.title,
         course_id:         form.course_id || null,
+        exam_type:         form.exam_type,         // FIX: was silently omitted from payload
         total_marks:       form.total_marks,
         pass_marks:        form.pass_marks,
         duration_minutes:  form.duration_minutes,
@@ -1363,6 +1406,13 @@ export default function CreateExam() {
 
       // Clean up the draft now that the exam is successfully created
       deleteDraft(draftId);
+
+      // FIX: Invalidate react-query caches so dashboard + schedules pages
+      // immediately show the new exam without a manual page reload.
+      // Keys must match exactly what hooks.ts uses (via QUERY_KEYS).
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.schedules() });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.exams() });
     } catch (e: any) {
       setSaveError(e?.message ?? "Failed to create exam. Check all fields and try again.");
     } finally {
@@ -1381,6 +1431,15 @@ export default function CreateExam() {
     else saveExam();
   };
 
+  // ── Page-level tab state ─────────────────────────────────────────────────
+  const [pageTab, setPageTab] = useState<"create" | "drafts">("create");
+  const [draftCount, setDraftCount] = useState(() => loadDrafts().length);
+
+  const handleResumeDraftAndSwitch = (draft: ExamDraft) => {
+    handleResumeDraft(draft);
+    setPageTab("create");
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <FacultyLayout activePage="create-exam">
@@ -1388,113 +1447,173 @@ export default function CreateExam() {
         <div className="create-exam-workspace">
           <RepositoryOverview portal={portal} />
 
-          {/* ── Drafts panel ── */}
-          {!examId && (
-            <DraftsPanel
-              onResume={handleResumeDraft}
-              onDelete={(id) => {
-                // If the user deletes the draft that is currently being edited,
-                // just let them continue — a new save will happen on next change.
-                if (id === draftId) deleteDraft(id);
-              }}
-            />
-          )}
-
           <div className="workspace-card">
-            <div className="workspace-header">
-              <div>
-                <h2 className="workspace-title">Create New Exam</h2>
-                <p className="workspace-sub">
-                  {examId
-                    ? "Exam created — share with students via schedule."
-                    : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
-                </p>
-              </div>
-              {!examId && (
-                <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")} type="button">
-                  <i className="ti ti-x" /> Cancel
-                </button>
-              )}
-            </div>
 
-            <Stepper steps={STEPS} current={currentStep} onStep={setCurrentStep} />
-
-            <div className="workspace-body">
-              {currentStep === 0 && (
-                <StepExamInfo form={form} onChange={(p) => setForm((f) => ({ ...f, ...p }))} />
-              )}
-              {currentStep === 1 && (
-                <StepQuestions
-                  courseId={form.course_id}
-                  selectedIds={selectedIds}
-                  onToggle={toggleQuestion}
-                  onAddNew={handleAddNew}
-                  onImported={handleImported}
-                  allQuestions={allQuestions}
-                  questionsLoading={questionsLoading}
-                />
-              )}
-              {currentStep === 2 && (
-                <StepRules rules={rules} onChange={setRules} />
-              )}
-              {currentStep === 3 && (
-                <StepSchedule departments={departments} schedule={schedule} onChange={setSchedule} />
-              )}
-              {currentStep === 4 && (
-                <StepPreview
-                  form={form}
-                  selectedQuestions={selectedQuestions}
-                  schedule={schedule}
-                  examId={examId}
-                />
-              )}
-            </div>
-
+            {/* ── Page-level tabs: Create / Drafts ── */}
             {!examId && (
-              <div className="workspace-footer">
-                <div className="footer-left">
-                  {currentStep > 0 && (
-                    <button className="btn btn-secondary" onClick={() => setCurrentStep((s) => s - 1)} type="button">
-                      <i className="ti ti-chevron-left" /> Back
-                    </button>
-                  )}
-                </div>
-                <div className="footer-center">
-                  {saveError && (
-                    <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>
-                  )}
-                  {!examId && form.title.trim() && (
-                    <span className="draft-autosave-indicator">
-                      <i className="ti ti-device-floppy" /> Draft auto-saved
-                    </span>
-                  )}
-                </div>
-                <div className="footer-right">
-                  {currentStep < STEPS.length - 1 ? (
-                    <button className="btn btn-primary" onClick={next} disabled={!canProceed()} type="button">
-                      Next <i className="ti ti-chevron-right" />
-                    </button>
-                  ) : (
-                    <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId} type="button">
-                      {saving
-                        ? <><span className="spinner-sm" /> Creating…</>
-                        : <><i className="ti ti-check" /> Create Exam</>}
-                    </button>
-                  )}
-                </div>
+              <div className="page-tabs">
+                <button
+                  className={`page-tab ${pageTab === "create" ? "active" : ""}`}
+                  onClick={() => setPageTab("create")}
+                  type="button"
+                >
+                  <i className="ti ti-plus" /> Create New Exam
+                </button>
+                <button
+                  className={`page-tab ${pageTab === "drafts" ? "active" : ""}`}
+                  onClick={() => { setDraftCount(loadDrafts().length); setPageTab("drafts"); }}
+                  type="button"
+                >
+                  <i className="ti ti-file-pencil" /> Saved Drafts
+                  {draftCount > 0 && <span className="page-tab-badge">{draftCount}</span>}
+                </button>
               </div>
             )}
 
-            {examId && (
-              <div className="workspace-footer">
-                <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
-                  <i className="ti ti-home" /> Back to Dashboard
-                </button>
-                <button className="btn btn-secondary" onClick={() => navigate("/faculty/schedules")} type="button">
-                  <i className="ti ti-calendar" /> Manage Schedules
-                </button>
+            {/* ── Drafts tab ── */}
+            {pageTab === "drafts" && !examId && (
+              <div className="workspace-body">
+                <div className="step-header">
+                  <h3>Saved Drafts</h3>
+                  <p>Resume any in-progress exam or delete ones you no longer need.</p>
+                </div>
+                <DraftsList
+                  activeDraftId={draftId}
+                  onResume={handleResumeDraftAndSwitch}
+                  onDelete={(id) => { if (id === draftId) deleteDraft(id); setDraftCount(loadDrafts().length); }}
+                  onRefresh={() => setDraftCount(loadDrafts().length)}
+                />
               </div>
             )}
+
+            {/* ── Create tab ── */}
+            {(pageTab === "create" || !!examId) && (
+              <>
+                <div className="workspace-header">
+                  <div>
+                    <h2 className="workspace-title">
+                      {examId ? "Exam Created!" : "Create New Exam"}
+                    </h2>
+                    <p className="workspace-sub">
+                      {examId
+                        ? "Share with students via schedule."
+                        : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
+                    </p>
+                  </div>
+                  {!examId && (
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => navigate("/faculty/dashboard")}
+                      type="button"
+                    >
+                      <i className="ti ti-x" /> Cancel
+                    </button>
+                  )}
+                </div>
+
+                <Stepper steps={STEPS} current={currentStep} onStep={setCurrentStep} />
+
+                <div className="workspace-body">
+                  {currentStep === 0 && (
+                    <StepExamInfo form={form} onChange={(p) => setForm((f) => ({ ...f, ...p }))} />
+                  )}
+                  {currentStep === 1 && (
+                    <StepQuestions
+                      courseId={form.course_id}
+                      selectedIds={selectedIds}
+                      onToggle={toggleQuestion}
+                      onAddNew={handleAddNew}
+                      onImported={handleImported}
+                      allQuestions={allQuestions}
+                      questionsLoading={questionsLoading}
+                    />
+                  )}
+                  {currentStep === 2 && (
+                    <StepRules rules={rules} onChange={setRules} />
+                  )}
+                  {currentStep === 3 && (
+                    <StepSchedule departments={departments} schedule={schedule} onChange={setSchedule} />
+                  )}
+                  {currentStep === 4 && (
+                    <StepPreview
+                      form={form}
+                      selectedQuestions={selectedQuestions}
+                      schedule={schedule}
+                      examId={examId}
+                    />
+                  )}
+                </div>
+
+                {!examId && (
+                  <div className="workspace-footer">
+                    <div className="footer-left">
+                      {currentStep > 0 && (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => setCurrentStep((s) => s - 1)}
+                          type="button"
+                        >
+                          <i className="ti ti-chevron-left" /> Back
+                        </button>
+                      )}
+                    </div>
+                    <div className="footer-center">
+                      {saveError && (
+                        <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>
+                      )}
+                      {form.title.trim() && (
+                        <span className="draft-autosave-indicator">
+                          <i className="ti ti-device-floppy" /> Draft auto-saved
+                        </span>
+                      )}
+                    </div>
+                    <div className="footer-right">
+                      {currentStep < STEPS.length - 1 ? (
+                        <button
+                          className="btn btn-primary"
+                          onClick={next}
+                          disabled={!canProceed()}
+                          type="button"
+                        >
+                          Next <i className="ti ti-chevron-right" />
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-primary"
+                          onClick={saveExam}
+                          disabled={saving || !!examId}
+                          type="button"
+                        >
+                          {saving
+                            ? <><span className="spinner-sm" /> Creating…</>
+                            : <><i className="ti ti-check" /> Create Exam</>}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {examId && (
+                  <div className="workspace-footer">
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => navigate("/faculty/dashboard")}
+                      type="button"
+                    >
+                      <i className="ti ti-home" /> Back to Dashboard
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => navigate("/faculty/schedules")}
+                      type="button"
+                    >
+                      <i className="ti ti-calendar" /> Manage Schedules
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
           </div>
         </div>
       </PageState>
