@@ -148,7 +148,6 @@ const defaultRules = () => ({
 });
 
 const defaultSchedule = () => ({
-  department_id: "",
   start_time: "",
   end_time: "",
   registration_deadline: "",
@@ -1091,9 +1090,8 @@ function StepRules({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepSchedule({
-  departments, schedule, onChange,
+  schedule, onChange,
 }: {
-  departments: { id: string; name: string; code: string }[];
   schedule: Record<string, any>;
   onChange: (s: Record<string, any>) => void;
 }) {
@@ -1101,17 +1099,9 @@ function StepSchedule({
     <div className="step-panel">
       <div className="step-header">
         <h3>Exam Schedule</h3>
-        <p>Set when and for which department this exam is available.</p>
+        <p>Set when this exam is available.</p>
       </div>
       <div className="form-grid-2col">
-        <div className="form-field">
-          <label>Department *</label>
-          <select className="form-select" value={schedule.department_id ?? ""}
-            onChange={(e) => onChange({ ...schedule, department_id: e.target.value })}>
-            <option value="">Select department…</option>
-            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </div>
         <div className="form-field">
           <label>Registration Deadline</label>
           <input type="datetime-local" className="form-input" value={schedule.registration_deadline ?? ""}
@@ -1389,18 +1379,17 @@ export default function CreateExam() {
       await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
 
       // Create schedule (optional)
-      if (schedule.department_id && schedule.start_time && schedule.end_time) {
-        await facultyApi.createSchedule({
-          exam_id:               newExamId,
-          department_id:         schedule.department_id,
-          start_time:            new Date(schedule.start_time).toISOString(),
-          end_time:              new Date(schedule.end_time).toISOString(),
-          registration_deadline: schedule.registration_deadline
-            ? new Date(schedule.registration_deadline).toISOString()
-            : null,
-          is_published: schedule.is_published,
-        });
-      }
+      if (schedule.start_time && schedule.end_time) {
+  await facultyApi.createSchedule({
+    exam_id:               newExamId,
+    start_time:            new Date(schedule.start_time).toISOString(),
+    end_time:              new Date(schedule.end_time).toISOString(),
+    registration_deadline: schedule.registration_deadline
+      ? new Date(schedule.registration_deadline).toISOString()
+      : null,
+    is_published: schedule.is_published,
+  });
+}
 
       setExamId(newExamId);
 
@@ -1532,8 +1521,7 @@ export default function CreateExam() {
                     <StepRules rules={rules} onChange={setRules} />
                   )}
                   {currentStep === 3 && (
-                    <StepSchedule departments={departments} schedule={schedule} onChange={setSchedule} />
-                  )}
+                  <StepSchedule schedule={schedule} onChange={setSchedule} />)}
                   {currentStep === 4 && (
                     <StepPreview
                       form={form}

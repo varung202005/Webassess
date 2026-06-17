@@ -1,117 +1,75 @@
 """
-Exam Schedules — when and to which department an exam is available.
-
-WHO DOES WHAT:
-  - Schedule form (dates, dept)   → FRONTEND (UI) + BACKEND (POST)
-  - Publish toggle                → BACKEND only (triggers published_at stamp)
-  - Student: see available exams  → BACKEND (filter is_published=TRUE + student's dept)
+app/api/v1/endpoints/exam_schedules.py
+Complete router for exam schedule management.
 """
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, model_validator
 from typing import Optional
 from uuid import UUID
-from datetime import datetime
-
-from app.core.security import require_faculty, require_admin, get_current_user_with_roles
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from app.core.security import require_faculty
 from app.db.supabase import get_supabase_admin
 
 router = APIRouter()
 
 
-def _notify_students_for_schedule(supabase, schedule: dict):
-    try:
-        students = (
-            supabase.table("students")
-            .select("user_id")
-            .eq("department_id", schedule["department_id"])
-            .execute()
-            .data
-        )
-    except Exception:
-        return
-    # FIX: guard students before fetching exam — avoids unnecessary DB call
-    if not students:
-        return
-    # FIX: was .single() which raises if exam missing; .maybe_single() returns None safely
-    try:
-        exam = (
-            supabase.table("exams")
-            .select("title")
-            .eq("id", schedule["exam_id"])
-            .maybe_single()
-            .execute()
-            .data
-        )
-    except Exception:
-        exam = None
-    if not exam:
-        return
-    supabase.table("notifications").insert([
-        {
-            "user_id": student["user_id"],
-            "type": "EXAM_SCHEDULED",
-            "title": "New exam scheduled",
-            "body": f"{exam['title']} has been scheduled.",
-            "metadata": {"exam_schedule_id": schedule["id"]},
-        }
-        for student in students
-    ]).execute()
-
-
 class ScheduleCreate(BaseModel):
-    exam_id: UUID
-    department_id: UUID
-    start_time: datetime
-    end_time: datetime
-    registration_deadline: Optional[datetime] = None
+    exam_id: str
+    start_time: str
+    end_time: str
+    registration_deadline: Optional[str] = None
     is_published: bool = False
-
-    @model_validator(mode="after")
-    def validate_times(self):
-        if self.end_time <= self.start_time:
-            raise ValueError("end_time must be after start_time")
-        if self.registration_deadline and self.registration_deadline > self.start_time:
-            raise ValueError("registration_deadline must be on or before start_time")
-        return self
 
 
 class ScheduleUpdate(BaseModel):
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    department_id: Optional[UUID] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    registration_deadline: Optional[str] = None
     is_published: Optional[bool] = None
-    registration_deadline: Optional[datetime] = None
 
 
 @router.get("/")
 async def list_schedules(
-    exam_id: Optional[UUID] = None,
+    exam_id: Optional[str] = None,
     is_published: Optional[bool] = None,
-    current_user: dict = Depends(get_current_user_with_roles),
+    current_user: dict = Depends(require_faculty),
 ):
+    """List all schedules for exams created by this faculty member."""
     supabase = get_supabase_admin()
-    # FIX: filter schedules to only exams created by the requesting faculty.
-    # Previously this returned ALL schedules across all faculty, so the
-    # Schedules page either showed other faculty's data or appeared empty
-    # because the frontend expected only the current faculty's records.
+
+    # Scope to this faculty's exams only
+    exams_result = (
+        supabase.table("exams")
+        .select("id")
+        .eq("created_by", current_user["user_id"])
+        .execute()
+    )
+    faculty_exam_ids = [row["id"] for row in (exams_result.data or [])]
+    if not faculty_exam_ids:
+        return []
+
     query = (
         supabase.table("exam_schedules")
-        .select("*, exams!inner(title, duration_minutes, created_by), departments(name)")
-        .eq("exams.created_by", current_user["user_id"])
+        .select(
+            "*, "
+            "exams(id,title,status,duration_minutes,courses(name,code))"
+        )
+        .in_("exam_id", faculty_exam_ids)
+        .order("start_time", desc=True)
     )
     if exam_id:
-        query = query.eq("exam_id", str(exam_id))
+        query = query.eq("exam_id", exam_id)
     if is_published is not None:
         query = query.eq("is_published", is_published)
-    return query.execute().data
+
+    return query.execute().data or []
 
 
 @router.get("/{schedule_id}")
-async def get_schedule(schedule_id: UUID, _: dict = Depends(get_current_user_with_roles)):
+async def get_schedule(schedule_id: UUID, _: dict = Depends(require_faculty)):
     supabase = get_supabase_admin()
     result = (
         supabase.table("exam_schedules")
-        .select("*, exams(title, duration_minutes, instructions, exam_rules(*)), departments(name)")
+        .select("*, exams(title,status,duration_minutes)")
         .eq("id", str(schedule_id))
         .single()
         .execute()
@@ -121,51 +79,46 @@ async def get_schedule(schedule_id: UUID, _: dict = Depends(get_current_user_wit
     return result.data
 
 
-@router.post("/", dependencies=[Depends(require_faculty)])
-async def create_schedule(body: ScheduleCreate):
+@router.post("/")
+async def create_schedule(
+    body: ScheduleCreate,
+    _: dict = Depends(require_faculty),
+):
     supabase = get_supabase_admin()
-    data = {
-        "exam_id": str(body.exam_id),
-        "department_id": str(body.department_id),
-        "start_time": body.start_time.isoformat(),
-        "end_time": body.end_time.isoformat(),
-        "registration_deadline": (
-            body.registration_deadline.isoformat()
-            if body.registration_deadline else None
-        ),
-        "is_published": body.is_published,
-    }
+    data = body.model_dump(exclude_none=True)
     result = supabase.table("exam_schedules").insert(data).execute()
-    if body.is_published:
-        _notify_students_for_schedule(supabase, result.data[0])
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create schedule")
     return result.data[0]
 
 
-@router.patch("/{schedule_id}", dependencies=[Depends(require_faculty)])
-async def update_schedule(schedule_id: UUID, body: ScheduleUpdate):
+@router.patch("/{schedule_id}")
+async def update_schedule(
+    schedule_id: UUID,
+    body: ScheduleUpdate,
+    _: dict = Depends(require_faculty),
+):
     """
-    Updating is_published to TRUE auto-stamps published_at via DB trigger (set_published_at).
-    BACKEND responsibility.
+    Patch a schedule.
+    Key use-case: toggle is_published to make it visible (or hide from) students.
     """
     supabase = get_supabase_admin()
     data = body.model_dump(exclude_none=True)
-    if "start_time" in data:
-        data["start_time"] = data["start_time"].isoformat()
-    if "end_time" in data:
-        data["end_time"] = data["end_time"].isoformat()
-    if "registration_deadline" in data:
-        data["registration_deadline"] = data["registration_deadline"].isoformat()
-    if "department_id" in data:
-        data["department_id"] = str(data["department_id"])
-    existing = (
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    result = (
         supabase.table("exam_schedules")
-        .select("is_published")
+        .update(data)
         .eq("id", str(schedule_id))
-        .single()
         .execute()
-        .data
     )
-    result = supabase.table("exam_schedules").update(data).eq("id", str(schedule_id)).execute()
-    if data.get("is_published") is True and not existing["is_published"]:
-        _notify_students_for_schedule(supabase, result.data[0])
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Schedule not found")
     return result.data[0]
+
+
+@router.delete("/{schedule_id}")
+async def delete_schedule(schedule_id: UUID, _: dict = Depends(require_faculty)):
+    supabase = get_supabase_admin()
+    supabase.table("exam_schedules").delete().eq("id", str(schedule_id)).execute()
+    return {"message": "Schedule deleted"}

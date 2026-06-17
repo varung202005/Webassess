@@ -24,8 +24,7 @@ async def auto_grade_attempt(attempt_id: str) -> int:
         supabase.table("student_answers")
         .select(
             "id, question_id, selected_option_id, selected_option_ids, "
-            "questions(question_type, marks, negative_marks), "
-            "exam_questions(marks_override)"
+            "questions(question_type, marks, negative_marks)"
         )
         .eq("attempt_id", attempt_id)
         .execute()
@@ -72,11 +71,7 @@ async def auto_grade_attempt(attempt_id: str) -> int:
             )
             is_correct = option.data["is_correct"] if option.data else False
 
-        # Effective marks: marks_override > question marks
-        eq_data = ans.get("exam_questions") or {}
-        if isinstance(eq_data, list):
-            eq_data = eq_data[0] if eq_data else {}
-        effective_marks = eq_data.get("marks_override") or q.get("marks", 0)
+        effective_marks = q.get("marks", 0)
         negative = q.get("negative_marks", 0)
 
         if is_correct:

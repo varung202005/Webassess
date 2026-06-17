@@ -1,12 +1,32 @@
+/**
+ * Dashboard.tsx — Faculty Dashboard
+ *
+ * CHANGES vs original:
+ *   • ExamsTable now has a "Publish" button on DRAFT rows that calls
+ *     PATCH /api/v1/exams/{id} with { status: "PUBLISHED" }
+ *   • After publishing, the dashboard query is invalidated so the badge
+ *     updates immediately without a page reload.
+ *
+ * Drop this file at:  src/pages/faculty/Dashboard.tsx
+ */
+
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { PageState, StatsRow } from "../../features/faculty/components";
-import { useFacultyDashboard } from "../../features/faculty/hooks";
+import { useFacultyDashboard, QUERY_KEYS } from "../../features/faculty/hooks";
+import { facultyApi } from "../../features/faculty/api";
 import { formatDate, formatTime, relativeTime, statusBadgeClass, statusLabel } from "../../features/faculty/format";
 import type { FacultyDashboard } from "../../features/faculty/types";
 
 function initials(name: string) {
   return name?.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 2) ?? "F";
+}
+
+function apiMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err ?? "Unknown error");
 }
 
 /* ── Session Banner ────────────────────────────────────── */
@@ -57,8 +77,33 @@ function DashboardStats({ portal }: { portal: FacultyDashboard }) {
   );
 }
 
-/* ── Exams Table ────────────────────────────────────────── */
-function ExamsTable({ exams, onView }: { exams: FacultyDashboard["recentExams"]; onView: (id: string) => void }) {
+/* ── Exams Table — with inline Publish button ───────────── */
+function ExamsTable({
+  exams,
+  onView,
+  onPublished,
+}: {
+  exams: FacultyDashboard["recentExams"];
+  onView: (id: string) => void;
+  onPublished: (examId: string) => void;
+}) {
+  const [publishing, setPublishing] = useState<string | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
+  const handlePublish = async (examId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPublishError(null);
+    setPublishing(examId);
+    try {
+      await facultyApi.updateExam(examId, { status: "PUBLISHED" });
+      onPublished(examId);
+    } catch (err) {
+      setPublishError(apiMsg(err));
+    } finally {
+      setPublishing(null);
+    }
+  };
+
   if (!exams || exams.length === 0) {
     return (
       <div className="panel-body">
@@ -70,42 +115,107 @@ function ExamsTable({ exams, onView }: { exams: FacultyDashboard["recentExams"];
       </div>
     );
   }
+
   return (
-    <div className="data-table-wrap">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Exam</th>
-            <th>Status</th>
-            <th>Questions</th>
-            <th>Duration</th>
-            <th>Updated</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {exams.map((exam) => (
-            <tr key={exam.id}>
-              <td>
-                <div className="table-exam-name">{exam.title}</div>
-                <div className="table-exam-meta">{exam.courses?.code} · {exam.courses?.name}</div>
-              </td>
-              <td><span className={`badge ${statusBadgeClass(exam.status)}`}>{statusLabel(exam.status)}</span></td>
-              <td>{exam.questions_count ?? "-"}</td>
-              <td>{exam.duration_minutes ? `${exam.duration_minutes} min` : "-"}</td>
-              <td style={{ fontSize: "12.5px" }}>{exam.updated_at ? formatDate(exam.updated_at) : "-"}</td>
-              <td>
-                <div className="table-actions">
-                  <button className="action-btn primary" data-tip="Grade" onClick={() => onView(exam.id)}>
-                    <i className="ti ti-eye" />
-                  </button>
-                </div>
-              </td>
+    <>
+      {publishError && (
+        <div
+          style={{
+            margin: "0 16px 8px",
+            padding: "8px 12px",
+            background: "#fde8ec",
+            color: "#a30f2e",
+            borderRadius: 7,
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <i className="ti ti-alert-circle" /> {publishError}
+        </div>
+      )}
+      <div className="data-table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Exam</th>
+              <th>Status</th>
+              <th>Questions</th>
+              <th>Duration</th>
+              <th>Updated</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {exams.map((exam) => {
+              const isDraft = exam.status === "DRAFT" || !exam.status;
+              const isPublishing = publishing === exam.id;
+              return (
+                <tr key={exam.id}>
+                  <td>
+                    <div className="table-exam-name">{exam.title}</div>
+                    <div className="table-exam-meta">{exam.courses?.code} · {exam.courses?.name}</div>
+                  </td>
+                  <td>
+                    <span className={`badge ${statusBadgeClass(exam.status)}`}>
+                      {statusLabel(exam.status)}
+                    </span>
+                  </td>
+                  <td>{exam.questions_count ?? "-"}</td>
+                  <td>{exam.duration_minutes ? `${exam.duration_minutes} min` : "-"}</td>
+                  <td style={{ fontSize: "12.5px" }}>
+                    {exam.updated_at ? formatDate(exam.updated_at) : "-"}
+                  </td>
+                  <td>
+                    <div className="table-actions" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {/* ── NEW: Publish button for DRAFT exams ── */}
+                      {isDraft && (
+                        <button
+                          className="btn btn-sm btn-primary"
+                          disabled={isPublishing}
+                          onClick={(e) => handlePublish(exam.id, e)}
+                          title="Publish this exam so students can see it"
+                          style={{ whiteSpace: "nowrap" }}
+                        >
+                          {isPublishing ? (
+                            <><span className="spinner-sm" /> Publishing…</>
+                          ) : (
+                            <><i className="ti ti-send" /> Publish</>
+                          )}
+                        </button>
+                      )}
+                      {!isDraft && (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "#08775b",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                          }}
+                        >
+                          <i className="ti ti-circle-check" /> Live
+                        </span>
+                      )}
+                      <button
+                        className="action-btn primary"
+                        data-tip="View"
+                        onClick={() => onView(exam.id)}
+                        title="View / Grade"
+                      >
+                        <i className="ti ti-eye" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -274,6 +384,7 @@ function ReevalSection({ requests }: { requests: FacultyDashboard["reevaluationR
     </div>
   );
 }
+
 /* ── Recent Activity ────────────────────────────────────── */
 function RecentActivity({ notifications }: { notifications: FacultyDashboard["notifications"] }) {
   if (!notifications || notifications.length === 0) {
@@ -326,6 +437,13 @@ function RecentActivity({ notifications }: { notifications: FacultyDashboard["no
 export default function Dashboard() {
   const { data: portal, isLoading, isError, error, refetch } = useFacultyDashboard();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.exams() });
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.schedules() });
+  };
 
   return (
     <FacultyLayout activePage="dashboard">
@@ -348,6 +466,37 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Draft exams banner — shown when there are unpublished exams */}
+            {(portal.examCounts?.draft ?? 0) > 0 && (
+              <div
+                style={{
+                  background: "#fff3d8",
+                  border: "1.5px solid #f5d76e",
+                  borderRadius: 10,
+                  padding: "12px 18px",
+                  marginBottom: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <i className="ti ti-alert-triangle" style={{ color: "#94600a", fontSize: 18 }} />
+                <span style={{ flex: 1, fontSize: 13, color: "#5a3c00" }}>
+                  You have <strong>{portal.examCounts?.draft}</strong> draft exam{(portal.examCounts?.draft ?? 0) !== 1 ? "s" : ""}.
+                  Students cannot see draft exams. Click <strong>Publish</strong> on each row below, then go to{" "}
+                  <strong>Schedules</strong> to publish the schedule too.
+                </span>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => navigate("/faculty/schedules")}
+                  style={{ flexShrink: 0 }}
+                >
+                  <i className="ti ti-calendar" /> Manage Schedules
+                </button>
+              </div>
+            )}
+
             <DashboardStats portal={portal} />
 
             <div className="content-grid">
@@ -358,7 +507,11 @@ export default function Dashboard() {
                     <i className="ti ti-plus" /> New
                   </button>
                 </div>
-                <ExamsTable exams={portal.recentExams} onView={(id) => navigate(`/faculty/evaluation?examId=${id}`)} />
+                <ExamsTable
+                  exams={portal.recentExams}
+                  onView={(id) => navigate(`/faculty/evaluation?examId=${id}`)}
+                  onPublished={() => invalidateAll()}
+                />
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

@@ -120,7 +120,7 @@ async def register_for_exam(
     registration = result.data[0]
     supabase.table("notifications").insert({
         "user_id": student_id,
-        "type": "REGISTRATION_SUCCESS",
+        "type": "REGISTRATION_OPEN",
         "title": "Exam registration confirmed",
         "body": f"You are registered for {sched.data.get('exams', {}).get('title', 'the exam')}.",
         "metadata": {"exam_schedule_id": schedule_id},
@@ -167,7 +167,7 @@ async def cancel_registration(
     }).eq("id", str(registration_id)).execute()
     supabase.table("notifications").insert({
         "user_id": current_user["user_id"],
-        "type": "REGISTRATION_CANCELLED",
+        "type": "EXAM_CANCELLED",
         "title": "Exam registration cancelled",
         "body": f"Your registration for {schedule.get('exams', {}).get('title', 'the exam')} was cancelled.",
         "metadata": {"exam_schedule_id": registration.data["exam_schedule_id"]},
