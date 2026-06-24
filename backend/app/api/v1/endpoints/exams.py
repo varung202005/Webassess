@@ -1,8 +1,12 @@
 """
-exams.py — FIX: removed 'semester' from the insert payload (column does not exist in DB).
+exams.py
+KEY CHANGE: ExamCreate now accepts `publish_immediately`.
+When true, exam is created with status="PUBLISHED" and a schedule row
+is auto-created with is_published=True — no separate Schedules step needed.
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -27,8 +31,13 @@ class ExamCreate(BaseModel):
     shuffle_questions: bool = False
     shuffle_options: bool = False
     instructions: Optional[str] = None
-    # NOTE: 'semester' intentionally excluded — that column does not exist in the DB.
-    # If you add it to the DB later, add it back here.
+    # NEW: when True, exam is PUBLISHED immediately and a schedule is auto-created.
+    # The frontend no longer shows a separate Schedule step.
+    publish_immediately: bool = False
+    # Optional schedule times — if omitted, defaults to now → now+duration_minutes
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    registration_deadline: Optional[str] = None
 
 
 class ExamUpdate(BaseModel):
@@ -62,7 +71,7 @@ class ExamRulesUpsert(BaseModel):
 
 class ScheduleCreate(BaseModel):
     exam_id: str
-    department_id: str
+    department_id: Optional[str] = None
     start_time: str
     end_time: str
     registration_deadline: Optional[str] = None
@@ -93,9 +102,7 @@ async def get_exam(exam_id: UUID, _: dict = Depends(require_faculty)):
     supabase = get_supabase_admin()
     result = (
         supabase.table("exams")
-        .select(
-            "*, courses(name,code), exam_questions(*, questions(*))"
-        )
+        .select("*, courses(name,code), exam_questions(*, questions(*))")
         .eq("id", str(exam_id))
         .single()
         .execute()
@@ -112,8 +119,9 @@ async def create_exam(
 ):
     supabase = get_supabase_admin()
 
-    # FIX: Only insert columns that actually exist in the exams table.
-    # 'semester' was being sent previously and caused PGRST204 / 500 errors.
+    # KEY CHANGE: if publish_immediately=True, create as PUBLISHED straight away.
+    status = "PUBLISHED" if body.publish_immediately else "DRAFT"
+
     data = {
         "created_by":        current_user["user_id"],
         "title":             body.title,
@@ -124,13 +132,46 @@ async def create_exam(
         "shuffle_questions": body.shuffle_questions,
         "shuffle_options":   body.shuffle_options,
         "instructions":      body.instructions,
-        "status":            "DRAFT",
+        "status":            status,
     }
 
     result = supabase.table("exams").insert(data).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create exam")
-    return result.data[0]
+    exam = result.data[0]
+    exam_id = exam["id"]
+
+    # KEY CHANGE: auto-create a published schedule so students can see it immediately.
+    # The faculty only needs to click "Publish" once — no separate Schedules page visit.
+    if body.publish_immediately:
+        now = datetime.utcnow()
+        start = (
+            datetime.fromisoformat(body.start_time.replace("Z", ""))
+            if body.start_time
+            else now
+        )
+        end = (
+            datetime.fromisoformat(body.end_time.replace("Z", ""))
+            if body.end_time
+            else start + timedelta(minutes=body.duration_minutes)
+        )
+        reg_deadline = (
+            datetime.fromisoformat(body.registration_deadline.replace("Z", ""))
+            if body.registration_deadline
+            else start
+        )
+
+        schedule_data = {
+            "exam_id":               exam_id,
+            "start_time":            start.isoformat(),
+            "end_time":              end.isoformat(),
+            "registration_deadline": reg_deadline.isoformat(),
+            "is_published":          True,   # ← both gates open in one click
+        }
+        supabase.table("exam_schedules").insert(schedule_data).execute()
+        logger.info("Auto-created published schedule for exam %s", exam_id)
+
+    return exam
 
 
 @router.patch("/{exam_id}")
