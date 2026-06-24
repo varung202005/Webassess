@@ -1,16 +1,21 @@
 /**
- * CreateExam.tsx — Complete Exam Creation Workspace
+ * CreateExam.tsx
  *
- * FIXES:
- *  1. Removed `semester` field from createExam payload (caused "Failed to fetch" / PGRST204)
- *  2. Questions list now refreshes immediately after creating/importing (no reload needed)
- *  3. Draft auto-save: progress is saved to localStorage every time any field changes.
- *     Drafts appear on the page so you can resume or delete them.
+ * KEY CHANGES vs original:
+ *   1. Removed Step 4 "Schedule" entirely — no more duplicate date entry.
+ *   2. Preview step (now Step 4) has a "Publish immediately" checkbox +
+ *      optional start/end time fields. If unchecked, exam saves as DRAFT.
+ *   3. saveExam() sends publish_immediately + optional times to the backend.
+ *      The backend auto-creates the schedule with is_published=true in one go.
+ *   4. After creating, "Go to Dashboard" takes you straight there — no
+ *      "Manage Schedules" redirect needed.
+ *
+ * Drop this file at:  src/pages/faculty/CreateExam.tsx
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query"; // ← needed for cache invalidation
+import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { PageState } from "../../features/faculty/components";
 import { useFacultyDashboard, useQuestions, QUERY_KEYS } from "../../features/faculty/hooks";
@@ -18,14 +23,13 @@ import { facultyApi } from "../../features/faculty/api";
 import type { Question } from "../../features/faculty/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Constants — 4 steps now (Schedule step removed)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STEPS = [
   { id: "info",      label: "Exam Info",   icon: "ti-info-circle"  },
   { id: "questions", label: "Questions",   icon: "ti-list-check"   },
   { id: "rules",     label: "Rules",       icon: "ti-shield-check" },
-  { id: "schedule",  label: "Schedule",    icon: "ti-calendar"     },
   { id: "preview",   label: "Preview",     icon: "ti-eye"          },
 ];
 
@@ -63,6 +67,15 @@ interface ExamForm {
   shuffle_options: boolean;
 }
 
+// Publish settings — previously lived in a dedicated Schedule step.
+// Now just a small section on the Preview step.
+interface PublishSettings {
+  publish_immediately: boolean;
+  start_time: string;
+  end_time: string;
+  registration_deadline: string;
+}
+
 interface NewQuestion {
   question_type: QuestionType;
   question_text: string;
@@ -73,13 +86,13 @@ interface NewQuestion {
 }
 
 interface ExamDraft {
-  draftId: string;         // uuid-like key
-  savedAt: string;         // ISO timestamp
+  draftId: string;
+  savedAt: string;
   currentStep: number;
   form: ExamForm;
   rules: Record<string, any>;
-  schedule: Record<string, any>;
-  selectedQuestionIds: string[]; // we only store IDs; re-lookup on resume
+  publishSettings: PublishSettings;
+  selectedQuestionIds: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,28 +107,18 @@ function loadDrafts(): ExamDraft[] {
     return [];
   }
 }
-
 function saveDrafts(drafts: ExamDraft[]) {
-  try {
-    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts));
-  } catch {
-    // storage full — silently ignore
-  }
+  try { localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts)); } catch {}
 }
-
 function upsertDraft(draft: ExamDraft) {
   const drafts = loadDrafts();
   const idx = drafts.findIndex((d) => d.draftId === draft.draftId);
-  if (idx >= 0) drafts[idx] = draft;
-  else drafts.unshift(draft);
+  if (idx >= 0) drafts[idx] = draft; else drafts.unshift(draft);
   saveDrafts(drafts);
 }
-
 function deleteDraft(draftId: string) {
-  const drafts = loadDrafts().filter((d) => d.draftId !== draftId);
-  saveDrafts(drafts);
+  saveDrafts(loadDrafts().filter((d) => d.draftId !== draftId));
 }
-
 function newDraftId() {
   return `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -147,20 +150,20 @@ const defaultRules = () => ({
   auto_save_interval_sec: 30,
 });
 
-const defaultSchedule = () => ({
+const defaultPublishSettings = (): PublishSettings => ({
+  publish_immediately: false,
   start_time: "",
   end_time: "",
   registration_deadline: "",
-  is_published: false,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StatCard
+// StatCard + RepositoryOverview
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StatCard({
-  label, value, icon, color = "#8b1a1a",
-}: { label: string; value: number | string; icon: string; color?: string }) {
+function StatCard({ label, value, icon, color = "#8b1a1a" }: {
+  label: string; value: number | string; icon: string; color?: string;
+}) {
   return (
     <div className="repo-stat-card">
       <div className="repo-stat-icon" style={{ background: `${color}15`, color }}>
@@ -174,13 +177,9 @@ function StatCard({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RepositoryOverview
-// ─────────────────────────────────────────────────────────────────────────────
-
-function RepositoryOverview({
-  portal,
-}: { portal: ReturnType<typeof useFacultyDashboard>["data"] }) {
+function RepositoryOverview({ portal }: {
+  portal: ReturnType<typeof useFacultyDashboard>["data"];
+}) {
   const qs = portal?.questionStats;
   const byType = qs?.byType ?? {};
   return (
@@ -202,25 +201,17 @@ function RepositoryOverview({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DraftsList — rendered inside the "Drafts" page tab (not a floating panel)
+// DraftsList
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DraftsList({
-  activeDraftId,
-  onResume,
-  onDelete,
-  onRefresh,
-}: {
+function DraftsList({ activeDraftId, onResume, onDelete, onRefresh }: {
   activeDraftId: string;
   onResume: (draft: ExamDraft) => void;
   onDelete: (draftId: string) => void;
   onRefresh: () => void;
 }) {
   const [drafts, setDrafts] = useState<ExamDraft[]>(() => loadDrafts());
-
-  useEffect(() => {
-    setDrafts(loadDrafts());
-  }, [activeDraftId]); // re-read whenever the active draft id changes (e.g. after autosave)
+  useEffect(() => { setDrafts(loadDrafts()); }, [activeDraftId]);
 
   const handleDelete = (draftId: string) => {
     deleteDraft(draftId);
@@ -237,9 +228,7 @@ function DraftsList({
       <div className="empty-state" style={{ padding: "60px 0" }}>
         <i className="ti ti-file-off" style={{ fontSize: 40, color: "#ccc" }} />
         <div className="empty-state-title" style={{ marginTop: 12 }}>No saved drafts</div>
-        <div className="empty-state-text">
-          Start creating an exam — it will auto-save here as you go.
-        </div>
+        <div className="empty-state-text">Start creating an exam — it will auto-save here as you go.</div>
       </div>
     );
   }
@@ -250,16 +239,11 @@ function DraftsList({
         const isActive = d.draftId === activeDraftId;
         return (
           <div key={d.draftId} className={`draft-row ${isActive ? "draft-row-active" : ""}`}>
-            {/* Left: icon + info */}
-            <div className="draft-row-icon">
-              <i className="ti ti-file-text" />
-            </div>
+            <div className="draft-row-icon"><i className="ti ti-file-text" /></div>
             <div className="draft-row-body">
               <div className="draft-row-title">
                 {d.form.title?.trim() || <em style={{ color: "#aaa" }}>Untitled exam</em>}
-                {isActive && (
-                  <span className="draft-active-badge">Editing now</span>
-                )}
+                {isActive && <span className="draft-active-badge">Editing now</span>}
               </div>
               <div className="draft-row-meta">
                 <span><i className="ti ti-list-numbers" /> {stepLabel(d)}</span>
@@ -269,36 +253,18 @@ function DraftsList({
                 )}
               </div>
             </div>
-
-            {/* Right: progress bar + actions */}
             <div className="draft-row-right">
               <div className="draft-progress-wrap">
                 <div className="draft-progress-bar">
-                  <div
-                    className="draft-progress-fill"
-                    style={{ width: `${((d.currentStep + 1) / STEPS.length) * 100}%` }}
-                  />
+                  <div className="draft-progress-fill" style={{ width: `${((d.currentStep + 1) / STEPS.length) * 100}%` }} />
                 </div>
-                <span className="draft-progress-label">
-                  {Math.round(((d.currentStep + 1) / STEPS.length) * 100)}%
-                </span>
+                <span className="draft-progress-label">{Math.round(((d.currentStep + 1) / STEPS.length) * 100)}%</span>
               </div>
               <div className="draft-row-actions">
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() => onResume(d)}
-                  type="button"
-                  disabled={isActive}
-                >
-                  <i className="ti ti-player-play" />
-                  {isActive ? "In progress" : "Resume"}
+                <button className="btn btn-sm btn-primary" onClick={() => onResume(d)} type="button" disabled={isActive}>
+                  <i className="ti ti-player-play" />{isActive ? "In progress" : "Resume"}
                 </button>
-                <button
-                  className="btn btn-sm btn-ghost draft-delete-btn"
-                  onClick={() => handleDelete(d.draftId)}
-                  type="button"
-                  title="Delete draft"
-                >
+                <button className="btn btn-sm btn-ghost draft-delete-btn" onClick={() => handleDelete(d.draftId)} type="button" title="Delete draft">
                   <i className="ti ti-trash" />
                 </button>
               </div>
@@ -314,21 +280,14 @@ function DraftsList({
 // Stepper
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Stepper({
-  steps, current, onStep,
-}: { steps: typeof STEPS; current: number; onStep: (i: number) => void }) {
+function Stepper({ steps, current, onStep }: {
+  steps: typeof STEPS; current: number; onStep: (i: number) => void;
+}) {
   return (
     <div className="exam-stepper">
       {steps.map((s, i) => (
-        <div
-          key={s.id}
-          className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}
-        >
-          <button
-            className="stepper-btn"
-            onClick={() => i < current && onStep(i)}
-            disabled={i > current}
-          >
+        <div key={s.id} className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}>
+          <button className="stepper-btn" onClick={() => i < current && onStep(i)} disabled={i > current}>
             <div className="stepper-circle">
               {i < current ? <i className="ti ti-check" /> : <span>{i + 1}</span>}
             </div>
@@ -345,98 +304,67 @@ function Stepper({
 // Step 1: Exam Info
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepExamInfo({
-  form, onChange,
-}: { form: ExamForm; onChange: (f: Partial<ExamForm>) => void }) {
+function StepExamInfo({ form, onChange }: {
+  form: ExamForm; onChange: (f: Partial<ExamForm>) => void;
+}) {
   return (
     <div className="step-panel">
       <div className="step-header">
         <h3>Basic Exam Information</h3>
         <p>Configure the core details of your exam. All fields marked * are required.</p>
       </div>
-
       <div className="form-grid-1col">
         <div className="form-field">
           <label>Exam Title *</label>
-          <input
-            className="form-input"
-            placeholder="e.g. Data Structures Mid Semester 2025"
-            value={form.title}
-            onChange={(e) => onChange({ title: e.target.value })}
-          />
+          <input className="form-input" placeholder="e.g. Data Structures Mid Semester 2025"
+            value={form.title} onChange={(e) => onChange({ title: e.target.value })} />
         </div>
       </div>
-
       <div className="form-grid-2col">
         <div className="form-field">
           <label>Exam Type</label>
-          <select
-            className="form-select"
-            value={form.exam_type}
-            onChange={(e) => onChange({ exam_type: e.target.value })}
-          >
+          <select className="form-select" value={form.exam_type} onChange={(e) => onChange({ exam_type: e.target.value })}>
             {["MID_SEMESTER","END_SEMESTER","QUIZ","ASSIGNMENT","PRACTICE","PLACEMENT","ENTRANCE"].map((t) => (
               <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
             ))}
           </select>
         </div>
-
         <div className="form-field">
           <label>Duration (minutes) *</label>
-          <input
-            type="number" className="form-input" min={10} max={360}
-            value={form.duration_minutes}
-            onChange={(e) => onChange({ duration_minutes: +e.target.value })}
-          />
+          <input type="number" className="form-input" min={10} max={360} value={form.duration_minutes}
+            onChange={(e) => onChange({ duration_minutes: +e.target.value })} />
         </div>
-
         <div className="form-field">
           <label>Total Marks *</label>
-          <input
-            type="number" className="form-input" min={1}
-            value={form.total_marks}
-            onChange={(e) => onChange({ total_marks: +e.target.value })}
-          />
+          <input type="number" className="form-input" min={1} value={form.total_marks}
+            onChange={(e) => onChange({ total_marks: +e.target.value })} />
         </div>
-
         <div className="form-field">
           <label>Pass Marks *</label>
-          <input
-            type="number" className="form-input" min={1}
-            value={form.pass_marks}
-            onChange={(e) => onChange({ pass_marks: +e.target.value })}
-          />
+          <input type="number" className="form-input" min={1} value={form.pass_marks}
+            onChange={(e) => onChange({ pass_marks: +e.target.value })} />
         </div>
-
         <div className="form-field">
           <label>&nbsp;</label>
           <div className="checkbox-group">
             <label className="checkbox-label">
-              <input
-                type="checkbox" checked={form.shuffle_questions}
-                onChange={(e) => onChange({ shuffle_questions: e.target.checked })}
-              />
+              <input type="checkbox" checked={form.shuffle_questions}
+                onChange={(e) => onChange({ shuffle_questions: e.target.checked })} />
               Shuffle Questions
             </label>
             <label className="checkbox-label">
-              <input
-                type="checkbox" checked={form.shuffle_options}
-                onChange={(e) => onChange({ shuffle_options: e.target.checked })}
-              />
+              <input type="checkbox" checked={form.shuffle_options}
+                onChange={(e) => onChange({ shuffle_options: e.target.checked })} />
               Shuffle Options
             </label>
           </div>
         </div>
       </div>
-
       <div className="form-field">
         <label>Instructions for Students</label>
-        <textarea
-          className="form-textarea" rows={4}
+        <textarea className="form-textarea" rows={4}
           placeholder="e.g. All questions are compulsory. Each MCQ carries 1 mark…"
-          value={form.instructions}
-          onChange={(e) => onChange({ instructions: e.target.value })}
-        />
+          value={form.instructions} onChange={(e) => onChange({ instructions: e.target.value })} />
       </div>
     </div>
   );
@@ -446,38 +374,23 @@ function StepExamInfo({
 // QuestionRow
 // ─────────────────────────────────────────────────────────────────────────────
 
-function QuestionRow({
-  q, selected, onToggle,
-}: { q: Question; selected: boolean; onToggle: () => void }) {
-  const typeColor: Record<string, string> = {
-    MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669",
-  };
-  const diffColor: Record<string, string> = {
-    EASY: "#059669", MEDIUM: "#d97706", HARD: "#dc2626",
-  };
+function QuestionRow({ q, selected, onToggle }: {
+  q: Question; selected: boolean; onToggle: () => void;
+}) {
+  const typeColor: Record<string, string> = { MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669" };
+  const diffColor: Record<string, string> = { EASY: "#059669", MEDIUM: "#d97706", HARD: "#dc2626" };
   return (
     <div className={`q-row ${selected ? "q-row-selected" : ""}`} onClick={onToggle}>
       <div className="q-row-check">
-        <input
-          type="checkbox" checked={selected} onChange={onToggle}
-          onClick={(e) => e.stopPropagation()}
-        />
+        <input type="checkbox" checked={selected} onChange={onToggle} onClick={(e) => e.stopPropagation()} />
       </div>
       <div className="q-row-body">
-        <div className="q-row-text">
-          {q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}
-        </div>
+        <div className="q-row-text">{q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}</div>
         <div className="q-row-meta">
-          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>
-            {q.question_type}
-          </span>
-          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty] }}>
-            {q.difficulty}
-          </span>
+          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>{q.question_type}</span>
+          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty] }}>{q.difficulty}</span>
           <span className="q-badge">{q.marks} mark{q.marks !== 1 ? "s" : ""}</span>
-          {q.courses && (
-            <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>
-          )}
+          {q.courses && <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>}
         </div>
       </div>
     </div>
@@ -488,15 +401,11 @@ function QuestionRow({
 // CreateQuestionForm
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CreateQuestionForm({
-  courseId, onSaved,
-}: { courseId: string; onSaved: (q: Question) => void }) {
+function CreateQuestionForm({ courseId, onSaved }: {
+  courseId: string; onSaved: (q: Question) => void;
+}) {
   const [form, setForm] = useState<NewQuestion>({
-    question_type: "MCQ",
-    question_text: "",
-    marks: 1,
-    negative_marks: 0,
-    difficulty: "MEDIUM",
+    question_type: "MCQ", question_text: "", marks: 1, negative_marks: 0, difficulty: "MEDIUM",
     options: [
       { option_text: "", is_correct: false, order_index: 0 },
       { option_text: "", is_correct: false, order_index: 1 },
@@ -509,79 +418,45 @@ function CreateQuestionForm({
 
   const setType = (qt: QuestionType) => {
     if (qt === "TRUE_FALSE") {
-      setForm((f) => ({
-        ...f,
-        question_type: qt,
-        options: [
-          { option_text: "True",  is_correct: false, order_index: 0 },
-          { option_text: "False", is_correct: false, order_index: 1 },
-        ],
-      }));
+      setForm((f) => ({ ...f, question_type: qt, options: [
+        { option_text: "True", is_correct: false, order_index: 0 },
+        { option_text: "False", is_correct: false, order_index: 1 },
+      ]}));
     } else {
-      setForm((f) => ({
-        ...f,
-        question_type: qt,
-        options: f.options.length < 4
-          ? [
-              ...f.options,
-              ...Array(4 - f.options.length)
-                .fill(null)
-                .map((_, i) => ({ option_text: "", is_correct: false, order_index: f.options.length + i })),
-            ]
-          : f.options,
-      }));
+      setForm((f) => ({ ...f, question_type: qt, options: f.options.length < 4
+        ? [...f.options, ...Array(4 - f.options.length).fill(null).map((_, i) => ({ option_text: "", is_correct: false, order_index: f.options.length + i }))]
+        : f.options }));
     }
   };
 
   const toggleCorrect = (idx: number) => {
-    setForm((f) => ({
-      ...f,
-      options: f.options.map((o, i) => ({
-        ...o,
-        is_correct:
-          f.question_type === "MSQ"
-            ? i === idx ? !o.is_correct : o.is_correct
-            : i === idx,
-      })),
-    }));
+    setForm((f) => ({ ...f, options: f.options.map((o, i) => ({
+      ...o, is_correct: f.question_type === "MSQ" ? (i === idx ? !o.is_correct : o.is_correct) : i === idx,
+    }))}));
   };
 
   const save = async () => {
     if (!form.question_text.trim()) return setError("Question text is required.");
     if (!form.options.some((o) => o.is_correct)) return setError("Mark at least one correct answer.");
-    setSaving(true);
-    setError("");
+    setSaving(true); setError("");
     try {
       const res = await facultyApi.createQuestion({
-        course_id: courseId || null,
-        question_type: form.question_type,
-        question_text: form.question_text,
-        marks: form.marks,
-        negative_marks: form.negative_marks,
-        difficulty: form.difficulty,
-        options: form.options.filter((o) => o.option_text.trim()),
-        topics: [],
+        course_id: courseId || null, question_type: form.question_type, question_text: form.question_text,
+        marks: form.marks, negative_marks: form.negative_marks, difficulty: form.difficulty,
+        options: form.options.filter((o) => o.option_text.trim()), topics: [],
       });
       const full = await facultyApi.getQuestion(res.question_id);
       onSaved(full);
-      setForm({
-        question_type: "MCQ",
-        question_text: "",
-        marks: 1,
-        negative_marks: 0,
-        difficulty: "MEDIUM",
+      setForm({ question_type: "MCQ", question_text: "", marks: 1, negative_marks: 0, difficulty: "MEDIUM",
         options: [
           { option_text: "", is_correct: false, order_index: 0 },
           { option_text: "", is_correct: false, order_index: 1 },
           { option_text: "", is_correct: false, order_index: 2 },
           { option_text: "", is_correct: false, order_index: 3 },
-        ],
-      });
+        ]});
     } catch (e: any) {
       setError(e?.message ?? "Failed to save question");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   return (
@@ -606,14 +481,11 @@ function CreateQuestionForm({
             onChange={(e) => setForm((f) => ({ ...f, negative_marks: +e.target.value }))} />
         </div>
       </div>
-
       <div className="form-field">
         <label>Question Text *</label>
         <textarea className="form-textarea" rows={3} placeholder="Enter your question here…"
-          value={form.question_text}
-          onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))} />
+          value={form.question_text} onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))} />
       </div>
-
       <div className="options-grid">
         <label className="form-label-sm">Answer Options (click circle/checkbox to mark correct)</label>
         {form.options.map((opt, idx) => (
@@ -623,42 +495,25 @@ function CreateQuestionForm({
                 ? <i className={`ti ${opt.is_correct ? "ti-checkbox" : "ti-square"}`} />
                 : <i className={`ti ${opt.is_correct ? "ti-circle-filled" : "ti-circle"}`} />}
             </button>
-            <input
-              className="form-input option-input"
-              placeholder={`Option ${String.fromCharCode(65 + idx)}`}
-              value={opt.option_text}
-              readOnly={form.question_type === "TRUE_FALSE"}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o),
-                }))
-              }
-            />
+            <input className="form-input option-input" placeholder={`Option ${String.fromCharCode(65 + idx)}`}
+              value={opt.option_text} readOnly={form.question_type === "TRUE_FALSE"}
+              onChange={(e) => setForm((f) => ({ ...f, options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o) }))} />
           </div>
         ))}
       </div>
-
       <div className="form-field">
         <label>Difficulty</label>
         <div className="difficulty-toggle">
           {(["EASY", "MEDIUM", "HARD"] as Difficulty[]).map((d) => (
-            <button key={d}
-              className={`diff-btn ${form.difficulty === d ? "active" : ""} diff-${d.toLowerCase()}`}
-              onClick={() => setForm((f) => ({ ...f, difficulty: d }))} type="button">
-              {d}
-            </button>
+            <button key={d} className={`diff-btn ${form.difficulty === d ? "active" : ""} diff-${d.toLowerCase()}`}
+              onClick={() => setForm((f) => ({ ...f, difficulty: d }))} type="button">{d}</button>
           ))}
         </div>
       </div>
-
       {error && <div className="form-error">{error}</div>}
-
       <div className="form-actions">
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving
-            ? <><span className="spinner-sm" /> Saving…</>
-            : <><i className="ti ti-plus" /> Add to Repository &amp; Exam</>}
+          {saving ? <><span className="spinner-sm" /> Saving…</> : <><i className="ti ti-plus" /> Add to Repository &amp; Exam</>}
         </button>
       </div>
     </div>
@@ -680,43 +535,30 @@ function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) 
   const handleFile = useCallback(async (file: File) => {
     if (!file) return;
     if (!/\.(pdf|docx)$/i.test(file.name)) { setError("Only PDF and DOCX files are supported."); return; }
-    setError("");
-    setStatus("uploading");
+    setError(""); setStatus("uploading");
     try {
       setStatus("extracting");
       const result = await facultyApi.extractQuestionsFromFile(file);
       if (!result || result.length === 0) {
         setError("No questions could be extracted. Make sure questions are numbered (1., 2., …).");
-        setStatus("idle");
-        return;
+        setStatus("idle"); return;
       }
       setExtracted(result.map((q) => ({ ...q, approved: false })));
       setStatus("review");
     } catch (e: any) {
-      setError(e?.message ?? "Extraction failed. Please try again.");
-      setStatus("idle");
+      setError(e?.message ?? "Extraction failed. Please try again."); setStatus("idle");
     }
   }, []);
 
   const toggleApprove = (id: string) =>
     setExtracted((list) => list.map((q) => (q.id === id ? { ...q, approved: !q.approved } : q)));
-
   const approveAll = () => setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
-
   const saveApproved = () => {
     const approved = extracted.filter((q) => q.approved);
     if (!approved.length) { setError("Approve at least one question first."); return; }
-    setStatus("saving");
-    onImported(approved);
-    setStatus("idle");
-    setExtracted([]);
-    setError("");
+    setStatus("saving"); onImported(approved); setStatus("idle"); setExtracted([]); setError("");
   };
-
-  const reset = () => {
-    setStatus("idle"); setExtracted([]); setError("");
-    if (fileRef.current) fileRef.current.value = "";
-  };
+  const reset = () => { setStatus("idle"); setExtracted([]); setError(""); if (fileRef.current) fileRef.current.value = ""; };
 
   if (status === "idle") {
     return (
@@ -725,44 +567,27 @@ function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) 
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
         <i className="ti ti-file-upload import-drop-icon" />
         <div className="import-drop-title">Import Questions from PDF or DOCX</div>
-        <div className="import-drop-sub">
-          Supports Google Forms PDFs &amp; standard MCQ PDFs · Text-based PDFs only<br />
-          Questions numbered 1., 2., … · Answers inferred via Groq AI when not in PDF
-        </div>
+        <div className="import-drop-sub">Supports Google Forms PDFs &amp; standard MCQ PDFs · Text-based PDFs only<br />Questions numbered 1., 2., … · Answers inferred via Groq AI when not in PDF</div>
         {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
         <button className="btn btn-secondary" type="button"><i className="ti ti-upload" /> Choose File</button>
       </div>
     );
   }
-
   if (status === "uploading" || status === "extracting") {
     return (
       <div className="import-processing">
         <span className="spinner" />
-        <div className="import-proc-title">
-          {status === "uploading" ? "Uploading file…" : "Extracting questions & inferring answers via Groq AI…"}
-        </div>
-        <div className="import-proc-sub">
-          {status === "extracting" ? "Parsing PDF then asking Groq for correct answers — takes 5–10 seconds" : "Uploading…"}
-        </div>
+        <div className="import-proc-title">{status === "uploading" ? "Uploading file…" : "Extracting questions & inferring answers via Groq AI…"}</div>
+        <div className="import-proc-sub">{status === "extracting" ? "Parsing PDF then asking Groq for correct answers — takes 5–10 seconds" : "Uploading…"}</div>
       </div>
     );
   }
-
   if (status === "saving") {
-    return (
-      <div className="import-processing">
-        <span className="spinner" />
-        <div className="import-proc-title">Saving questions to repository…</div>
-      </div>
-    );
+    return <div className="import-processing"><span className="spinner" /><div className="import-proc-title">Saving questions to repository…</div></div>;
   }
-
   if (status === "review") {
     const approvedCount = extracted.filter((q) => q.approved).length;
-    const avgConf = extracted.length
-      ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length) : 0;
-
+    const avgConf = extracted.length ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length) : 0;
     return (
       <div className="import-review">
         <div className="import-review-summary">
@@ -773,20 +598,12 @@ function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) 
           <div className="import-summary-card"><span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span><span className="is-lbl">Avg Confidence</span></div>
           <div className="import-summary-card"><span className="is-val">{approvedCount}</span><span className="is-lbl">Approved</span></div>
         </div>
-
         <div className="import-table-wrap">
           <div className="import-table-actions">
-            <button className="btn btn-sm btn-secondary" onClick={approveAll} type="button">
-              <i className="ti ti-check-all" /> Approve All
-            </button>
+            <button className="btn btn-sm btn-secondary" onClick={approveAll} type="button"><i className="ti ti-check-all" /> Approve All</button>
           </div>
           <table className="import-table">
-            <thead>
-              <tr>
-                <th style={{ width: 36 }}></th>
-                <th>Question</th><th>Type</th><th>Marks</th><th>Correct Answer(s)</th><th>Confidence</th><th>Approve</th>
-              </tr>
-            </thead>
+            <thead><tr><th style={{ width: 36 }}></th><th>Question</th><th>Type</th><th>Marks</th><th>Correct Answer(s)</th><th>Confidence</th><th>Approve</th></tr></thead>
             <tbody>
               {extracted.map((q) => {
                 const correctAnswers = q.options.filter((o) => o.is_correct).map((o) => o.text);
@@ -802,20 +619,14 @@ function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) 
                         : <span style={{ color: "#dc2626" }}>No answer detected</span>}
                     </td>
                     <td><span className="conf-badge" style={{ color: confColor(q.confidence), borderColor: confColor(q.confidence) }}>{q.confidence}%</span></td>
-                    <td>
-                      <button className={`approve-btn ${q.approved ? "approved" : ""}`} onClick={() => toggleApprove(q.id)} type="button">
-                        {q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}
-                      </button>
-                    </td>
+                    <td><button className={`approve-btn ${q.approved ? "approved" : ""}`} onClick={() => toggleApprove(q.id)} type="button">{q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}</button></td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-
         {error && <div className="form-error">{error}</div>}
-
         <div className="import-review-actions">
           <button className="btn btn-secondary" onClick={reset} type="button">Cancel</button>
           <button className="btn btn-primary" onClick={saveApproved} disabled={approvedCount === 0} type="button">
@@ -825,7 +636,6 @@ function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) 
       </div>
     );
   }
-
   return null;
 }
 
@@ -833,9 +643,9 @@ function PdfImportPanel({ onImported }: { onImported: (qs: ExtractedQuestion[]) 
 // AutoGeneratePanel
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AutoGeneratePanel({
-  questions, onGenerated,
-}: { questions: Question[]; onGenerated: (selected: Question[]) => void }) {
+function AutoGeneratePanel({ questions, onGenerated }: {
+  questions: Question[]; onGenerated: (selected: Question[]) => void;
+}) {
   const [mcqCount, setMcqCount] = useState(10);
   const [msqCount, setMsqCount] = useState(5);
   const [tfCount, setTfCount] = useState(5);
@@ -906,20 +716,12 @@ function AutoGeneratePanel({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 2: Question Management
-// FIX: accepts `allQuestions` from parent so we can inject newly created ones
-// immediately without waiting for a refetch, AND invalidates the query cache.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepQuestions({
-  courseId, selectedIds, onToggle, onAddNew, onImported, allQuestions, questionsLoading,
-}: {
-  courseId: string;
-  selectedIds: Set<string>;
-  onToggle: (q: Question) => void;
-  onAddNew: (q: Question) => void;
-  onImported: (qs: ExtractedQuestion[]) => void;
-  allQuestions: Question[];
-  questionsLoading: boolean;
+function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, allQuestions, questionsLoading }: {
+  courseId: string; selectedIds: Set<string>; onToggle: (q: Question) => void;
+  onAddNew: (q: Question) => void; onImported: (qs: ExtractedQuestion[]) => void;
+  allQuestions: Question[]; questionsLoading: boolean;
 }) {
   const [tab, setTab] = useState<"select" | "create" | "import" | "auto">("select");
   const [search, setSearch] = useState("");
@@ -949,7 +751,6 @@ function StepQuestions({
           {selectedIds.size} question{selectedIds.size !== 1 ? "s" : ""} selected for this exam
         </div>
       </div>
-
       <div className="q-tabs">
         {tabs.map((t) => (
           <button key={t.id} className={`q-tab ${tab === t.id ? "active" : ""}`}
@@ -958,7 +759,6 @@ function StepQuestions({
           </button>
         ))}
       </div>
-
       {tab === "select" && (
         <div className="q-select-panel">
           <div className="q-filters">
@@ -983,7 +783,6 @@ function StepQuestions({
               </button>
             )}
           </div>
-
           {questionsLoading ? (
             <div className="loading-state"><span className="spinner" /> Loading questions…</div>
           ) : filtered.length === 0 ? (
@@ -991,9 +790,7 @@ function StepQuestions({
               <i className="ti ti-books" style={{ fontSize: 36, color: "#ccc" }} />
               <div className="empty-state-title">No questions found</div>
               <div className="empty-state-text">
-                {allQuestions.length === 0
-                  ? "Your repository is empty. Create questions or import from a PDF."
-                  : "Try adjusting your filters."}
+                {allQuestions.length === 0 ? "Your repository is empty. Create questions or import from a PDF." : "Try adjusting your filters."}
               </div>
             </div>
           ) : (
@@ -1005,29 +802,15 @@ function StepQuestions({
           )}
         </div>
       )}
-
       {tab === "create" && (
-        <CreateQuestionForm
-          courseId={courseId}
-          onSaved={(q) => {
-            onAddNew(q);   // adds to list & selects immediately
-            setTab("select");
-          }}
-        />
+        <CreateQuestionForm courseId={courseId} onSaved={(q) => { onAddNew(q); setTab("select"); }} />
       )}
-
       {tab === "import" && (
         <PdfImportPanel onImported={(qs) => { onImported(qs); setTab("select"); }} />
       )}
-
       {tab === "auto" && (
-        <AutoGeneratePanel
-          questions={allQuestions}
-          onGenerated={(selected) => {
-            selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); });
-            setTab("select");
-          }}
-        />
+        <AutoGeneratePanel questions={allQuestions}
+          onGenerated={(selected) => { selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); }); setTab("select"); }} />
       )}
     </div>
   );
@@ -1037,16 +820,15 @@ function StepQuestions({
 // Step 3: Rules
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepRules({
-  rules, onChange,
-}: { rules: Record<string, any>; onChange: (r: Record<string, any>) => void }) {
+function StepRules({ rules, onChange }: {
+  rules: Record<string, any>; onChange: (r: Record<string, any>) => void;
+}) {
   const rule = (key: string, label: string, type: "bool" | "num" = "bool", min?: number) => (
     <div className="form-field rule-field">
       <div className="rule-label">{label}</div>
       {type === "bool" ? (
         <label className="toggle-switch">
-          <input type="checkbox" checked={!!rules[key]}
-            onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
+          <input type="checkbox" checked={!!rules[key]} onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
           <span className="toggle-slider" />
         </label>
       ) : (
@@ -1055,7 +837,6 @@ function StepRules({
       )}
     </div>
   );
-
   return (
     <div className="step-panel">
       <div className="step-header">
@@ -1086,59 +867,17 @@ function StepRules({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 4: Schedule
+// Step 4: Preview  ← REPLACES old Step 4 (Schedule) + old Step 5 (Preview)
+//
+// KEY CHANGE: Publish settings are now a compact section here.
+// No dedicated Schedule step, no second page visit required.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepSchedule({
-  schedule, onChange,
-}: {
-  schedule: Record<string, any>;
-  onChange: (s: Record<string, any>) => void;
-}) {
-  return (
-    <div className="step-panel">
-      <div className="step-header">
-        <h3>Exam Schedule</h3>
-        <p>Set when this exam is available.</p>
-      </div>
-      <div className="form-grid-2col">
-        <div className="form-field">
-          <label>Registration Deadline</label>
-          <input type="datetime-local" className="form-input" value={schedule.registration_deadline ?? ""}
-            onChange={(e) => onChange({ ...schedule, registration_deadline: e.target.value })} />
-        </div>
-        <div className="form-field">
-          <label>Start Time *</label>
-          <input type="datetime-local" className="form-input" value={schedule.start_time ?? ""}
-            onChange={(e) => onChange({ ...schedule, start_time: e.target.value })} />
-        </div>
-        <div className="form-field">
-          <label>End Time *</label>
-          <input type="datetime-local" className="form-input" value={schedule.end_time ?? ""}
-            onChange={(e) => onChange({ ...schedule, end_time: e.target.value })} />
-        </div>
-      </div>
-      <div className="form-field">
-        <label className="checkbox-label">
-          <input type="checkbox" checked={!!schedule.is_published}
-            onChange={(e) => onChange({ ...schedule, is_published: e.target.checked })} />
-          Publish immediately (students will see this exam)
-        </label>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 5: Preview
-// ─────────────────────────────────────────────────────────────────────────────
-
-function StepPreview({
-  form, selectedQuestions, schedule, examId,
-}: {
+function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange, examId }: {
   form: ExamForm;
   selectedQuestions: Question[];
-  schedule: Record<string, any>;
+  publishSettings: PublishSettings;
+  onPublishChange: (p: Partial<PublishSettings>) => void;
   examId: string | null;
 }) {
   const totalMarks = selectedQuestions.reduce((s, q) => s + q.marks, 0);
@@ -1147,51 +886,128 @@ function StepPreview({
     {} as Record<string, number>
   );
 
+  if (examId) {
+    return (
+      <div className="step-panel">
+        <div className="preview-success">
+          <i className="ti ti-circle-check" style={{ fontSize: 48, color: "#059669" }} />
+          <div className="preview-success-title">Exam Created Successfully!</div>
+          <div className="preview-success-sub" style={{ color: "#555", marginTop: 6 }}>
+            {publishSettings.publish_immediately
+              ? "Your exam is live — students can see it right now."
+              : "Exam saved as draft. Use the Publish button on the dashboard when ready."}
+          </div>
+          <div className="preview-success-sub" style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>
+            Exam ID: {examId}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="step-panel">
       <div className="step-header">
-        <h3>Exam Preview</h3>
-        <p>Review all settings before publishing.</p>
+        <h3>Review &amp; Publish</h3>
+        <p>Check your exam details and choose whether to publish now or save as draft.</p>
       </div>
 
-      {examId ? (
-        <div className="preview-success">
-          <i className="ti ti-circle-check" style={{ fontSize: 40, color: "#059669" }} />
-          <div className="preview-success-title">Exam Created Successfully!</div>
-          <div className="preview-success-sub">Exam ID: {examId}</div>
-        </div>
-      ) : (
-        <div className="preview-grid">
-          <div className="preview-card">
-            <h4>Exam Info</h4>
-            <div className="preview-rows">
-              <div className="preview-row"><span>Title</span><strong>{form.title || "—"}</strong></div>
-              <div className="preview-row"><span>Type</span><strong>{form.exam_type.replace(/_/g, " ")}</strong></div>
-              <div className="preview-row"><span>Duration</span><strong>{form.duration_minutes} min</strong></div>
-              <div className="preview-row"><span>Total Marks (configured)</span><strong>{form.total_marks}</strong></div>
-              <div className="preview-row"><span>Questions Marks Sum</span><strong>{totalMarks}</strong></div>
-              <div className="preview-row"><span>Pass Marks</span><strong>{form.pass_marks}</strong></div>
-            </div>
-          </div>
-          <div className="preview-card">
-            <h4>Questions ({selectedQuestions.length})</h4>
-            <div className="preview-rows">
-              {Object.entries(byType).map(([type, count]) => (
-                <div key={type} className="preview-row"><span>{type}</span><strong>{count}</strong></div>
-              ))}
-              {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
-            </div>
-          </div>
-          <div className="preview-card">
-            <h4>Schedule</h4>
-            <div className="preview-rows">
-              <div className="preview-row"><span>Start</span><strong>{schedule.start_time || "—"}</strong></div>
-              <div className="preview-row"><span>End</span><strong>{schedule.end_time || "—"}</strong></div>
-              <div className="preview-row"><span>Published</span><strong>{schedule.is_published ? "Yes" : "No (Draft)"}</strong></div>
-            </div>
+      <div className="preview-grid">
+        <div className="preview-card">
+          <h4>Exam Info</h4>
+          <div className="preview-rows">
+            <div className="preview-row"><span>Title</span><strong>{form.title || "—"}</strong></div>
+            <div className="preview-row"><span>Type</span><strong>{form.exam_type.replace(/_/g, " ")}</strong></div>
+            <div className="preview-row"><span>Duration</span><strong>{form.duration_minutes} min</strong></div>
+            <div className="preview-row"><span>Total Marks</span><strong>{form.total_marks}</strong></div>
+            <div className="preview-row"><span>Questions Marks Sum</span><strong>{totalMarks}</strong></div>
+            <div className="preview-row"><span>Pass Marks</span><strong>{form.pass_marks}</strong></div>
           </div>
         </div>
-      )}
+        <div className="preview-card">
+          <h4>Questions ({selectedQuestions.length})</h4>
+          <div className="preview-rows">
+            {Object.entries(byType).map(([type, count]) => (
+              <div key={type} className="preview-row"><span>{type}</span><strong>{count}</strong></div>
+            ))}
+            {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* ── PUBLISH SETTINGS (was a whole separate step) ── */}
+      <div
+        style={{
+          marginTop: 24,
+          border: "1.5px solid #eceef2",
+          borderRadius: 12,
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ padding: "14px 18px", background: "#f8f9fc", borderBottom: "1px solid #eceef2" }}>
+          <strong style={{ fontSize: 14 }}><i className="ti ti-calendar-event" style={{ marginRight: 6 }} />Publish Settings</strong>
+        </div>
+
+        <div style={{ padding: "18px" }}>
+          {/* Publish immediately toggle */}
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 12,
+              padding: "14px 16px",
+              borderRadius: 10,
+              background: publishSettings.publish_immediately ? "#def8ee" : "#f8f9fc",
+              border: `1.5px solid ${publishSettings.publish_immediately ? "#b6e8d3" : "#eceef2"}`,
+              cursor: "pointer",
+              marginBottom: 16,
+            }}
+          >
+            <input
+              type="checkbox"
+              style={{ marginTop: 2, accentColor: "#059669", width: 16, height: 16 }}
+              checked={publishSettings.publish_immediately}
+              onChange={(e) => onPublishChange({ publish_immediately: e.target.checked })}
+            />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: publishSettings.publish_immediately ? "#08775b" : "#1a1d26" }}>
+                {publishSettings.publish_immediately
+                  ? "✓ Publish immediately — students can see this exam"
+                  : "Save as Draft (publish later from the Dashboard)"}
+              </div>
+              <div style={{ fontSize: 12, color: "#676b79", marginTop: 3 }}>
+                {publishSettings.publish_immediately
+                  ? "The exam will be live as soon as you click Create Exam below."
+                  : "You can publish any time using the Publish button on your dashboard."}
+              </div>
+            </div>
+          </label>
+
+          {/* Optional time fields — only shown when publishing now */}
+          {publishSettings.publish_immediately && (
+            <div className="form-grid-2col" style={{ gap: 12 }}>
+              <div className="form-field">
+                <label>Start Time <span style={{ color: "#aaa", fontWeight: 400 }}>(optional — defaults to now)</span></label>
+                <input type="datetime-local" className="form-input"
+                  value={publishSettings.start_time}
+                  onChange={(e) => onPublishChange({ start_time: e.target.value })} />
+              </div>
+              <div className="form-field">
+                <label>End Time <span style={{ color: "#aaa", fontWeight: 400 }}>(optional — defaults to start + duration)</span></label>
+                <input type="datetime-local" className="form-input"
+                  value={publishSettings.end_time}
+                  onChange={(e) => onPublishChange({ end_time: e.target.value })} />
+              </div>
+              <div className="form-field">
+                <label>Registration Deadline <span style={{ color: "#aaa", fontWeight: 400 }}>(optional)</span></label>
+                <input type="datetime-local" className="form-input"
+                  value={publishSettings.registration_deadline}
+                  onChange={(e) => onPublishChange({ registration_deadline: e.target.value })} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1206,61 +1022,45 @@ export default function CreateExam() {
 
   const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
 
-  // ── Draft id persists for the lifetime of one "create exam" session ────────
   const [draftId] = useState(() => newDraftId());
+  const [currentStep,  setCurrentStep]  = useState(0);
+  const [saving,       setSaving]       = useState(false);
+  const [saveError,    setSaveError]    = useState("");
+  const [examId,       setExamId]       = useState<string | null>(null);
 
-  const [currentStep,       setCurrentStep]       = useState(0);
-  const [saving,            setSaving]             = useState(false);
-  const [saveError,         setSaveError]          = useState("");
-  const [examId,            setExamId]             = useState<string | null>(null);
+  const [form,            setForm]            = useState<ExamForm>(defaultForm);
+  const [rules,           setRules]           = useState(defaultRules);
+  const [publishSettings, setPublishSettings] = useState<PublishSettings>(defaultPublishSettings);
 
-  const [form,     setForm]     = useState<ExamForm>(defaultForm);
-  const [rules,    setRules]    = useState(defaultRules);
-  const [schedule, setSchedule] = useState<Record<string, any>>(defaultSchedule);
-
-  // ── Questions: we merge the server list with locally created ones immediately
-  // so the user doesn't have to reload to see newly added questions.
   const { data: serverQuestions = [], isLoading: questionsLoading } = useQuestions(
     form.course_id ? { course_id: form.course_id } : undefined
   );
   const [locallyAddedQuestions, setLocallyAddedQuestions] = useState<Question[]>([]);
 
-  // Merged list: server list + any locally added ones not yet in the server list
   const allQuestions: Question[] = [
-    ...locallyAddedQuestions.filter(
-      (lq) => !serverQuestions.some((sq) => sq.id === lq.id)
-    ),
+    ...locallyAddedQuestions.filter((lq) => !serverQuestions.some((sq) => sq.id === lq.id)),
     ...serverQuestions,
   ];
 
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const selectedIds = new Set(selectedQuestions.map((q) => q.id));
 
-  const departments = portal?.departments ?? [];
-
-  // ── Auto-save draft whenever anything changes ──────────────────────────────
+  // Auto-save draft
   useEffect(() => {
-    // Only save if the user has actually started filling something in
     if (!form.title && currentStep === 0 && selectedQuestions.length === 0) return;
-
-    const draft: ExamDraft = {
+    upsertDraft({
       draftId,
       savedAt: new Date().toISOString(),
       currentStep,
       form,
       rules,
-      schedule,
+      publishSettings,
       selectedQuestionIds: selectedQuestions.map((q) => q.id),
-    };
-    upsertDraft(draft);
-  }, [draftId, currentStep, form, rules, schedule, selectedQuestions]);
+    });
+  }, [draftId, currentStep, form, rules, publishSettings, selectedQuestions]);
 
-  // ── Resume a saved draft ───────────────────────────────────────────────────
-  // We store question IDs in the draft; on resume we look them up from the
-  // server question list (which loads async). We track "pending IDs" and
-  // resolve them once the server list is available.
+  // Resolve pending question IDs after server data loads
   const [pendingQuestionIds, setPendingQuestionIds] = useState<string[]>([]);
-
   useEffect(() => {
     if (pendingQuestionIds.length === 0 || serverQuestions.length === 0) return;
     const resolved = serverQuestions.filter((q) => pendingQuestionIds.includes(q.id));
@@ -1276,66 +1076,38 @@ export default function CreateExam() {
   const handleResumeDraft = (draft: ExamDraft) => {
     setForm(draft.form);
     setRules(draft.rules);
-    setSchedule(draft.schedule);
+    // Support both old "schedule" field and new "publishSettings" field in stored drafts
+    setPublishSettings((draft as any).publishSettings ?? defaultPublishSettings());
     setCurrentStep(draft.currentStep);
     setSelectedQuestions([]);
     if (draft.selectedQuestionIds.length > 0) {
-      // Try to resolve from already-loaded server questions first
-      const alreadyLoaded = serverQuestions.filter((q) =>
-        draft.selectedQuestionIds.includes(q.id)
-      );
+      const alreadyLoaded = serverQuestions.filter((q) => draft.selectedQuestionIds.includes(q.id));
       setSelectedQuestions(alreadyLoaded);
-      const stillPending = draft.selectedQuestionIds.filter(
-        (id) => !alreadyLoaded.some((q) => q.id === id)
-      );
+      const stillPending = draft.selectedQuestionIds.filter((id) => !alreadyLoaded.some((q) => q.id === id));
       if (stillPending.length > 0) setPendingQuestionIds(stillPending);
     }
   };
 
-  // ── Toggle question selection ──────────────────────────────────────────────
   const toggleQuestion = (q: Question) => {
     setSelectedQuestions((prev) =>
-      prev.some((p) => p.id === q.id)
-        ? prev.filter((p) => p.id !== q.id)
-        : [...prev, q]
+      prev.some((p) => p.id === q.id) ? prev.filter((p) => p.id !== q.id) : [...prev, q]
     );
   };
 
-  /**
-   * Called when a brand-new question is created in CreateQuestionForm.
-   * We add it to the local list immediately (instant UI update) AND
-   * invalidate the react-query cache so the server list eventually catches up.
-   */
   const handleAddNew = (q: Question) => {
-    setLocallyAddedQuestions((prev) =>
-      prev.some((p) => p.id === q.id) ? prev : [q, ...prev]
-    );
-    setSelectedQuestions((prev) =>
-      prev.some((p) => p.id === q.id) ? prev : [...prev, q]
-    );
-    // FIX: was ["questions"] — never matched useQuestions key ["faculty-questions", params]
+    setLocallyAddedQuestions((prev) => prev.some((p) => p.id === q.id) ? prev : [q, ...prev]);
+    setSelectedQuestions((prev) => prev.some((p) => p.id === q.id) ? prev : [...prev, q]);
     queryClient.invalidateQueries({ queryKey: QUERY_KEYS.questions() });
   };
 
-  /**
-   * Called when questions are imported from PDF.
-   * Saves them to DB then adds to local list immediately.
-   */
   const handleImported = async (qs: ExtractedQuestion[]) => {
     for (const q of qs) {
       try {
         const res = await facultyApi.createQuestion({
-          course_id: form.course_id || null,
-          question_type: q.question_type,
-          question_text: q.question_text,
-          marks: q.marks,
-          negative_marks: 0,
+          course_id: form.course_id || null, question_type: q.question_type,
+          question_text: q.question_text, marks: q.marks, negative_marks: 0,
           difficulty: q.difficulty,
-          options: q.options.map((o, i) => ({
-            option_text: o.text,
-            is_correct: o.is_correct,
-            order_index: i,
-          })),
+          options: q.options.map((o, i) => ({ option_text: o.text, is_correct: o.is_correct, order_index: i })),
           topics: [],
         });
         const full = await facultyApi.getQuestion(res.question_id);
@@ -1351,23 +1123,25 @@ export default function CreateExam() {
     setSaving(true);
     setSaveError("");
     try {
-      // FIX: Do NOT send `semester` — that column doesn't exist in the DB.
-      // Only send fields that the backend/schema actually have.
       const examData = await facultyApi.createExam({
-        title:             form.title,
-        course_id:         form.course_id || null,
-        exam_type:         form.exam_type,         // FIX: was silently omitted from payload
-        total_marks:       form.total_marks,
-        pass_marks:        form.pass_marks,
-        duration_minutes:  form.duration_minutes,
-        shuffle_questions: form.shuffle_questions,
-        shuffle_options:   form.shuffle_options,
-        instructions:      form.instructions || null,
-        // `semester` intentionally omitted — column does not exist in DB
+        title:               form.title,
+        course_id:           form.course_id || null,
+        exam_type:           form.exam_type,
+        total_marks:         form.total_marks,
+        pass_marks:          form.pass_marks,
+        duration_minutes:    form.duration_minutes,
+        shuffle_questions:   form.shuffle_questions,
+        shuffle_options:     form.shuffle_options,
+        instructions:        form.instructions || null,
+        // KEY CHANGE: send publish intent + optional times.
+        // Backend handles status=PUBLISHED and auto-creates the schedule.
+        publish_immediately:    publishSettings.publish_immediately,
+        start_time:             publishSettings.start_time || undefined,
+        end_time:               publishSettings.end_time || undefined,
+        registration_deadline:  publishSettings.registration_deadline || undefined,
       });
       const newExamId = examData.id;
 
-      // Attach questions
       for (let i = 0; i < selectedQuestions.length; i++) {
         await facultyApi.addQuestionToExam(newExamId, {
           question_id: selectedQuestions[i].id,
@@ -1375,30 +1149,11 @@ export default function CreateExam() {
         });
       }
 
-      // Upsert exam rules
       await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
 
-      // Create schedule (optional)
-      if (schedule.start_time && schedule.end_time) {
-  await facultyApi.createSchedule({
-    exam_id:               newExamId,
-    start_time:            new Date(schedule.start_time).toISOString(),
-    end_time:              new Date(schedule.end_time).toISOString(),
-    registration_deadline: schedule.registration_deadline
-      ? new Date(schedule.registration_deadline).toISOString()
-      : null,
-    is_published: schedule.is_published,
-  });
-}
-
       setExamId(newExamId);
-
-      // Clean up the draft now that the exam is successfully created
       deleteDraft(draftId);
 
-      // FIX: Invalidate react-query caches so dashboard + schedules pages
-      // immediately show the new exam without a manual page reload.
-      // Keys must match exactly what hooks.ts uses (via QUERY_KEYS).
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.schedules() });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.exams() });
@@ -1410,8 +1165,7 @@ export default function CreateExam() {
   };
 
   const canProceed = () => {
-    if (currentStep === 0)
-      return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
+    if (currentStep === 0) return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
     return true;
   };
 
@@ -1420,7 +1174,6 @@ export default function CreateExam() {
     else saveExam();
   };
 
-  // ── Page-level tab state ─────────────────────────────────────────────────
   const [pageTab, setPageTab] = useState<"create" | "drafts">("create");
   const [draftCount, setDraftCount] = useState(() => loadDrafts().length);
 
@@ -1429,7 +1182,6 @@ export default function CreateExam() {
     setPageTab("create");
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <FacultyLayout activePage="create-exam">
       <PageState loading={portalLoading}>
@@ -1437,29 +1189,20 @@ export default function CreateExam() {
           <RepositoryOverview portal={portal} />
 
           <div className="workspace-card">
-
-            {/* ── Page-level tabs: Create / Drafts ── */}
             {!examId && (
               <div className="page-tabs">
-                <button
-                  className={`page-tab ${pageTab === "create" ? "active" : ""}`}
-                  onClick={() => setPageTab("create")}
-                  type="button"
-                >
+                <button className={`page-tab ${pageTab === "create" ? "active" : ""}`}
+                  onClick={() => setPageTab("create")} type="button">
                   <i className="ti ti-plus" /> Create New Exam
                 </button>
-                <button
-                  className={`page-tab ${pageTab === "drafts" ? "active" : ""}`}
-                  onClick={() => { setDraftCount(loadDrafts().length); setPageTab("drafts"); }}
-                  type="button"
-                >
+                <button className={`page-tab ${pageTab === "drafts" ? "active" : ""}`}
+                  onClick={() => { setDraftCount(loadDrafts().length); setPageTab("drafts"); }} type="button">
                   <i className="ti ti-file-pencil" /> Saved Drafts
                   {draftCount > 0 && <span className="page-tab-badge">{draftCount}</span>}
                 </button>
               </div>
             )}
 
-            {/* ── Drafts tab ── */}
             {pageTab === "drafts" && !examId && (
               <div className="workspace-body">
                 <div className="step-header">
@@ -1475,26 +1218,21 @@ export default function CreateExam() {
               </div>
             )}
 
-            {/* ── Create tab ── */}
             {(pageTab === "create" || !!examId) && (
               <>
                 <div className="workspace-header">
                   <div>
-                    <h2 className="workspace-title">
-                      {examId ? "Exam Created!" : "Create New Exam"}
-                    </h2>
+                    <h2 className="workspace-title">{examId ? "Exam Created!" : "Create New Exam"}</h2>
                     <p className="workspace-sub">
                       {examId
-                        ? "Share with students via schedule."
+                        ? publishSettings.publish_immediately
+                          ? "Your exam is live — students can see it now."
+                          : "Saved as draft — publish anytime from your dashboard."
                         : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
                     </p>
                   </div>
                   {!examId && (
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      onClick={() => navigate("/faculty/dashboard")}
-                      type="button"
-                    >
+                    <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")} type="button">
                       <i className="ti ti-x" /> Cancel
                     </button>
                   )}
@@ -1508,25 +1246,20 @@ export default function CreateExam() {
                   )}
                   {currentStep === 1 && (
                     <StepQuestions
-                      courseId={form.course_id}
-                      selectedIds={selectedIds}
-                      onToggle={toggleQuestion}
-                      onAddNew={handleAddNew}
-                      onImported={handleImported}
-                      allQuestions={allQuestions}
-                      questionsLoading={questionsLoading}
+                      courseId={form.course_id} selectedIds={selectedIds}
+                      onToggle={toggleQuestion} onAddNew={handleAddNew} onImported={handleImported}
+                      allQuestions={allQuestions} questionsLoading={questionsLoading}
                     />
                   )}
                   {currentStep === 2 && (
                     <StepRules rules={rules} onChange={setRules} />
                   )}
                   {currentStep === 3 && (
-                  <StepSchedule schedule={schedule} onChange={setSchedule} />)}
-                  {currentStep === 4 && (
                     <StepPreview
                       form={form}
                       selectedQuestions={selectedQuestions}
-                      schedule={schedule}
+                      publishSettings={publishSettings}
+                      onPublishChange={(p) => setPublishSettings((s) => ({ ...s, ...p }))}
                       examId={examId}
                     />
                   )}
@@ -1536,72 +1269,45 @@ export default function CreateExam() {
                   <div className="workspace-footer">
                     <div className="footer-left">
                       {currentStep > 0 && (
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => setCurrentStep((s) => s - 1)}
-                          type="button"
-                        >
+                        <button className="btn btn-secondary" onClick={() => setCurrentStep((s) => s - 1)} type="button">
                           <i className="ti ti-chevron-left" /> Back
                         </button>
                       )}
                     </div>
                     <div className="footer-center">
-                      {saveError && (
-                        <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>
-                      )}
+                      {saveError && <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>}
                       {form.title.trim() && (
-                        <span className="draft-autosave-indicator">
-                          <i className="ti ti-device-floppy" /> Draft auto-saved
-                        </span>
+                        <span className="draft-autosave-indicator"><i className="ti ti-device-floppy" /> Draft auto-saved</span>
                       )}
                     </div>
                     <div className="footer-right">
                       {currentStep < STEPS.length - 1 ? (
-                        <button
-                          className="btn btn-primary"
-                          onClick={next}
-                          disabled={!canProceed()}
-                          type="button"
-                        >
+                        <button className="btn btn-primary" onClick={next} disabled={!canProceed()} type="button">
                           Next <i className="ti ti-chevron-right" />
                         </button>
                       ) : (
-                        <button
-                          className="btn btn-primary"
-                          onClick={saveExam}
-                          disabled={saving || !!examId}
-                          type="button"
-                        >
+                        <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId} type="button">
                           {saving
                             ? <><span className="spinner-sm" /> Creating…</>
-                            : <><i className="ti ti-check" /> Create Exam</>}
+                            : publishSettings.publish_immediately
+                            ? <><i className="ti ti-send" /> Create &amp; Publish</>
+                            : <><i className="ti ti-check" /> Create Exam (Draft)</>}
                         </button>
                       )}
                     </div>
                   </div>
                 )}
 
+                {/* ── Post-creation footer ── */}
                 {examId && (
                   <div className="workspace-footer">
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => navigate("/faculty/dashboard")}
-                      type="button"
-                    >
+                    <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
                       <i className="ti ti-home" /> Back to Dashboard
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => navigate("/faculty/schedules")}
-                      type="button"
-                    >
-                      <i className="ti ti-calendar" /> Manage Schedules
                     </button>
                   </div>
                 )}
               </>
             )}
-
           </div>
         </div>
       </PageState>
