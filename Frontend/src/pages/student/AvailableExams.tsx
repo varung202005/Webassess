@@ -51,6 +51,11 @@ export default function AvailableExams() {
 }
 
 function ExamCard({ schedule, busy, onDetails, onRegister }: { schedule: StudentSchedule; busy: boolean; onDetails: () => void; onRegister: () => void }) {
+    console.log("Schedule times:", {
+    start: schedule.start_time,
+    end: schedule.end_time,
+    deadline: schedule.registration_deadline,
+  });
   const registered = schedule.registration?.status === "REGISTERED";
   return <article className="exam-card">
     <div className="exam-card-top"><div><div className="eyebrow">{schedule.course.code || "Course"} · {schedule.course.name || "Subject"}</div><h3>{schedule.exam.title}</h3></div><span className={`status-pill ${registered ? "registered" : schedule.can_register ? "success" : "closed"}`}>{registered ? "Registered" : schedule.eligibility_status}</span></div>
@@ -64,4 +69,5 @@ function ExamCard({ schedule, busy, onDetails, onRegister }: { schedule: Student
     <div className="exam-card-footer"><small>{schedule.exam.total_marks} marks</small><div className="card-actions"><button className="btn btn-secondary" onClick={onDetails}>View Details</button>{registered ? <button className="btn btn-secondary" disabled><i className="ti ti-check" />Registered</button> : <button className="btn btn-primary" disabled={!schedule.can_register || busy} onClick={onRegister}>{busy ? "Registering..." : "Register Now"}</button>}</div></div>
   </article>;
 }
+
 function Info({ label, value }: { label: string; value: string }) { return <div className="info-tile"><span>{label}</span><strong>{value}</strong></div>; }
