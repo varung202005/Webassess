@@ -315,7 +315,7 @@ function CreateScheduleModal({
     setSaving(true);
     setError("");
     try {
-      await facultyApi.createSchedule({
+      await facultyApi.createExamSchedule({
         exam_id: form.exam_id,
         start_time: new Date(form.start_time).toISOString(),
         end_time: new Date(form.end_time).toISOString(),
