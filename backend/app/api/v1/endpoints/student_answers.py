@@ -46,6 +46,7 @@ async def save_answer(
     """
     UPSERT an answer. Called by frontend auto-save and on every answer change.
     This is the core auto-save endpoint — must be idempotent.
+    marks_awarded and is_correct are NOT set here — grading service handles those.
     BACKEND responsibility.
     """
     supabase = get_supabase_admin()
@@ -63,6 +64,7 @@ async def save_answer(
         raise HTTPException(status_code=403, detail="Attempt not found or not yours")
     if attempt.data["status"] != "IN_PROGRESS":
         raise HTTPException(status_code=400, detail="Exam is not IN_PROGRESS")
+
     schedule = (
         supabase.table("exam_schedules")
         .select("end_time, exams(duration_minutes)")
@@ -85,12 +87,12 @@ async def save_answer(
         "attempt_id": str(body.attempt_id),
         "question_id": str(body.question_id),
         "selected_option_id": str(body.selected_option_id) if body.selected_option_id else None,
-        "selected_option_ids": [str(value) for value in body.selected_option_ids] if body.selected_option_ids else None,
+        "selected_option_ids": [str(v) for v in body.selected_option_ids] if body.selected_option_ids else None,
         "answer_text": body.answer_text,
         "is_marked_for_review": body.is_marked_for_review,
         "time_spent_sec": body.time_spent_sec,
-        "marks_awarded": 0,   # Graded later
-        "is_correct": None,   # Graded later
+        # marks_awarded and is_correct intentionally omitted —
+        # set by auto_grade_attempt() on submission and faculty grading only
     }
 
     # UPSERT on (attempt_id, question_id) — the unique constraint
@@ -100,6 +102,24 @@ async def save_answer(
     ).execute()
 
     return {"saved": True}
+
+
+@router.get("/by-exam/{exam_id}")
+async def get_attempts_for_exam(exam_id: UUID, _: dict = Depends(require_faculty)):
+    """
+    Returns all attempts for a given exam_id, with student info.
+    Used by faculty Evaluation page to populate the student list.
+    BACKEND responsibility.
+    """
+    supabase = get_supabase_admin()
+
+    result = (
+        supabase.table("exam_attempts")
+        .select("*, exam_schedules!inner(exam_id), users(full_name, email), students(roll_number)")
+        .eq("exam_schedules.exam_id", str(exam_id))
+        .execute()
+    )
+    return result.data
 
 
 @router.get("/{attempt_id}")

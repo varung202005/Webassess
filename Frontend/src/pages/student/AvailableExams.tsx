@@ -51,11 +51,6 @@ export default function AvailableExams() {
 }
 
 function ExamCard({ schedule, busy, onDetails, onRegister }: { schedule: StudentSchedule; busy: boolean; onDetails: () => void; onRegister: () => void }) {
-    console.log("Schedule times:", {
-    start: schedule.start_time,
-    end: schedule.end_time,
-    deadline: schedule.registration_deadline,
-  });
   const registered = schedule.registration?.status === "REGISTERED";
   return <article className="exam-card">
     <div className="exam-card-top"><div><div className="eyebrow">{schedule.course.code || "Course"} · {schedule.course.name || "Subject"}</div><h3>{schedule.exam.title}</h3></div><span className={`status-pill ${registered ? "registered" : schedule.can_register ? "success" : "closed"}`}>{registered ? "Registered" : schedule.eligibility_status}</span></div>
