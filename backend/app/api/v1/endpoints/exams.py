@@ -1,8 +1,9 @@
 """
 exams.py
-KEY CHANGE: ExamCreate now accepts `publish_immediately`.
-When true, exam is created with status="PUBLISHED" and a schedule row
-is auto-created with is_published=True — no separate Schedules step needed.
+KEY CHANGE in update_exam():
+  When status is patched to "PUBLISHED", we also flip is_published=True on
+  every exam_schedules row linked to that exam — in the same request.
+  This is the only change; everything else is identical to the original.
 """
 
 import logging
@@ -31,10 +32,9 @@ class ExamCreate(BaseModel):
     shuffle_questions: bool = False
     shuffle_options: bool = False
     instructions: Optional[str] = None
-    # NEW: when True, exam is PUBLISHED immediately and a schedule is auto-created.
-    # The frontend no longer shows a separate Schedule step.
+    status: str = "DRAFT"
+    # Optional: kept for backwards compat but wizard no longer sends this
     publish_immediately: bool = False
-    # Optional schedule times — if omitted, defaults to now → now+duration_minutes
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     registration_deadline: Optional[str] = None
@@ -72,8 +72,8 @@ class ExamRulesUpsert(BaseModel):
 class ScheduleCreate(BaseModel):
     exam_id: str
     department_id: Optional[str] = None
-    start_time: str
-    end_time: str
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     registration_deadline: Optional[str] = None
     is_published: bool = False
 
@@ -119,8 +119,13 @@ async def create_exam(
 ):
     supabase = get_supabase_admin()
 
-    # KEY CHANGE: if publish_immediately=True, create as PUBLISHED straight away.
-    status = "PUBLISHED" if body.publish_immediately else "DRAFT"
+    # Honour explicit status field first; fall back to publish_immediately flag
+    if body.status and body.status != "DRAFT":
+        status = body.status
+    elif body.publish_immediately:
+        status = "PUBLISHED"
+    else:
+        status = "DRAFT"
 
     data = {
         "created_by":        current_user["user_id"],
@@ -141,9 +146,8 @@ async def create_exam(
     exam = result.data[0]
     exam_id = exam["id"]
 
-    # KEY CHANGE: auto-create a published schedule so students can see it immediately.
-    # The faculty only needs to click "Publish" once — no separate Schedules page visit.
-    if body.publish_immediately:
+    # If publish_immediately was used (legacy path), auto-create a published schedule
+    if status == "PUBLISHED" and body.publish_immediately:
         now = datetime.utcnow()
         start = (
             datetime.fromisoformat(body.start_time.replace("Z", ""))
@@ -160,13 +164,12 @@ async def create_exam(
             if body.registration_deadline
             else start
         )
-
         schedule_data = {
             "exam_id":               exam_id,
             "start_time":            start.isoformat(),
             "end_time":              end.isoformat(),
             "registration_deadline": reg_deadline.isoformat(),
-            "is_published":          True,   # ← both gates open in one click
+            "is_published":          True,
         }
         supabase.table("exam_schedules").insert(schedule_data).execute()
         logger.info("Auto-created published schedule for exam %s", exam_id)
@@ -184,7 +187,29 @@ async def update_exam(
     data = body.model_dump(exclude_none=True)
     if not data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    result = supabase.table("exams").update(data).eq("id", str(exam_id)).execute()
+
+    result = (
+        supabase.table("exams")
+        .update(data)
+        .eq("id", str(exam_id))
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    # KEY FIX: when the faculty clicks Publish on the dashboard, status becomes
+    # "PUBLISHED". At that point we also flip is_published=True on every linked
+    # schedule row — because the student portal filters on BOTH fields:
+    #   exams.status == "PUBLISHED"  AND  exam_schedules.is_published == True
+    if data.get("status") == "PUBLISHED":
+        supabase.table("exam_schedules") \
+            .update({"is_published": True}) \
+            .eq("exam_id", str(exam_id)) \
+            .execute()
+        logger.info(
+            "Flipped is_published=True on all schedules for exam %s", exam_id
+        )
+
     return result.data[0]
 
 

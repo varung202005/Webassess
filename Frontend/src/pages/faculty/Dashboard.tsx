@@ -1,11 +1,11 @@
 /**
  * Dashboard.tsx — Faculty Dashboard
  *
- * CHANGES vs original:
- *   • ExamsTable now has a "Publish" button on DRAFT rows that calls
- *     PATCH /api/v1/exams/{id} with { status: "PUBLISHED" }
- *   • After publishing, the dashboard query is invalidated so the badge
- *     updates immediately without a page reload.
+ * Publish button behaviour:
+ *   • Calls ONLY: PATCH /api/v1/exams/{id}  →  { status: "PUBLISHED" }
+ *   • Does NOT touch exam-schedules — the schedule was already created
+ *     (with is_published: false) when the faculty completed the Create Exam
+ *     wizard. Visibility to students is controlled purely by exam.status.
  *
  * Drop this file at:  src/pages/faculty/Dashboard.tsx
  */
@@ -77,7 +77,15 @@ function DashboardStats({ portal }: { portal: FacultyDashboard }) {
   );
 }
 
-/* ── Exams Table — with inline Publish button ───────────── */
+/* ── Exams Table ────────────────────────────────────────── */
+/*
+ * Publish flow — single API call:
+ *   PATCH /api/v1/exams/{examId}  →  { status: "PUBLISHED" }
+ *
+ * The schedule already exists (created during wizard Step 4).
+ * We do NOT touch exam-schedules here — student visibility is
+ * driven entirely by exam.status === "PUBLISHED".
+ */
 function ExamsTable({
   exams,
   onView,
@@ -85,18 +93,18 @@ function ExamsTable({
 }: {
   exams: FacultyDashboard["recentExams"];
   onView: (id: string) => void;
-  onPublished: (examId: string) => void;
+  onPublished: () => void;
 }) {
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
 
-  const handlePublish = async (examId: string, e: React.MouseEvent) => {
+  const handlePublish = async (exam: any, e: React.MouseEvent) => {
     e.stopPropagation();
     setPublishError(null);
-    setPublishing(examId);
+    setPublishing(exam.id);
     try {
-      await facultyApi.updateExam(examId, { status: "PUBLISHED" });
-      onPublished(examId);
+      await facultyApi.updateExam(exam.id, { status: "PUBLISHED" });
+      onPublished();
     } catch (err) {
       setPublishError(apiMsg(err));
     } finally {
@@ -169,13 +177,12 @@ function ExamsTable({
                   </td>
                   <td>
                     <div className="table-actions" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      {/* ── NEW: Publish button for DRAFT exams ── */}
-                      {isDraft && (
+                      {isDraft ? (
                         <button
                           className="btn btn-sm btn-primary"
                           disabled={isPublishing}
-                          onClick={(e) => handlePublish(exam.id, e)}
-                          title="Publish this exam so students can see it"
+                          onClick={(e) => handlePublish(exam, e)}
+                          title="Publish exam — makes it visible to students"
                           style={{ whiteSpace: "nowrap" }}
                         >
                           {isPublishing ? (
@@ -184,8 +191,7 @@ function ExamsTable({
                             <><i className="ti ti-send" /> Publish</>
                           )}
                         </button>
-                      )}
-                      {!isDraft && (
+                      ) : (
                         <span
                           style={{
                             fontSize: 11,
@@ -229,7 +235,7 @@ function UpcomingSchedules({ schedules }: { schedules: FacultyDashboard["upcomin
           <div className="empty-state" style={{ padding: "30px 20px" }}>
             <i className="ti ti-calendar" />
             <div className="empty-state-title">No upcoming exams</div>
-            <div className="empty-state-text">Schedule an exam to see it here.</div>
+            <div className="empty-state-text">Create and publish an exam to see it here.</div>
           </div>
         </div>
       </div>
@@ -442,7 +448,6 @@ export default function Dashboard() {
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
     queryClient.invalidateQueries({ queryKey: QUERY_KEYS.exams() });
-    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.schedules() });
   };
 
   return (
@@ -466,7 +471,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Draft exams banner — shown when there are unpublished exams */}
+            {/* Draft exams banner */}
             {(portal.examCounts?.draft ?? 0) > 0 && (
               <div
                 style={{
@@ -483,17 +488,10 @@ export default function Dashboard() {
               >
                 <i className="ti ti-alert-triangle" style={{ color: "#94600a", fontSize: 18 }} />
                 <span style={{ flex: 1, fontSize: 13, color: "#5a3c00" }}>
-                  You have <strong>{portal.examCounts?.draft}</strong> draft exam{(portal.examCounts?.draft ?? 0) !== 1 ? "s" : ""}.
-                  Students cannot see draft exams. Click <strong>Publish</strong> on each row below, then go to{" "}
-                  <strong>Schedules</strong> to publish the schedule too.
+                  You have <strong>{portal.examCounts?.draft}</strong> draft exam
+                  {(portal.examCounts?.draft ?? 0) !== 1 ? "s" : ""}.
+                  Students cannot see draft exams. Click <strong>Publish</strong> on any row below to make it live.
                 </span>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => navigate("/faculty/schedules")}
-                  style={{ flexShrink: 0 }}
-                >
-                  <i className="ti ti-calendar" /> Manage Schedules
-                </button>
               </div>
             )}
 
@@ -510,7 +508,7 @@ export default function Dashboard() {
                 <ExamsTable
                   exams={portal.recentExams}
                   onView={(id) => navigate(`/faculty/evaluation?examId=${id}`)}
-                  onPublished={() => invalidateAll()}
+                  onPublished={invalidateAll}
                 />
               </div>
 
