@@ -101,6 +101,18 @@ interface ExamDraft {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Timezone helper
+// Converts a datetime-local string (entered by user in IST) to UTC ISO string.
+// The datetime-local input gives "YYYY-MM-DDTHH:mm" with no timezone.
+// We treat it as IST (+05:30) and convert to UTC before sending to the backend.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toUTCString(localStr: string): string {
+  if (!localStr) return localStr;
+  return new Date(`${localStr}+05:30`).toISOString();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Draft helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -872,8 +884,6 @@ function StepRules({ rules, onChange }: {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 4: Schedule
-// Exam is always created as DRAFT. This step records when the exam will run.
-// is_published stays false — the faculty publishes from the Dashboard later.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepSchedule({ schedule, onChange }: {
@@ -902,7 +912,7 @@ function StepSchedule({ schedule, onChange }: {
       >
         <i className="ti ti-info-circle" style={{ marginTop: 1, flexShrink: 0 }} />
         <span>
-          These times are saved with the exam so students know when it will run.
+          Enter times in your local time (IST). These times are saved with the exam so students know when it will run.
           The exam remains invisible until you click <strong>Publish</strong> on your dashboard.
         </span>
       </div>
@@ -957,7 +967,8 @@ function StepPreview({ form, schedule, selectedQuestions, examId }: {
     {} as Record<string, number>
   );
 
-  const fmt = (dt: string) => dt ? new Date(dt).toLocaleString() : "—";
+  // Show the datetime-local value as-is (it's already in IST, user entered it)
+  const fmt = (dt: string) => dt ? new Date(`${dt}+05:30`).toLocaleString() : "—";
 
   if (examId) {
     return (
@@ -1149,7 +1160,7 @@ export default function CreateExam() {
     setSaving(true);
     setSaveError("");
     try {
-      // Step 1 — create exam as DRAFT (never PUBLISHED from the wizard)
+      // Step 1 — create exam as DRAFT
       const examData = await facultyApi.createExam({
         title:             form.title,
         course_id:         form.course_id || null,
@@ -1175,12 +1186,14 @@ export default function CreateExam() {
       // Step 3 — exam rules
       await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
 
-      // Step 4 — create schedule (is_published: false — faculty publishes from dashboard)
+      // Step 4 — create schedule
+      // toUTCString converts the datetime-local value (IST) to UTC ISO string
+      // so the backend stores the correct UTC time.
       await facultyApi.createExamSchedule({
         exam_id:               newExamId,
-        start_time:            schedule.start_time || null,
-        end_time:              schedule.end_time || null,
-        registration_deadline: schedule.registration_deadline || null,
+        start_time:            schedule.start_time ? toUTCString(schedule.start_time) : null,
+        end_time:              schedule.end_time ? toUTCString(schedule.end_time) : null,
+        registration_deadline: schedule.registration_deadline ? toUTCString(schedule.registration_deadline) : null,
         is_published:          true,
       });
 
