@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuthStore } from "../../store/authStore";
 import { useStudentPortal } from "./hooks";
-import { initials } from "./format";
+import { initials, relativeTime } from "./format";
 import "./student.css";
 
 const navGroups = [
@@ -46,14 +46,31 @@ const routeTitles: Record<string, string> = {
 export default function StudentLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("student-sidebar") === "collapsed");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const signOut = useAuthStore((state) => state.signOut);
   const { data } = useStudentPortal();
   const profile = data?.profile;
   const unread = data?.notifications.filter((item) => !item.is_read).length ?? 0;
+  const latestNotifications = useMemo(() => [...(data?.notifications ?? [])]
+    .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+    .slice(0, 5), [data?.notifications]);
 
-  useEffect(() => setMobileOpen(false), [location.pathname]);
+  useEffect(() => {
+    setMobileOpen(false);
+    setNotifOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) setNotifOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [notifOpen]);
 
   const toggleCollapsed = () => {
     const next = !collapsed;
@@ -114,10 +131,37 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
             <strong>{routeTitles[location.pathname] ?? "Exam"}</strong>
           </div>
           <div className="topbar-actions">
-            <button className="topbar-icon" onClick={() => navigate("/student/notifications")} aria-label="Notifications">
-              <i className="ti ti-bell" />
-              {unread > 0 && <span>{unread > 9 ? "9+" : unread}</span>}
-            </button>
+            <div className="notif-wrapper" ref={notifRef}>
+              <button className="topbar-icon" onClick={() => setNotifOpen((open) => !open)} aria-label="Notifications" aria-expanded={notifOpen}>
+                <i className="ti ti-bell" />
+                {unread > 0 && <span>{unread > 9 ? "9+" : unread}</span>}
+              </button>
+              {notifOpen && (
+                <div className="notif-dropdown" role="menu" aria-label="Latest notifications">
+                  <div className="notif-dropdown-header">
+                    <strong>Notifications</strong>
+                    {unread > 0 && <span className="notif-count">{unread} unread</span>}
+                  </div>
+                  <div className="notif-dropdown-list">
+                    {!latestNotifications.length ? (
+                      <div className="notif-empty"><i className="ti ti-bell-off" />No notifications</div>
+                    ) : latestNotifications.map((item) => (
+                      <div className={`notif-dropdown-item ${item.is_read ? "" : "unread"}`} key={item.id}>
+                        <div className="notif-dot-col">{!item.is_read && <span className="notif-dot" />}</div>
+                        <div className="notif-dropdown-copy">
+                          <strong>{item.title}</strong>
+                          <p>{item.body}</p>
+                          <time>{relativeTime(item.created_at)}</time>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button className="notif-view-all" onClick={() => navigate("/student/notifications")}>
+                    View All <i className="ti ti-arrow-right" />
+                  </button>
+                </div>
+              )}
+            </div>
             <button className="topbar-user" onClick={() => navigate("/student/profile")}>
               {profile?.profile_photo
                 ? <img src={profile.profile_photo} alt="" className="avatar small" />
