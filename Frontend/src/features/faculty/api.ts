@@ -51,12 +51,6 @@ export const facultyApi = {
   deleteQuestion: (questionId: string) =>
     del(`/api/v1/questions/${questionId}`),
 
-  /**
-   * Upload a text-based PDF or DOCX and extract structured questions from it.
-   * Sends multipart/form-data to POST /api/v1/questions/extract.
-   * Uses apiFile() which omits Content-Type so the browser sets the correct
-   * multipart boundary automatically — do NOT use post() here.
-   */
   extractQuestionsFromFile: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -116,8 +110,6 @@ export const facultyApi = {
   createExamSchedule: (body: Record<string, unknown>) =>
     post<ExamSchedule>("/api/v1/exam-schedules/", body),
 
-
-
   updateSchedule: (scheduleId: string, body: Record<string, unknown>) =>
     patch<ExamSchedule>(`/api/v1/exam-schedules/${scheduleId}`, body),
 
@@ -128,6 +120,8 @@ export const facultyApi = {
     ),
 
   // ── Attempts (Faculty view) ─────────────────────────────────────────────────
+  // FIX: now hits /faculty/exam-attempts/{examId} which uses !inner join
+  // to correctly filter attempts by exam_id through exam_schedules
   getExamAttempts: (examId: string) =>
     get<ExamAttempt[]>(`/api/v1/faculty/exam-attempts/${examId}`),
 

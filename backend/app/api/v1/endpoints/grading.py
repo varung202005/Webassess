@@ -29,42 +29,35 @@ class ManualScoreUpdate(BaseModel):
 @router.get("/pending/{exam_id}")
 async def get_pending_grading(exam_id: UUID, _: dict = Depends(require_faculty)):
     """
-    Returns all SHORT_ANSWER and LONG_ANSWER student answers that need manual grading.
+    Returns all SHORT_ANSWER and LONG_ANSWER student answers for an exam.
+    Includes both graded and ungraded — frontend separates them via marks_awarded == null.
     Faculty dashboard — grading queue.
     BACKEND responsibility.
     """
     supabase = get_supabase_admin()
 
-    # Get attempts for this exam
+    # Get all attempt IDs for this exam via exam_schedules inner join
     attempts = (
         supabase.table("exam_attempts")
-        .select("id, exam_schedules(exam_id)")
+        .select("id, exam_schedules!inner(exam_id)")
+        .eq("exam_schedules.exam_id", str(exam_id))
         .execute()
     )
-    # Filter to this exam
-    attempt_ids = [
-        a["id"] for a in attempts.data
-        if a.get("exam_schedules", {}).get("exam_id") == str(exam_id)
-    ]
 
+    attempt_ids = [a["id"] for a in attempts.data]
     if not attempt_ids:
         return []
 
-    # Get ungraded subjective answers
+    # Get all subjective answers (graded + ungraded) filtered in DB
     result = (
         supabase.table("student_answers")
-        .select("*, questions(question_text, question_type, marks)")
+        .select("*, questions!inner(question_text, question_type, marks)")
         .in_("attempt_id", attempt_ids)
-        .is_("is_correct", "null")   # NULL = not graded yet
+        .in_("questions.question_type", ["SHORT_ANSWER", "LONG_ANSWER"])
         .execute()
     )
 
-    # Filter to subjective only
-    subjective = [
-        r for r in result.data
-        if r.get("questions", {}).get("question_type") in ("SHORT_ANSWER", "LONG_ANSWER")
-    ]
-    return subjective
+    return result.data
 
 
 @router.patch("/score")
@@ -93,7 +86,8 @@ async def set_manual_score(
     old_score = answer.data["marks_awarded"]
     new_score = body.marks_awarded
 
-    if old_score == new_score:
+    # Allow setting score even if old_score is None (first-time grading)
+    if old_score is not None and old_score == new_score:
         raise HTTPException(status_code=400, detail="New score is same as old score (no-op blocked)")
 
     # Update answer
@@ -119,14 +113,17 @@ async def set_manual_score(
             "change_reason": body.change_reason,
         }).execute()
 
-        # Recalculate total_score on results
+        # Recalculate total_score on results — only sum non-null marks
         all_answers = (
             supabase.table("student_answers")
             .select("marks_awarded")
             .eq("attempt_id", answer.data["attempt_id"])
             .execute()
         )
-        new_total = sum(a["marks_awarded"] for a in all_answers.data)
+        new_total = sum(
+            a["marks_awarded"] for a in all_answers.data
+            if a["marks_awarded"] is not None
+        )
 
         # Get max_score from results to recalc percentage
         res_data = (

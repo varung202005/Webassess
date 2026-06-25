@@ -10,8 +10,38 @@ from pydantic import BaseModel
 from app.core.security import require_faculty
 from app.db.supabase import get_supabase_admin
 
+from uuid import UUID
+from fastapi import Depends
+from app.core.security import require_faculty
+from app.db.supabase import get_supabase_admin
+
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+@router.get("/exam-attempts/{exam_id}")
+async def get_exam_attempts_for_faculty(
+    exam_id: UUID,
+    _: dict = Depends(require_faculty),
+):
+    """
+    All attempts for an exam with student info.
+    Uses !inner join so exam_schedules.exam_id filter is pushed to DB.
+    """
+    supabase = get_supabase_admin()
+    result = (
+        supabase.table("exam_attempts")
+        .select(
+            "*, "
+            "exam_schedules!inner(exam_id), "
+            "users(full_name, email), "
+            "students(roll_number)"
+        )
+        .eq("exam_schedules.exam_id", str(exam_id))
+        .execute()
+    )
+    return result.data
+
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -601,3 +631,4 @@ async def get_exam_analytics(exam_id: UUID, _: dict = Depends(require_faculty)):
         "score_distribution": buckets,
         "topic_performance": topic_performance,
     }
+    
