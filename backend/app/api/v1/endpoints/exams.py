@@ -283,3 +283,4 @@ async def get_exam_schedules(exam_id: UUID, _: dict = Depends(require_faculty)):
         .execute()
     )
     return result.data or []
+

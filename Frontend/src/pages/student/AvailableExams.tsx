@@ -55,7 +55,12 @@ function ExamCard({ schedule, busy, onDetails, onRegister }: { schedule: Student
   return <article className="exam-card">
     <div className="exam-card-top"><div><div className="eyebrow">{schedule.course.code || "Course"} · {schedule.course.name || "Subject"}</div><h3>{schedule.exam.title}</h3></div><span className={`status-pill ${registered ? "registered" : schedule.can_register ? "success" : "closed"}`}>{registered ? "Registered" : schedule.eligibility_status}</span></div>
     <div className="meta-line"><span><i className="ti ti-user" />{schedule.faculty_name || "Faculty not assigned"}</span></div>
-    <div className="exam-info"><Info label="Date" value={formatDate(schedule.start_time)} /><Info label="Time" value={`${formatTime(schedule.start_time)} – ${formatTime(schedule.end_time)}`} /><Info label="Duration" value={`${schedule.exam.duration_minutes} min`} /><Info label="Deadline" value={formatDate(schedule.registration_deadline || schedule.start_time, true)} /></div>
+    <div className="exam-info">
+      <Info label="Start" value={`${formatDate(schedule.start_time)} ${formatTime(schedule.start_time)}`} />
+      <Info label="End" value={`${formatDate(schedule.end_time)} ${formatTime(schedule.end_time)}`} />
+      <Info label="Duration" value={`${schedule.exam.duration_minutes} min`} />
+      <Info label="Registration Deadline" value={schedule.registration_deadline ? `${formatDate(schedule.registration_deadline)} ${formatTime(schedule.registration_deadline)}` : "—"} />
+    </div>
     <div className="exam-card-footer"><small>{schedule.exam.total_marks} marks</small><div className="card-actions"><button className="btn btn-secondary" onClick={onDetails}>View Details</button>{registered ? <button className="btn btn-secondary" disabled><i className="ti ti-check" />Registered</button> : <button className="btn btn-primary" disabled={!schedule.can_register || busy} onClick={onRegister}>{busy ? "Registering..." : "Register Now"}</button>}</div></div>
   </article>;
 }

@@ -7,12 +7,23 @@ export function initials(name?: string) {
     .join("");
 }
 
+/**
+ * Parses a datetime string from the backend safely.
+ * If the string has no timezone info (no Z, no +/-HH:MM),
+ * we treat it as IST (Asia/Kolkata, UTC+5:30) by appending +05:30.
+ * This prevents JavaScript from wrongly interpreting it as UTC.
+ */
+function parseDate(value: string): Date {
+  const hasTimezone = /[Zz]$|[+-]\d{2}:\d{2}$/.test(value.trim());
+  return new Date(hasTimezone ? value : `${value}+05:30`);
+}
+
 export function formatDate(value?: string | null, withTime = false) {
   if (!value) return "Not configured";
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     ...(withTime ? { timeStyle: "short" } : {}),
-  }).format(new Date(value));
+  }).format(parseDate(value));
 }
 
 export function formatTime(value?: string | null) {
@@ -20,11 +31,11 @@ export function formatTime(value?: string | null) {
   return new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(parseDate(value));
 }
 
 export function relativeTime(value: string) {
-  const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+  const seconds = Math.round((parseDate(value).getTime() - Date.now()) / 1000);
   const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
   const ranges: Array<[Intl.RelativeTimeFormatUnit, number]> = [
     ["year", 31_536_000],
@@ -42,7 +53,7 @@ export function relativeTime(value: string) {
 
 export function countdown(target?: string | null) {
   if (!target) return { total: 0, days: 0, hours: 0, minutes: 0, seconds: 0 };
-  const total = Math.max(0, new Date(target).getTime() - Date.now());
+  const total = Math.max(0, parseDate(target).getTime() - Date.now());
   return {
     total,
     days: Math.floor(total / 86_400_000),
