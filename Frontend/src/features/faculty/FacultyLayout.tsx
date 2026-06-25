@@ -1,3 +1,14 @@
+/**
+ * FacultyLayout.tsx
+ *
+ * CHANGES vs original:
+ *   • "Schedules" nav item removed from the Insights group entirely.
+ *     Publishing and schedule management now happens inline via the
+ *     Dashboard Publish button — no dedicated Schedules page needed.
+ *
+ * Drop this file at:  src/features/faculty/FacultyLayout.tsx
+ */
+
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
@@ -7,7 +18,7 @@ import { facultyApi } from "./api";
 import type { Notification } from "./types";
 import "./faculty.css";
 
-// Question Bank removed from nav — merged into Create Exam workspace
+// ─── Nav groups — Schedules intentionally removed ───────────────────────────
 const navGroups = [
   {
     label: "Main",
@@ -20,8 +31,8 @@ const navGroups = [
   {
     label: "Insights",
     items: [
+      // "Schedules" removed — scheduling info surfaces on the Dashboard
       { key: "analytics", label: "Analytics", icon: "ti-device-desktop-analytics", path: "/faculty/analytics" },
-      { key: "schedules", label: "Schedules", icon: "ti-calendar-stats",           path: "/faculty/schedules" },
     ],
   },
   {
@@ -38,7 +49,6 @@ const routeTitles: Record<string, string> = {
   "/faculty/create-exam":   "Create Exam",
   "/faculty/evaluation":    "Evaluation",
   "/faculty/analytics":     "Analytics",
-  "/faculty/schedules":     "Schedules",
   "/faculty/reevaluations": "Re-evaluations",
   "/faculty/notifications": "Notifications",
 };

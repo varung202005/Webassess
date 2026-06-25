@@ -1,14 +1,21 @@
 /**
  * CreateExam.tsx
  *
- * KEY CHANGES vs original:
- *   1. Removed Step 4 "Schedule" entirely — no more duplicate date entry.
- *   2. Preview step (now Step 4) has a "Publish immediately" checkbox +
- *      optional start/end time fields. If unchecked, exam saves as DRAFT.
- *   3. saveExam() sends publish_immediately + optional times to the backend.
- *      The backend auto-creates the schedule with is_published=true in one go.
- *   4. After creating, "Go to Dashboard" takes you straight there — no
- *      "Manage Schedules" redirect needed.
+ * 5-step wizard:
+ *   Step 1 — Exam Info
+ *   Step 2 — Questions
+ *   Step 3 — Rules
+ *   Step 4 — Schedule  (start / end time, registration deadline — mandatory)
+ *   Step 5 — Preview & Create
+ *
+ * On submit:
+ *   1. POST /api/v1/exams          → status: "DRAFT"
+ *   2. POST /api/v1/questions link  (per selected question)
+ *   3. POST /api/v1/exam-rules
+ *   4. POST /api/v1/exam-schedules → is_published: false, times from Step 4
+ *
+ * Publishing happens ONLY from the Dashboard Publish button — this wizard
+ * never sets status: "PUBLISHED" or is_published: true.
  *
  * Drop this file at:  src/pages/faculty/CreateExam.tsx
  */
@@ -23,13 +30,14 @@ import { facultyApi } from "../../features/faculty/api";
 import type { Question } from "../../features/faculty/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants — 4 steps now (Schedule step removed)
+// Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STEPS = [
   { id: "info",      label: "Exam Info",   icon: "ti-info-circle"  },
   { id: "questions", label: "Questions",   icon: "ti-list-check"   },
   { id: "rules",     label: "Rules",       icon: "ti-shield-check" },
+  { id: "schedule",  label: "Schedule",    icon: "ti-calendar-event" },
   { id: "preview",   label: "Preview",     icon: "ti-eye"          },
 ];
 
@@ -67,10 +75,7 @@ interface ExamForm {
   shuffle_options: boolean;
 }
 
-// Publish settings — previously lived in a dedicated Schedule step.
-// Now just a small section on the Preview step.
-interface PublishSettings {
-  publish_immediately: boolean;
+interface ScheduleForm {
   start_time: string;
   end_time: string;
   registration_deadline: string;
@@ -91,7 +96,7 @@ interface ExamDraft {
   currentStep: number;
   form: ExamForm;
   rules: Record<string, any>;
-  publishSettings: PublishSettings;
+  schedule: ScheduleForm;
   selectedQuestionIds: string[];
 }
 
@@ -150,8 +155,7 @@ const defaultRules = () => ({
   auto_save_interval_sec: 30,
 });
 
-const defaultPublishSettings = (): PublishSettings => ({
-  publish_immediately: false,
+const defaultSchedule = (): ScheduleForm => ({
   start_time: "",
   end_time: "",
   registration_deadline: "",
@@ -867,17 +871,84 @@ function StepRules({ rules, onChange }: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Step 4: Preview  ← REPLACES old Step 4 (Schedule) + old Step 5 (Preview)
-//
-// KEY CHANGE: Publish settings are now a compact section here.
-// No dedicated Schedule step, no second page visit required.
+// Step 4: Schedule
+// Exam is always created as DRAFT. This step records when the exam will run.
+// is_published stays false — the faculty publishes from the Dashboard later.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange, examId }: {
+function StepSchedule({ schedule, onChange }: {
+  schedule: ScheduleForm; onChange: (s: Partial<ScheduleForm>) => void;
+}) {
+  return (
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Exam Schedule</h3>
+        <p>Set when this exam will take place. The exam will be saved as a draft — students won't see it until you hit <strong>Publish</strong> on the dashboard.</p>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 10,
+          padding: "12px 16px",
+          background: "#f0f7ff",
+          border: "1.5px solid #bfdbfe",
+          borderRadius: 10,
+          marginBottom: 24,
+          fontSize: 13,
+          color: "#1e40af",
+        }}
+      >
+        <i className="ti ti-info-circle" style={{ marginTop: 1, flexShrink: 0 }} />
+        <span>
+          These times are saved with the exam so students know when it will run.
+          The exam remains invisible until you click <strong>Publish</strong> on your dashboard.
+        </span>
+      </div>
+
+      <div className="form-grid-2col">
+        <div className="form-field">
+          <label>Start Time *</label>
+          <input
+            type="datetime-local"
+            className="form-input"
+            value={schedule.start_time}
+            onChange={(e) => onChange({ start_time: e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>End Time *</label>
+          <input
+            type="datetime-local"
+            className="form-input"
+            value={schedule.end_time}
+            onChange={(e) => onChange({ end_time: e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>Registration Deadline <span style={{ fontWeight: 400, color: "#aaa" }}>(optional)</span></label>
+          <input
+            type="datetime-local"
+            className="form-input"
+            value={schedule.registration_deadline}
+            onChange={(e) => onChange({ registration_deadline: e.target.value })}
+          />
+          <span className="field-hint">Leave blank to allow registration up until exam start.</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 5: Preview
+// ─────────────────────────────────────────────────────────────────────────────
+
+function StepPreview({ form, schedule, selectedQuestions, examId }: {
   form: ExamForm;
+  schedule: ScheduleForm;
   selectedQuestions: Question[];
-  publishSettings: PublishSettings;
-  onPublishChange: (p: Partial<PublishSettings>) => void;
   examId: string | null;
 }) {
   const totalMarks = selectedQuestions.reduce((s, q) => s + q.marks, 0);
@@ -886,6 +957,8 @@ function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange
     {} as Record<string, number>
   );
 
+  const fmt = (dt: string) => dt ? new Date(dt).toLocaleString() : "—";
+
   if (examId) {
     return (
       <div className="step-panel">
@@ -893,9 +966,7 @@ function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange
           <i className="ti ti-circle-check" style={{ fontSize: 48, color: "#059669" }} />
           <div className="preview-success-title">Exam Created Successfully!</div>
           <div className="preview-success-sub" style={{ color: "#555", marginTop: 6 }}>
-            {publishSettings.publish_immediately
-              ? "Your exam is live — students can see it right now."
-              : "Exam saved as draft. Use the Publish button on the dashboard when ready."}
+            Saved as draft. Go to your dashboard and click <strong>Publish</strong> when you're ready to make it visible to students.
           </div>
           <div className="preview-success-sub" style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>
             Exam ID: {examId}
@@ -908,8 +979,8 @@ function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange
   return (
     <div className="step-panel">
       <div className="step-header">
-        <h3>Review &amp; Publish</h3>
-        <p>Check your exam details and choose whether to publish now or save as draft.</p>
+        <h3>Review &amp; Create</h3>
+        <p>Check everything below, then click <strong>Create Exam</strong>. You can publish from the dashboard whenever you're ready.</p>
       </div>
 
       <div className="preview-grid">
@@ -924,6 +995,7 @@ function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange
             <div className="preview-row"><span>Pass Marks</span><strong>{form.pass_marks}</strong></div>
           </div>
         </div>
+
         <div className="preview-card">
           <h4>Questions ({selectedQuestions.length})</h4>
           <div className="preview-rows">
@@ -933,80 +1005,35 @@ function StepPreview({ form, selectedQuestions, publishSettings, onPublishChange
             {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
           </div>
         </div>
+
+        <div className="preview-card">
+          <h4><i className="ti ti-calendar-event" style={{ marginRight: 6 }} />Schedule</h4>
+          <div className="preview-rows">
+            <div className="preview-row"><span>Start</span><strong>{fmt(schedule.start_time)}</strong></div>
+            <div className="preview-row"><span>End</span><strong>{fmt(schedule.end_time)}</strong></div>
+            <div className="preview-row"><span>Registration closes</span><strong>{schedule.registration_deadline ? fmt(schedule.registration_deadline) : "At exam start"}</strong></div>
+          </div>
+        </div>
       </div>
 
-      {/* ── PUBLISH SETTINGS (was a whole separate step) ── */}
       <div
         style={{
-          marginTop: 24,
-          border: "1.5px solid #eceef2",
-          borderRadius: 12,
-          overflow: "hidden",
+          marginTop: 20,
+          padding: "12px 16px",
+          background: "#fff3d8",
+          border: "1.5px solid #f5d76e",
+          borderRadius: 10,
+          fontSize: 13,
+          color: "#5a3c00",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
         }}
       >
-        <div style={{ padding: "14px 18px", background: "#f8f9fc", borderBottom: "1px solid #eceef2" }}>
-          <strong style={{ fontSize: 14 }}><i className="ti ti-calendar-event" style={{ marginRight: 6 }} />Publish Settings</strong>
-        </div>
-
-        <div style={{ padding: "18px" }}>
-          {/* Publish immediately toggle */}
-          <label
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 12,
-              padding: "14px 16px",
-              borderRadius: 10,
-              background: publishSettings.publish_immediately ? "#def8ee" : "#f8f9fc",
-              border: `1.5px solid ${publishSettings.publish_immediately ? "#b6e8d3" : "#eceef2"}`,
-              cursor: "pointer",
-              marginBottom: 16,
-            }}
-          >
-            <input
-              type="checkbox"
-              style={{ marginTop: 2, accentColor: "#059669", width: 16, height: 16 }}
-              checked={publishSettings.publish_immediately}
-              onChange={(e) => onPublishChange({ publish_immediately: e.target.checked })}
-            />
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: publishSettings.publish_immediately ? "#08775b" : "#1a1d26" }}>
-                {publishSettings.publish_immediately
-                  ? "✓ Publish immediately — students can see this exam"
-                  : "Save as Draft (publish later from the Dashboard)"}
-              </div>
-              <div style={{ fontSize: 12, color: "#676b79", marginTop: 3 }}>
-                {publishSettings.publish_immediately
-                  ? "The exam will be live as soon as you click Create Exam below."
-                  : "You can publish any time using the Publish button on your dashboard."}
-              </div>
-            </div>
-          </label>
-
-          {/* Optional time fields — only shown when publishing now */}
-          {publishSettings.publish_immediately && (
-            <div className="form-grid-2col" style={{ gap: 12 }}>
-              <div className="form-field">
-                <label>Start Time <span style={{ color: "#aaa", fontWeight: 400 }}>(optional — defaults to now)</span></label>
-                <input type="datetime-local" className="form-input"
-                  value={publishSettings.start_time}
-                  onChange={(e) => onPublishChange({ start_time: e.target.value })} />
-              </div>
-              <div className="form-field">
-                <label>End Time <span style={{ color: "#aaa", fontWeight: 400 }}>(optional — defaults to start + duration)</span></label>
-                <input type="datetime-local" className="form-input"
-                  value={publishSettings.end_time}
-                  onChange={(e) => onPublishChange({ end_time: e.target.value })} />
-              </div>
-              <div className="form-field">
-                <label>Registration Deadline <span style={{ color: "#aaa", fontWeight: 400 }}>(optional)</span></label>
-                <input type="datetime-local" className="form-input"
-                  value={publishSettings.registration_deadline}
-                  onChange={(e) => onPublishChange({ registration_deadline: e.target.value })} />
-              </div>
-            </div>
-          )}
-        </div>
+        <i className="ti ti-send" style={{ flexShrink: 0, color: "#94600a" }} />
+        <span>
+          This exam will be saved as a <strong>draft</strong>. To make it visible to students, go to your dashboard and click the <strong>Publish</strong> button on this exam's row.
+        </span>
       </div>
     </div>
   );
@@ -1028,9 +1055,9 @@ export default function CreateExam() {
   const [saveError,    setSaveError]    = useState("");
   const [examId,       setExamId]       = useState<string | null>(null);
 
-  const [form,            setForm]            = useState<ExamForm>(defaultForm);
-  const [rules,           setRules]           = useState(defaultRules);
-  const [publishSettings, setPublishSettings] = useState<PublishSettings>(defaultPublishSettings);
+  const [form,     setForm]     = useState<ExamForm>(defaultForm);
+  const [rules,    setRules]    = useState(defaultRules);
+  const [schedule, setSchedule] = useState<ScheduleForm>(defaultSchedule);
 
   const { data: serverQuestions = [], isLoading: questionsLoading } = useQuestions(
     form.course_id ? { course_id: form.course_id } : undefined
@@ -1054,10 +1081,10 @@ export default function CreateExam() {
       currentStep,
       form,
       rules,
-      publishSettings,
+      schedule,
       selectedQuestionIds: selectedQuestions.map((q) => q.id),
     });
-  }, [draftId, currentStep, form, rules, publishSettings, selectedQuestions]);
+  }, [draftId, currentStep, form, rules, schedule, selectedQuestions]);
 
   // Resolve pending question IDs after server data loads
   const [pendingQuestionIds, setPendingQuestionIds] = useState<string[]>([]);
@@ -1076,8 +1103,7 @@ export default function CreateExam() {
   const handleResumeDraft = (draft: ExamDraft) => {
     setForm(draft.form);
     setRules(draft.rules);
-    // Support both old "schedule" field and new "publishSettings" field in stored drafts
-    setPublishSettings((draft as any).publishSettings ?? defaultPublishSettings());
+    setSchedule(draft.schedule ?? defaultSchedule());
     setCurrentStep(draft.currentStep);
     setSelectedQuestions([]);
     if (draft.selectedQuestionIds.length > 0) {
@@ -1123,25 +1149,22 @@ export default function CreateExam() {
     setSaving(true);
     setSaveError("");
     try {
+      // Step 1 — create exam as DRAFT (never PUBLISHED from the wizard)
       const examData = await facultyApi.createExam({
-        title:               form.title,
-        course_id:           form.course_id || null,
-        exam_type:           form.exam_type,
-        total_marks:         form.total_marks,
-        pass_marks:          form.pass_marks,
-        duration_minutes:    form.duration_minutes,
-        shuffle_questions:   form.shuffle_questions,
-        shuffle_options:     form.shuffle_options,
-        instructions:        form.instructions || null,
-        // KEY CHANGE: send publish intent + optional times.
-        // Backend handles status=PUBLISHED and auto-creates the schedule.
-        publish_immediately:    publishSettings.publish_immediately,
-        start_time:             publishSettings.start_time || undefined,
-        end_time:               publishSettings.end_time || undefined,
-        registration_deadline:  publishSettings.registration_deadline || undefined,
+        title:             form.title,
+        course_id:         form.course_id || null,
+        exam_type:         form.exam_type,
+        total_marks:       form.total_marks,
+        pass_marks:        form.pass_marks,
+        duration_minutes:  form.duration_minutes,
+        shuffle_questions: form.shuffle_questions,
+        shuffle_options:   form.shuffle_options,
+        instructions:      form.instructions || null,
+        status:            "DRAFT",
       });
       const newExamId = examData.id;
 
+      // Step 2 — link questions
       for (let i = 0; i < selectedQuestions.length; i++) {
         await facultyApi.addQuestionToExam(newExamId, {
           question_id: selectedQuestions[i].id,
@@ -1149,13 +1172,22 @@ export default function CreateExam() {
         });
       }
 
+      // Step 3 — exam rules
       await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
+
+      // Step 4 — create schedule (is_published: false — faculty publishes from dashboard)
+      await facultyApi.createExamSchedule({
+        exam_id:               newExamId,
+        start_time:            schedule.start_time || null,
+        end_time:              schedule.end_time || null,
+        registration_deadline: schedule.registration_deadline || null,
+        is_published:          true,
+      });
 
       setExamId(newExamId);
       deleteDraft(draftId);
 
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.schedules() });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.exams() });
     } catch (e: any) {
       setSaveError(e?.message ?? "Failed to create exam. Check all fields and try again.");
@@ -1166,6 +1198,7 @@ export default function CreateExam() {
 
   const canProceed = () => {
     if (currentStep === 0) return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
+    if (currentStep === 3) return !!schedule.start_time && !!schedule.end_time;
     return true;
   };
 
@@ -1225,9 +1258,7 @@ export default function CreateExam() {
                     <h2 className="workspace-title">{examId ? "Exam Created!" : "Create New Exam"}</h2>
                     <p className="workspace-sub">
                       {examId
-                        ? publishSettings.publish_immediately
-                          ? "Your exam is live — students can see it now."
-                          : "Saved as draft — publish anytime from your dashboard."
+                        ? "Saved as draft — go to your dashboard and click Publish when ready."
                         : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
                     </p>
                   </div>
@@ -1255,11 +1286,13 @@ export default function CreateExam() {
                     <StepRules rules={rules} onChange={setRules} />
                   )}
                   {currentStep === 3 && (
+                    <StepSchedule schedule={schedule} onChange={(p) => setSchedule((s) => ({ ...s, ...p }))} />
+                  )}
+                  {currentStep === 4 && (
                     <StepPreview
                       form={form}
+                      schedule={schedule}
                       selectedQuestions={selectedQuestions}
-                      publishSettings={publishSettings}
-                      onPublishChange={(p) => setPublishSettings((s) => ({ ...s, ...p }))}
                       examId={examId}
                     />
                   )}
@@ -1289,20 +1322,17 @@ export default function CreateExam() {
                         <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId} type="button">
                           {saving
                             ? <><span className="spinner-sm" /> Creating…</>
-                            : publishSettings.publish_immediately
-                            ? <><i className="ti ti-send" /> Create &amp; Publish</>
-                            : <><i className="ti ti-check" /> Create Exam (Draft)</>}
+                            : <><i className="ti ti-check" /> Create Exam</>}
                         </button>
                       )}
                     </div>
                   </div>
                 )}
 
-                {/* ── Post-creation footer ── */}
                 {examId && (
                   <div className="workspace-footer">
                     <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
-                      <i className="ti ti-home" /> Back to Dashboard
+                      <i className="ti ti-home" /> Go to Dashboard to Publish
                     </button>
                   </div>
                 )}

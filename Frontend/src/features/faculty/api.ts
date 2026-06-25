@@ -113,8 +113,10 @@ export const facultyApi = {
   getSchedule: (scheduleId: string) =>
     get<ExamSchedule>(`/api/v1/exam-schedules/${scheduleId}`),
 
-  createSchedule: (body: Record<string, unknown>) =>
+  createExamSchedule: (body: Record<string, unknown>) =>
     post<ExamSchedule>("/api/v1/exam-schedules/", body),
+
+
 
   updateSchedule: (scheduleId: string, body: Record<string, unknown>) =>
     patch<ExamSchedule>(`/api/v1/exam-schedules/${scheduleId}`, body),
