@@ -5,15 +5,17 @@ import { countdown, formatDate, formatTime } from "./format";
 export function PageHeading({
   title,
   subtitle,
+  subtitleTone = "default",
   children,
 }: {
   title: string;
   subtitle: string;
+  subtitleTone?: "default" | "warning";
   children?: React.ReactNode;
 }) {
   return (
     <div className="page-heading">
-      <div><h1>{title}</h1><p>{subtitle}</p></div>
+      <div><h1>{title}</h1><p className={subtitleTone === "warning" ? "subtitle-chip warning" : undefined}>{subtitle}</p></div>
       {children && <div className="heading-actions">{children}</div>}
     </div>
   );
