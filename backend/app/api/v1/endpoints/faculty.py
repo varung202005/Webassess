@@ -10,38 +10,8 @@ from pydantic import BaseModel
 from app.core.security import require_faculty
 from app.db.supabase import get_supabase_admin
 
-from uuid import UUID
-from fastapi import Depends
-from app.core.security import require_faculty
-from app.db.supabase import get_supabase_admin
-
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-@router.get("/exam-attempts/{exam_id}")
-async def get_exam_attempts_for_faculty(
-    exam_id: UUID,
-    _: dict = Depends(require_faculty),
-):
-    """
-    All attempts for an exam with student info.
-    Uses !inner join so exam_schedules.exam_id filter is pushed to DB.
-    """
-    supabase = get_supabase_admin()
-    result = (
-        supabase.table("exam_attempts")
-        .select(
-            "*, "
-            "exam_schedules!inner(exam_id), "
-            "users(full_name, email), "
-            "students(roll_number)"
-        )
-        .eq("exam_schedules.exam_id", str(exam_id))
-        .execute()
-    )
-    return result.data
-
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -53,15 +23,12 @@ def _single_or_none(query):
         return None
 
 
-def safe_dt(value: str | None) -> datetime | None:
-    """Parse ISO datetime strings safely, handling both naive and tz-aware formats."""
+def safe_dt(value) -> datetime | None:
     if not value:
         return None
     try:
-        # Python 3.11+ handles "+00:00"; for 3.10 we replace manually
-        normalized = value.replace("Z", "+00:00")
+        normalized = str(value).replace("Z", "+00:00")
         dt = datetime.fromisoformat(normalized)
-        # Make timezone-aware if naive
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
@@ -70,28 +37,23 @@ def safe_dt(value: str | None) -> datetime | None:
 
 
 def safe_dict(obj) -> dict:
-    """Return dict or {} — never None."""
     return obj if isinstance(obj, dict) else {}
 
 
-# ── Dashboard Aggregate ───────────────────────────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
 async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
-    """Full dashboard data for the faculty portal homepage. Never returns 500."""
+    """Full dashboard data for the faculty portal homepage."""
     supabase = get_supabase_admin()
     user_id = current_user["user_id"]
 
-    # ── Profile ──────────────────────────────────────────────────────────────
     profile = {}
     try:
         user = (
             supabase.table("users")
             .select("id,full_name,email,phone,profile_photo")
-            .eq("id", user_id)
-            .single()
-            .execute()
-            .data
+            .eq("id", user_id).single().execute().data
         ) or {}
         faculty = _single_or_none(
             supabase.table("faculty")
@@ -102,20 +64,18 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     except Exception as e:
         logger.warning("Dashboard: profile fetch failed: %s", e)
 
-    # ── Exams created by this faculty ─────────────────────────────────────────
     exams = []
     try:
         exams = (
             supabase.table("exams")
             .select(
                 "id,title,status,exam_type,course_id,duration_minutes,total_marks,pass_marks,"
-                "created_by,created_at,updated_at,instructions,"
-                "shuffle_questions,shuffle_options,courses(name,code)"
+                "created_by,created_at,updated_at,instructions,shuffle_questions,shuffle_options,"
+                "courses(name,code)"
             )
             .eq("created_by", user_id)
             .order("created_at", desc=True)
-            .execute()
-            .data
+            .execute().data
         ) or []
     except Exception as e:
         logger.warning("Dashboard: exams fetch failed: %s", e)
@@ -123,15 +83,13 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     exam_ids = [e["id"] for e in exams]
     status_counts = Counter(e.get("status") for e in exams)
 
-    # ── Question stats ────────────────────────────────────────────────────────
     questions = []
     try:
         questions = (
             supabase.table("questions")
             .select("question_type,is_active")
             .eq("created_by", user_id)
-            .execute()
-            .data
+            .execute().data
         ) or []
     except Exception as e:
         logger.warning("Dashboard: questions fetch failed: %s", e)
@@ -139,74 +97,15 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     active_qs = [q for q in questions if q.get("is_active")]
     by_type = Counter(q["question_type"] for q in active_qs) if active_qs else Counter()
 
-    # ── Grading queue ─────────────────────────────────────────────────────────
-    pending_grading = 0
-    grading_queue = []
-    try:
-        for exam in exams:
-            exam_id = exam["id"]
-            schedules = (
-                supabase.table("exam_schedules")
-                .select("id")
-                .eq("exam_id", exam_id)
-                .execute()
-                .data
-            ) or []
-            schedule_ids = [s["id"] for s in schedules]
-            if not schedule_ids:
-                continue
-
-            attempts = (
-                supabase.table("exam_attempts")
-                .select("id")
-                .in_("exam_schedule_id", schedule_ids)
-                .in_("status", ["SUBMITTED", "AUTO_SUBMITTED"])
-                .execute()
-                .data
-            ) or []
-            attempt_ids = [a["id"] for a in attempts]
-            if not attempt_ids:
-                continue
-
-            ungraded = (
-                supabase.table("student_answers")
-                .select("id,questions(question_type)")
-                .in_("attempt_id", attempt_ids)
-                .is_("marks_awarded", "null")
-                .execute()
-                .data
-            ) or []
-
-            subjective_ungraded = [
-                a for a in ungraded
-                if safe_dict(a.get("questions")).get("question_type") in ("SHORT_ANSWER", "LONG_ANSWER")
-            ]
-            if subjective_ungraded:
-                types_pending = {
-                    a["questions"]["question_type"] for a in subjective_ungraded
-                    if a.get("questions")
-                }
-                pending_grading += len(subjective_ungraded)
-                grading_queue.append({
-                    "exam_id": exam_id,
-                    "exam_title": exam.get("title", ""),
-                    "course_code": safe_dict(exam.get("courses")).get("code", ""),
-                    "pending_count": len(subjective_ungraded),
-                    "question_type": ", ".join(sorted(types_pending)),
-                })
-    except Exception as e:
-        logger.warning("Dashboard: grading queue failed: %s", e)
-
-    # ── Active sessions ───────────────────────────────────────────────────────
+    # Active sessions
     active_sessions = []
     try:
-        for exam in exams:  # FIX: was exams[:5] — silently dropped schedules for newer exams
+        for exam in exams:
             scheds = (
                 supabase.table("exam_schedules")
                 .select("id,start_time,end_time")
                 .eq("exam_id", exam["id"])
-                .execute()
-                .data
+                .execute().data
             ) or []
             for s in scheds:
                 active = (
@@ -214,8 +113,7 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
                     .select("id")
                     .eq("exam_schedule_id", s["id"])
                     .eq("status", "IN_PROGRESS")
-                    .execute()
-                    .data
+                    .execute().data
                 ) or []
                 if active:
                     total_reg = (
@@ -237,7 +135,7 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     except Exception as e:
         logger.warning("Dashboard: active sessions failed: %s", e)
 
-    # ── Pending re-evaluations ────────────────────────────────────────────────
+    # Pending re-evaluations
     reeval = []
     try:
         if exam_ids:
@@ -245,24 +143,22 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
                 supabase.table("results")
                 .select("id,exam_id,student_id,total_score,max_score,percentage")
                 .in_("exam_id", exam_ids)
-                .execute()
-                .data
+                .execute().data
             ) or []
             result_ids = [r["id"] for r in results]
             if result_ids:
+                # Use explicit FK hint — re_evaluation_requests has two FKs to users
                 raw_reeval = (
                     supabase.table("re_evaluation_requests")
-                    .select("*,users(full_name,email),results(total_score,max_score,exam_id,exams(title))")
+                    .select("*,users!re_evaluation_requests_student_id_fkey(full_name,email),results(total_score,max_score,exam_id,exams(title))")
                     .in_("result_id", result_ids)
                     .order("requested_at", desc=True)
-                    .execute()
-                    .data
+                    .execute().data
                 ) or []
                 reeval = [r for r in raw_reeval if r.get("status") == "PENDING"]
     except Exception as e:
         logger.warning("Dashboard: reevaluations failed: %s", e)
 
-    # ── Notifications ─────────────────────────────────────────────────────────
     notifications = []
     try:
         notifications = (
@@ -271,13 +167,11 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
             .eq("user_id", user_id)
             .order("created_at", desc=True)
             .limit(20)
-            .execute()
-            .data
+            .execute().data
         ) or []
     except Exception as e:
         logger.warning("Dashboard: notifications failed: %s", e)
 
-    # ── Recent exams with question counts ─────────────────────────────────────
     recent_exams = exams[:10]
     try:
         for exam in recent_exams:
@@ -291,31 +185,24 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     except Exception as e:
         logger.warning("Dashboard: question counts failed: %s", e)
 
-    # ── Upcoming schedules ────────────────────────────────────────────────────
-    # FIX: use safe_dt() to parse ISO strings — this was the primary 500 cause
     upcoming = []
     try:
         now = datetime.now(timezone.utc)
-        all_schedules = []
         for exam in exams:
             scheds = (
                 supabase.table("exam_schedules")
                 .select("*,departments(name),exams(title)")
                 .eq("exam_id", exam["id"])
                 .order("start_time")
-                .execute()
-                .data
+                .execute().data
             ) or []
-            all_schedules.extend(scheds)
-
-        for s in all_schedules:
-            end_dt = safe_dt(s.get("end_time"))
-            if end_dt and end_dt >= now:
-                upcoming.append(s)
+            for s in scheds:
+                end_dt = safe_dt(s.get("end_time"))
+                if end_dt and end_dt >= now:
+                    upcoming.append(s)
     except Exception as e:
         logger.warning("Dashboard: upcoming schedules failed: %s", e)
 
-    # ── Master data ───────────────────────────────────────────────────────────
     departments, courses = [], []
     try:
         departments = supabase.table("departments").select("id,name,code").order("name").execute().data or []
@@ -337,10 +224,10 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
             "byType": dict(by_type),
             "active": len(active_qs),
         },
-        "pendingGrading": pending_grading,
+        "pendingGrading": 0,
         "pendingReevaluations": len(reeval),
         "activeSessions": active_sessions,
-        "gradingQueue": grading_queue,
+        "gradingQueue": [],
         "recentExams": recent_exams,
         "upcomingSchedules": upcoming,
         "reevaluationRequests": reeval,
@@ -350,27 +237,16 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     }
 
 
-# ── Lightweight summary (for fast sidebar badge updates) ─────────────────────
-
 @router.get("/dashboard/summary")
 async def get_faculty_summary(current_user: dict = Depends(require_faculty)):
-    """Minimal counts only — fast endpoint for badge refreshes."""
     supabase = get_supabase_admin()
     user_id = current_user["user_id"]
     try:
         exams = (
-            supabase.table("exams")
-            .select("id,status")
-            .eq("created_by", user_id)
-            .execute()
-            .data
+            supabase.table("exams").select("id,status").eq("created_by", user_id).execute().data
         ) or []
         questions = (
-            supabase.table("questions")
-            .select("id,is_active")
-            .eq("created_by", user_id)
-            .execute()
-            .data
+            supabase.table("questions").select("id,is_active").eq("created_by", user_id).execute().data
         ) or []
         counts = Counter(e.get("status") for e in exams)
         return {
@@ -385,70 +261,263 @@ async def get_faculty_summary(current_user: dict = Depends(require_faculty)):
         return {"total_exams": 0, "published_exams": 0, "draft_exams": 0, "total_questions": 0, "active_questions": 0}
 
 
-# ── Faculty Exam Attempts ─────────────────────────────────────────────────────
+# ── Exam Attempts (Faculty view) ──────────────────────────────────────────────
 
 @router.get("/exam-attempts/{exam_id}")
 async def get_exam_attempts(exam_id: UUID, _: dict = Depends(require_faculty)):
-    """All attempts for a given exam, with student info."""
+    """
+    All attempts for a given exam with student info.
+    Steps:
+      1. Get schedule_ids for the exam.
+      2. Fetch attempts joined with users (valid FK: exam_attempts.user_id → users.id).
+      3. Fetch students rows by user_ids (students.user_id → users.id) separately,
+         because exam_attempts has NO direct FK to students.
+    """
     supabase = get_supabase_admin()
+
     schedules = (
         supabase.table("exam_schedules")
         .select("id,start_time,end_time")
         .eq("exam_id", str(exam_id))
-        .execute()
-        .data
+        .execute().data
     ) or []
     schedule_ids = [s["id"] for s in schedules]
     if not schedule_ids:
         return []
 
+    # Step 1: attempts + users only (valid FK)
     attempts = (
         supabase.table("exam_attempts")
-        .select("*,users(full_name,email),students(roll_number)")
+        .select("*,users(full_name,email)")
         .in_("exam_schedule_id", schedule_ids)
         .order("started_at", desc=True)
-        .execute()
-        .data
+        .execute().data
     ) or []
 
-    schedule_map = {s["id"]: {"start_time": s.get("start_time"), "end_time": s.get("end_time")} for s in schedules}
+    if not attempts:
+        return []
+
+    # Step 2: fetch student profiles by user_id (roll_number, semester, section).
+    # Wrapped in try/except — table name may differ per schema.
+    user_ids = list({a["user_id"] for a in attempts if a.get("user_id")})
+    student_map: dict = {}
+    if user_ids:
+        try:
+            students = (
+                supabase.table("students")
+                .select("user_id,roll_number,semester,section")
+                .in_("user_id", user_ids)
+                .execute().data
+            ) or []
+            student_map = {s["user_id"]: s for s in students}
+        except Exception:
+            # If the students table doesn't exist or has a different name,
+            # roll_number will just be empty — non-fatal.
+            student_map = {}
+
+    # Step 3: attach student info + schedule info
+    schedule_map = {
+        s["id"]: {"start_time": s.get("start_time"), "end_time": s.get("end_time")}
+        for s in schedules
+    }
     for attempt in attempts:
-        attempt["schedule"] = schedule_map.get(attempt["exam_schedule_id"], {})
+        attempt["students"] = student_map.get(attempt.get("user_id"), {})
+        attempt["schedule"] = schedule_map.get(attempt.get("exam_schedule_id"), {})
+
     return attempts
 
 
-# ── Faculty Exam Results ──────────────────────────────────────────────────────
+# ── Per-attempt detail (objective summary) ───────────────────────────────────
+
+@router.get("/attempt-detail/{attempt_id}")
+async def get_attempt_detail(attempt_id: UUID, _: dict = Depends(require_faculty)):
+    """
+    Full objective-only detail for one attempt.
+    exam_attempts has no direct FK to students — fetch student info separately via user_id.
+    """
+    supabase = get_supabase_admin()
+
+    # Step 1: attempt + user only (valid FK)
+    attempt = _single_or_none(
+        supabase.table("exam_attempts")
+        .select("*,users(full_name,email)")
+        .eq("id", str(attempt_id))
+    )
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+
+    # Step 2: fetch student profile separately via user_id.
+    # Wrapped in try/except — table name may differ per schema.
+    student_info = {}
+    if attempt.get("user_id"):
+        try:
+            student_info = _single_or_none(
+                supabase.table("students")
+                .select("user_id,roll_number,semester,section")
+                .eq("user_id", attempt["user_id"])
+            ) or {}
+        except Exception:
+            student_info = {}
+    attempt["students"] = student_info
+
+    result = _single_or_none(
+        supabase.table("results")
+        .select("*")
+        .eq("attempt_id", str(attempt_id))
+    )
+
+    # Fetch answers — try with nested join first, fall back to flat if join name differs
+    answers = []
+    try:
+        answers = (
+            supabase.table("student_answers")
+            .select(
+                "id,question_id,selected_option_id,selected_option_ids,answer_text,"
+                "is_correct,marks_awarded,time_spent_sec,is_marked_for_review,"
+                "questions(id,question_text,question_type,marks,difficulty,"
+                "options(id,option_text,is_correct))"
+            )
+            .eq("attempt_id", str(attempt_id))
+            .execute().data
+        ) or []
+    except Exception as e:
+        logger.warning("attempt-detail: answers join failed (%s), trying flat fetch", e)
+        try:
+            answers = (
+                supabase.table("student_answers")
+                .select("id,question_id,selected_option_id,selected_option_ids,"
+                        "answer_text,is_correct,marks_awarded,time_spent_sec,is_marked_for_review")
+                .eq("attempt_id", str(attempt_id))
+                .execute().data
+            ) or []
+        except Exception as e2:
+            logger.error("attempt-detail: flat fetch also failed: %s", e2)
+            answers = []
+
+    # If answers have no nested question data, fetch questions separately
+    need_questions = answers and "questions" not in answers[0]
+    if need_questions:
+        q_ids = list({a["question_id"] for a in answers if a.get("question_id")})
+        q_map: dict = {}
+        if q_ids:
+            try:
+                q_rows = (
+                    supabase.table("questions")
+                    .select("id,question_text,question_type,marks,difficulty")
+                    .in_("id", q_ids)
+                    .execute().data
+                ) or []
+                # fetch options separately too
+                opt_rows = (
+                    supabase.table("options")
+                    .select("id,question_id,option_text,is_correct")
+                    .in_("question_id", q_ids)
+                    .execute().data
+                ) or []
+                opts_by_q: dict = defaultdict(list)
+                for o in opt_rows:
+                    opts_by_q[o["question_id"]].append(o)
+                for q in q_rows:
+                    q["options"] = opts_by_q.get(q["id"], [])
+                    q_map[q["id"]] = q
+            except Exception as e:
+                logger.warning("attempt-detail: separate question fetch failed: %s", e)
+        for a in answers:
+            a["questions"] = q_map.get(a.get("question_id"), {})
+
+    enriched = []
+    for ans in answers:
+        q = safe_dict(ans.get("questions"))
+        options = q.get("options") or []
+        correct_options = [o for o in options if o.get("is_correct")]
+        selected_option = next(
+            (o for o in options if o["id"] == ans.get("selected_option_id")), None
+        )
+        enriched.append({
+            "answer_id": ans["id"],
+            "question_id": ans.get("question_id", ""),
+            "question_text": q.get("question_text", ""),
+            "question_type": q.get("question_type", ""),
+            "max_marks": q.get("marks", 1),
+            "difficulty": q.get("difficulty", ""),
+            "all_options": options,
+            "student_selected_option_id": ans.get("selected_option_id"),
+            "student_selected_option_text": safe_dict(selected_option).get("option_text", ""),
+            "correct_option_ids": [o["id"] for o in correct_options],
+            "correct_option_texts": [o["option_text"] for o in correct_options],
+            "is_correct": ans.get("is_correct"),
+            "marks_awarded": ans.get("marks_awarded", 0),
+            "time_spent_sec": ans.get("time_spent_sec", 0),
+            "is_marked_for_review": ans.get("is_marked_for_review", False),
+            "was_answered": ans.get("selected_option_id") is not None,
+        })
+
+    try:
+        total_questions_in_exam = (
+            supabase.table("exam_questions")
+            .select("id", count="exact")
+            .eq("exam_id", attempt.get("exam_id", ""))
+            .execute()
+        ).count or len(enriched)
+    except Exception:
+        total_questions_in_exam = len(enriched)
+
+    answered = sum(1 for a in enriched if a["was_answered"])
+    correct = sum(1 for a in enriched if a["is_correct"])
+    skipped = total_questions_in_exam - answered
+
+    return {
+        "attempt": attempt,
+        "result": result,
+        "answers": enriched,
+        "summary": {
+            "total_questions": total_questions_in_exam,
+            "attempted": answered,
+            "correct": correct,
+            "incorrect": answered - correct,
+            "skipped": skipped,
+            "score": safe_dict(result).get("total_score", 0),
+            "max_score": safe_dict(result).get("max_score", 0),
+            "percentage": safe_dict(result).get("percentage", 0),
+            "grade": safe_dict(result).get("grade", ""),
+            "is_passed": safe_dict(result).get("is_passed", False),
+            "is_published": safe_dict(result).get("is_published", False),
+            "time_spent_sec": attempt.get("total_time_spent_sec", 0),
+            "submission_type": attempt.get("submission_type", ""),
+        },
+    }
+
+
+# ── Exam Results ──────────────────────────────────────────────────────────────
 
 @router.get("/exam-results/{exam_id}")
 async def get_exam_results(exam_id: UUID, _: dict = Depends(require_faculty)):
-    """All results for a given exam with student info."""
+    """All results for a given exam with student info and rank."""
     supabase = get_supabase_admin()
     results = (
         supabase.table("results")
         .select("*,users(full_name,email),exams(title)")
         .eq("exam_id", str(exam_id))
         .order("percentage", desc=True)
-        .execute()
-        .data
+        .execute().data
     ) or []
     for i, result in enumerate(results):
         result["rank"] = i + 1
     return results
 
 
-# ── Publish All Results ───────────────────────────────────────────────────────
+# ── Publish Results ───────────────────────────────────────────────────────────
 
 @router.post("/publish-results/{exam_id}")
 async def publish_all_results(exam_id: UUID, _: dict = Depends(require_faculty)):
-    """Publish all unpublished results for an exam."""
+    """Publish all unpublished results for an exam and notify students."""
     supabase = get_supabase_admin()
     results = (
         supabase.table("results")
         .select("id,student_id,exams(title)")
         .eq("exam_id", str(exam_id))
         .eq("is_published", False)
-        .execute()
-        .data
+        .execute().data
     ) or []
     if not results:
         return {"message": "No unpublished results found", "published": 0}
@@ -461,44 +530,70 @@ async def publish_all_results(exam_id: UUID, _: dict = Depends(require_faculty))
             "user_id": r["student_id"],
             "type": "RESULT_PUBLISHED",
             "title": "Your result is out!",
-            "body": f"Your results for {safe_dict(r.get('exams')).get('title', 'your exam')} have been published.",
+            "body": f"Results for {safe_dict(r.get('exams')).get('title', 'your exam')} have been published.",
         }
         for r in results
     ]
     if notifications:
         supabase.table("notifications").insert(notifications).execute()
+
     return {"message": f"Published {len(results)} results", "published": len(results)}
 
 
-# ── Exam Analytics ────────────────────────────────────────────────────────────
+# ── Analytics ─────────────────────────────────────────────────────────────────
 
 @router.get("/analytics/{exam_id}")
 async def get_exam_analytics(exam_id: UUID, _: dict = Depends(require_faculty)):
-    """Full analytics for a single exam."""
+    """
+    Full analytics for a single exam (objective-only).
+    Faculty sees all submitted results regardless of publish status.
+    """
     supabase = get_supabase_admin()
+
     exam = _single_or_none(
-        supabase.table("exams").select("*,courses(name)").eq("id", str(exam_id))
+        supabase.table("exams").select("*,courses(name,code)").eq("id", str(exam_id))
     )
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
 
+    # results → users is valid; results has NO direct FK to students.
+    # Fetch roll numbers separately via student_id (= user_id on students table).
     results = (
         supabase.table("results")
-        .select("*")
+        .select("*,users(full_name,email)")
         .eq("exam_id", str(exam_id))
-        .eq("is_published", True)
-        .execute()
-        .data
+        .order("percentage", desc=True)
+        .execute().data
     ) or []
 
-    total_registered = 0
+    # Attach roll numbers — wrapped in try/except since table name may differ.
+    roll_map: dict = {}
+    if results:
+        result_user_ids = list({r["student_id"] for r in results if r.get("student_id")})
+        if result_user_ids:
+            try:
+                students_rows = (
+                    supabase.table("students")
+                    .select("user_id,roll_number")
+                    .in_("user_id", result_user_ids)
+                    .execute().data
+                ) or []
+                roll_map = {s["user_id"]: s.get("roll_number", "") for s in students_rows}
+            except Exception:
+                roll_map = {}
+        for r in results:
+            r["students"] = {"roll_number": roll_map.get(r.get("student_id"), "")}
+
+    # Count registrations across all schedules
     schedules = (
         supabase.table("exam_schedules")
         .select("id")
         .eq("exam_id", str(exam_id))
-        .execute()
-        .data
+        .execute().data
     ) or []
+    schedule_ids = [s["id"] for s in schedules]
+
+    total_registered = 0
     for s in schedules:
         cnt = (
             supabase.table("exam_registrations")
@@ -509,126 +604,236 @@ async def get_exam_analytics(exam_id: UUID, _: dict = Depends(require_faculty)):
         )
         total_registered += cnt.count or 0
 
-    empty = {
+    empty_base = {
         "exam_id": str(exam_id),
         "exam_title": exam.get("title", ""),
         "course_name": safe_dict(exam.get("courses")).get("name", ""),
+        "course_code": safe_dict(exam.get("courses")).get("code", ""),
+        "total_marks": exam.get("total_marks", 0),
+        "pass_marks": exam.get("pass_marks", 0),
+        "duration_minutes": exam.get("duration_minutes", 0),
         "total_registered": total_registered,
         "total_appeared": 0,
+        "passed": 0,
+        "failed": 0,
         "average_score": 0,
         "average_percentage": 0,
         "pass_rate": 0,
         "highest_score": 0,
         "highest_scorer": None,
+        "lowest_score": 0,
+        "lowest_scorer": None,
         "median_score": 0,
         "grade_distribution": {},
         "score_distribution": [0] * 10,
-        "score_labels": [f"{i*10}-{(i+1)*10}%" for i in range(10)],
+        "score_labels": [f"{i * 10}–{(i + 1) * 10}%" for i in range(10)],
         "topic_performance": [],
+        "question_performance": [],
+        "topper_list": [],
     }
 
     if not results:
-        return empty
+        return empty_base
 
     scores = [r["total_score"] for r in results]
-    percentages = [r["percentage"] for r in results]
-    passed = sum(1 for r in results if r.get("is_passed"))
+    percentages = [float(r["percentage"] or 0) for r in results]
+    passed_count = sum(1 for r in results if r.get("is_passed"))
+    failed_count = len(results) - passed_count
 
     avg_score = round(sum(scores) / len(scores), 2)
     avg_pct = round(sum(percentages) / len(percentages), 2)
-    pass_rate = round(passed / len(results) * 100, 2)
-    highest_score = max(scores)
+    pass_rate = round(passed_count / len(results) * 100, 2)
 
-    sorted_by_pct = sorted(results, key=lambda r: r.get("percentage", 0), reverse=True)
-    highest_name = None
-    if sorted_by_pct:
-        student = _single_or_none(
-            supabase.table("users").select("full_name").eq("id", sorted_by_pct[0]["student_id"])
-        )
-        highest_name = safe_dict(student).get("full_name")
+    highest_result = results[0]
+    lowest_result = results[-1]
 
     sorted_scores = sorted(scores)
     n = len(sorted_scores)
-    median = sorted_scores[n // 2] if n % 2 else (sorted_scores[n // 2 - 1] + sorted_scores[n // 2]) / 2
+    median = (
+        sorted_scores[n // 2]
+        if n % 2
+        else (sorted_scores[n // 2 - 1] + sorted_scores[n // 2]) / 2
+    )
 
-    grade_dist = Counter(r.get("grade") for r in results)
+    grade_dist = Counter(r.get("grade") for r in results if r.get("grade"))
     buckets = [0] * 10
     for r in results:
-        bucket = min(int((r.get("percentage") or 0) // 10), 9)
+        bucket = min(int((float(r.get("percentage") or 0)) // 10), 9)
         buckets[bucket] += 1
 
-    # Topic performance
-    topic_data: dict = defaultdict(lambda: {"total": 0, "correct": 0, "count": 0, "difficulties": set()})
+    # Topper list (top 10)
+    topper_list = []
+    for i, r in enumerate(results[:10]):
+        user = safe_dict(r.get("users"))
+        student = safe_dict(r.get("students"))
+        topper_list.append({
+            "rank": i + 1,
+            "name": user.get("full_name", "Unknown"),
+            "roll_number": student.get("roll_number", ""),
+            "score": r["total_score"],
+            "percentage": float(r.get("percentage") or 0),
+            "grade": r.get("grade", ""),
+            "is_passed": r.get("is_passed", False),
+        })
+
+    # ── Question-wise performance ──────────────────────────────────────────────
+    # FIX: exam_questions declared at this scope so topic aggregation can use it
+    question_performance = []
+    exam_questions = []
+
     try:
         exam_questions = (
             supabase.table("exam_questions")
-            .select("question_id,questions(question_type,marks,question_topics(topic,difficulty))")
+            .select(
+                "question_id,order_index,"
+                "questions(question_text,question_type,marks,difficulty,"
+                "options(id,option_text,is_correct))"
+            )
             .eq("exam_id", str(exam_id))
-            .execute()
-            .data
+            .order("order_index")
+            .execute().data
         ) or []
-        schedule_ids = [s["id"] for s in schedules]
+
         attempt_ids = []
         if schedule_ids:
             all_attempts = (
                 supabase.table("exam_attempts")
                 .select("id")
                 .in_("exam_schedule_id", schedule_ids)
-                .execute()
-                .data
+                .in_("status", ["SUBMITTED", "AUTO_SUBMITTED"])
+                .execute().data
             ) or []
             attempt_ids = [a["id"] for a in all_attempts]
 
         if attempt_ids:
             answers = (
                 supabase.table("student_answers")
-                .select("question_id,is_correct")
+                .select("question_id,is_correct,selected_option_id,marks_awarded")
                 .in_("attempt_id", attempt_ids)
-                .execute()
-                .data
+                .execute().data
             ) or []
-            q_topic_map = {}
+
+            ans_by_q: dict = defaultdict(list)
+            for a in answers:
+                ans_by_q[a["question_id"]].append(a)
+
             for eq in exam_questions:
                 q = safe_dict(eq.get("questions"))
-                topics = q.get("question_topics") or []
-                for t in (topics if topics else [{"topic": "General"}]):
-                    q_topic_map[eq["question_id"]] = {
-                        "topic": t.get("topic", "General"),
-                        "difficulty": q.get("difficulty", "MEDIUM"),
-                    }
+                q_id = eq["question_id"]
+                q_answers = ans_by_q.get(q_id, [])
+                options = q.get("options") or []
+                correct_options = [o for o in options if o.get("is_correct")]
 
-            for ans in answers:
-                info = q_topic_map.get(ans["question_id"])
-                if info:
-                    topic_data[info["topic"]]["total"] += 1
-                    if ans.get("is_correct"):
-                        topic_data[info["topic"]]["correct"] += 1
-                    topic_data[info["topic"]]["count"] += 1
-                    topic_data[info["topic"]]["difficulties"].add(info["difficulty"])
+                total_ans = len(q_answers)
+                correct_ans = sum(1 for a in q_answers if a.get("is_correct"))
+                skipped = len(attempt_ids) - total_ans
+
+                option_dist = Counter(
+                    a.get("selected_option_id") for a in q_answers if a.get("selected_option_id")
+                )
+                option_stats = [
+                    {
+                        "option_id": o["id"],
+                        "option_text": o["option_text"],
+                        "is_correct": o.get("is_correct", False),
+                        "pick_count": option_dist.get(o["id"], 0),
+                        "pick_pct": (
+                            round(option_dist.get(o["id"], 0) / total_ans * 100, 1)
+                            if total_ans > 0 else 0
+                        ),
+                    }
+                    for o in options
+                ]
+
+                question_performance.append({
+                    "question_id": q_id,
+                    "order_index": eq.get("order_index", 0),
+                    "question_text": q.get("question_text", ""),
+                    "question_type": q.get("question_type", ""),
+                    "marks": q.get("marks", 1),
+                    "difficulty": q.get("difficulty", ""),
+                    "correct_option_texts": [o["option_text"] for o in correct_options],
+                    "total_attempted": total_ans,
+                    "correct_count": correct_ans,
+                    "incorrect_count": total_ans - correct_ans,
+                    "skipped_count": skipped,
+                    "accuracy_pct": round(correct_ans / total_ans * 100, 1) if total_ans > 0 else 0,
+                    "option_distribution": option_stats,
+                })
+    except Exception as e:
+        logger.warning("Analytics: question performance failed: %s", e)
+
+    # ── Topic-wise performance ─────────────────────────────────────────────────
+    # FIX: exam_questions is now in scope; removed the broken `if 'exam_questions' in dir()` guard
+    topic_performance = []
+    try:
+        topic_data: dict = defaultdict(lambda: {"total": 0, "correct": 0, "difficulties": []})
+
+        # Try question_topics table first for real topic names
+        qt_map: dict = {}
+        if exam_questions:
+            q_ids = [eq["question_id"] for eq in exam_questions]
+            try:
+                qt_rows = (
+                    supabase.table("question_topics")
+                    .select("question_id,topic,difficulty")
+                    .in_("question_id", q_ids)
+                    .execute().data
+                ) or []
+                qt_map = {r["question_id"]: r for r in qt_rows}
+            except Exception:
+                pass  # table may not exist — fall back to difficulty grouping
+
+        for qp in question_performance:
+            qt = qt_map.get(qp["question_id"])
+            topic_name = qt["topic"] if qt else (qp.get("difficulty") or "UNKNOWN")
+            topic_data[topic_name]["total"] += qp["total_attempted"]
+            topic_data[topic_name]["correct"] += qp["correct_count"]
+            topic_data[topic_name]["difficulties"].append(
+                (qt or {}).get("difficulty", qp.get("difficulty", "MEDIUM"))
+            )
+
+        topic_performance = [
+            {
+                "topic": topic,
+                "question_count": sum(
+                    1 for qp in question_performance
+                    if (qt_map.get(qp["question_id"], {}).get("topic") or qp.get("difficulty") or "UNKNOWN") == topic
+                ),
+                "avg_accuracy": (
+                    round(data["correct"] / data["total"] * 100, 1)
+                    if data["total"] > 0 else 0
+                ),
+                "difficulty": (
+                    Counter(data["difficulties"]).most_common(1)[0][0]
+                    if data["difficulties"] else "MEDIUM"
+                ),
+            }
+            for topic, data in sorted(topic_data.items())
+        ]
     except Exception as e:
         logger.warning("Analytics: topic performance failed: %s", e)
 
-    topic_performance = [
-        {
-            "topic": topic,
-            "question_count": data["count"],
-            "avg_accuracy": round((data["correct"] / data["total"]) * 100, 1) if data["total"] > 0 else 0,
-            "difficulty": sorted(data["difficulties"])[0] if data["difficulties"] else "MEDIUM",
-        }
-        for topic, data in sorted(topic_data.items())
-    ]
+    highest_user = safe_dict(highest_result.get("users"))
+    lowest_user = safe_dict(lowest_result.get("users"))
 
     return {
-        **empty,
+        **empty_base,
         "total_appeared": len(results),
+        "passed": passed_count,
+        "failed": failed_count,
         "average_score": avg_score,
         "average_percentage": avg_pct,
         "pass_rate": pass_rate,
-        "highest_score": highest_score,
-        "highest_scorer": highest_name,
+        "highest_score": max(scores),
+        "highest_scorer": highest_user.get("full_name"),
+        "lowest_score": min(scores),
+        "lowest_scorer": lowest_user.get("full_name"),
         "median_score": median,
         "grade_distribution": dict(grade_dist),
         "score_distribution": buckets,
+        "score_labels": [f"{i * 10}–{(i + 1) * 10}%" for i in range(10)],
         "topic_performance": topic_performance,
+        "question_performance": question_performance,
+        "topper_list": topper_list,
     }
-    

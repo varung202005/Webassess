@@ -18,7 +18,8 @@ import type {
   StudentAnswer,
 } from "./types";
 
-
+const BASE = "/api";   // adjust to your actual base URL / axios instance
+ 
 export const facultyApi = {
   // ── Portal ──────────────────────────────────────────────────────────────────
   dashboard: () => get<FacultyDashboard>("/api/v1/faculty/dashboard"),
@@ -38,6 +39,16 @@ export const facultyApi = {
     const qs = query.toString();
     return get<Question[]>(`/api/v1/questions/${qs ? `?${qs}` : ""}`);
   },
+
+  getAttemptDetail: async (attemptId: string) => {
+    const res = await fetch(`/api/v1/faculty/attempt-detail/${attemptId}`, {
+        credentials: "include",
+    });
+
+    if (!res.ok) throw new Error("Failed");
+
+    return res.json();
+},
 
   getQuestion: (questionId: string) =>
     get<Question>(`/api/v1/questions/${questionId}`),
@@ -159,7 +170,9 @@ export const facultyApi = {
     patch(`/api/v1/results/${resultId}/publish`),
 
   publishAllResults: (examId: string) =>
-    post(`/api/v1/faculty/publish-results/${examId}`),
+  post<{ published: number }>(
+        `/api/v1/faculty/publish-results/${examId}`
+    ),
 
   // ── Analytics ───────────────────────────────────────────────────────────────
   getExamAnalytics: (examId: string) =>

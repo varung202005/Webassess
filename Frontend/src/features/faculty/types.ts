@@ -240,27 +240,83 @@ export interface FacultyDashboard {
 export interface ExamAnalytics {
   exam_id: string;
   exam_title: string;
+
   course_name: string;
+  course_code: string;
+
+  total_marks: number;
+  pass_marks: number;
+  duration_minutes: number;
+
   total_registered: number;
   total_appeared: number;
+
   average_score: number;
   average_percentage: number;
+
   pass_rate: number;
+
   passed: number;
+  failed: number;
+
   highest_score: number;
   highest_scorer: string | null;
-  max_score: number;
+
+  lowest_score: number;
+  lowest_scorer: string | null;
+
   median_score: number;
+  max_score: number;
+
   grade_distribution: Record<string, number>;
+
   score_distribution: number[];
   score_labels?: string[];
-  topic_performance: Array<{
+
+  topic_performance: {
     topic: string;
     question_count: number;
     avg_accuracy: number;
     difficulty: string;
-  }>;
+  }[];
 
+  question_performance: {
+    question_id: string;
+    question_text: string;
+
+    difficulty: string;
+
+    total_attempted: number;
+    correct_count: number;
+    incorrect_count: number;
+    skipped_count: number;
+
+    accuracy_pct: number;
+
+    option_distribution: {
+      option_id: string;
+      option_text: string;
+      is_correct: boolean;
+      pick_count: number;
+      pick_pct: number;
+    }[];
+  }[];
+
+  topper_list: {
+    rank: number;
+
+    student_id: string;
+
+    name: string;
+    roll_number: string;
+
+    score: number;
+    percentage: number;
+
+    grade: string;
+
+    is_passed: boolean;
+  }[];
 }
 
 export interface ExtractedOption {
