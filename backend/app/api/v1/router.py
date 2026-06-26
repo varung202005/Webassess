@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     grading,
     results,
     re_evaluation,
+    proctor,
     proctoring,
     notifications,
     audit_logs,
@@ -56,7 +57,8 @@ api_router.include_router(results.router,               prefix="/results",      
 api_router.include_router(re_evaluation.router,         prefix="/re-evaluation",        tags=["Re-Evaluation"])
 
 # ── Proctoring ────────────────────────────────────────────────────────────────
-api_router.include_router(proctoring.router,            prefix="/proctoring",           tags=["Proctoring"])
+api_router.include_router(proctor.router,            prefix="/proctor",           tags=["Proctor"])
+api_router.include_router(proctoring.router,         prefix="/proctoring",          tags=["Proctoring"])
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 api_router.include_router(notifications.router,         prefix="/notifications",        tags=["Notifications"])
@@ -70,3 +72,5 @@ api_router.include_router(faculty.router,               prefix="/faculty",      
 # ── Admin / Audit ─────────────────────────────────────────────────────────────
 api_router.include_router(audit_logs.router,            prefix="/audit-logs",           tags=["Audit Logs"])
 api_router.include_router(admin.router,                 prefix="/admin",               tags=["Admin"])
+
+
