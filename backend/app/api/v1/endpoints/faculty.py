@@ -366,39 +366,24 @@ async def get_attempt_detail(attempt_id: UUID, _: dict = Depends(require_faculty
         .eq("attempt_id", str(attempt_id))
     )
 
-    # Fetch answers — try with nested join first, fall back to flat if join name differs
+    # Step 1: fetch answers (flat — no nested join, most reliable)
     answers = []
     try:
         answers = (
             supabase.table("student_answers")
-            .select(
-                "id,question_id,selected_option_id,selected_option_ids,answer_text,"
-                "is_correct,marks_awarded,time_spent_sec,is_marked_for_review,"
-                "questions(id,question_text,question_type,marks,difficulty,"
-                "options(id,option_text,is_correct))"
-            )
+            .select("id,question_id,selected_option_id,selected_option_ids,"
+                    "answer_text,is_correct,marks_awarded,time_spent_sec,is_marked_for_review")
             .eq("attempt_id", str(attempt_id))
             .execute().data
         ) or []
     except Exception as e:
-        logger.warning("attempt-detail: answers join failed (%s), trying flat fetch", e)
-        try:
-            answers = (
-                supabase.table("student_answers")
-                .select("id,question_id,selected_option_id,selected_option_ids,"
-                        "answer_text,is_correct,marks_awarded,time_spent_sec,is_marked_for_review")
-                .eq("attempt_id", str(attempt_id))
-                .execute().data
-            ) or []
-        except Exception as e2:
-            logger.error("attempt-detail: flat fetch also failed: %s", e2)
-            answers = []
+        logger.error("attempt-detail: answers fetch failed: %s", e)
+        answers = []
 
-    # If answers have no nested question data, fetch questions separately
-    need_questions = answers and "questions" not in answers[0]
-    if need_questions:
+    # Step 2: fetch question text + metadata separately
+    q_map: dict = {}
+    if answers:
         q_ids = list({a["question_id"] for a in answers if a.get("question_id")})
-        q_map: dict = {}
         if q_ids:
             try:
                 q_rows = (
@@ -407,23 +392,39 @@ async def get_attempt_detail(attempt_id: UUID, _: dict = Depends(require_faculty
                     .in_("id", q_ids)
                     .execute().data
                 ) or []
-                # fetch options separately too
-                opt_rows = (
-                    supabase.table("options")
-                    .select("id,question_id,option_text,is_correct")
-                    .in_("question_id", q_ids)
-                    .execute().data
-                ) or []
-                opts_by_q: dict = defaultdict(list)
-                for o in opt_rows:
-                    opts_by_q[o["question_id"]].append(o)
                 for q in q_rows:
-                    q["options"] = opts_by_q.get(q["id"], [])
                     q_map[q["id"]] = q
             except Exception as e:
-                logger.warning("attempt-detail: separate question fetch failed: %s", e)
-        for a in answers:
-            a["questions"] = q_map.get(a.get("question_id"), {})
+                logger.warning("attempt-detail: question fetch failed: %s", e)
+
+    # Step 3: fetch options separately — avoids nested join name ambiguity
+    opts_by_q: dict = defaultdict(list)
+    if q_map:
+        try:
+            # Try common table names for options
+            opt_rows = []
+            for tbl in ("question_options", "options"):
+                try:
+                    opt_rows = (
+                        supabase.table(tbl)
+                        .select("id,question_id,option_text,is_correct")
+                        .in_("question_id", list(q_map.keys()))
+                        .execute().data
+                    ) or []
+                    if opt_rows:
+                        break  # found the right table
+                except Exception:
+                    continue
+            for o in opt_rows:
+                opts_by_q[o["question_id"]].append(o)
+        except Exception as e:
+            logger.warning("attempt-detail: options fetch failed: %s", e)
+
+    # Step 4: attach questions + options to each answer
+    for a in answers:
+        q = q_map.get(a.get("question_id"), {})
+        q["options"] = opts_by_q.get(a.get("question_id"), [])
+        a["questions"] = q
 
     enriched = []
     for ans in answers:
