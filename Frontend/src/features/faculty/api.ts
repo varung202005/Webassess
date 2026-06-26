@@ -18,8 +18,6 @@ import type {
   StudentAnswer,
 } from "./types";
 
-const BASE = "/api";   // adjust to your actual base URL / axios instance
- 
 export const facultyApi = {
   // ── Portal ──────────────────────────────────────────────────────────────────
   dashboard: () => get<FacultyDashboard>("/api/v1/faculty/dashboard"),
@@ -35,20 +33,11 @@ export const facultyApi = {
     if (params?.course_id) query.set("course_id", params.course_id);
     if (params?.question_type) query.set("question_type", params.question_type);
     if (params?.difficulty) query.set("difficulty", params.difficulty);
-    if (params?.is_active !== undefined) query.set("is_active", String(params.is_active));
+    if (params?.is_active !== undefined)
+      query.set("is_active", String(params.is_active));
     const qs = query.toString();
     return get<Question[]>(`/api/v1/questions/${qs ? `?${qs}` : ""}`);
   },
-
-  getAttemptDetail: async (attemptId: string) => {
-    const res = await fetch(`/api/v1/faculty/attempt-detail/${attemptId}`, {
-        credentials: "include",
-    });
-
-    if (!res.ok) throw new Error("Failed");
-
-    return res.json();
-},
 
   getQuestion: (questionId: string) =>
     get<Question>(`/api/v1/questions/${questionId}`),
@@ -131,10 +120,13 @@ export const facultyApi = {
     ),
 
   // ── Attempts (Faculty view) ─────────────────────────────────────────────────
-  // FIX: now hits /faculty/exam-attempts/{examId} which uses !inner join
-  // to correctly filter attempts by exam_id through exam_schedules
   getExamAttempts: (examId: string) =>
     get<ExamAttempt[]>(`/api/v1/faculty/exam-attempts/${examId}`),
+
+  // FIX: was using raw fetch() which doesn't send the Authorization header.
+  // Now uses the same get() helper as every other method — auth works correctly.
+  getAttemptDetail: (attemptId: string) =>
+    get<Record<string, unknown>>(`/api/v1/faculty/attempt-detail/${attemptId}`),
 
   getAttemptTimeline: (attemptId: string) =>
     get<Array<{ source: string; event: string; time: string }>>(
@@ -142,9 +134,7 @@ export const facultyApi = {
     ),
 
   // ── Grading ─────────────────────────────────────────────────────────────────
-  getPendingGrading: (examId: string) =>
-    get<StudentAnswer[]>(`/api/v1/grading/pending/${examId}`),
-
+  // getPendingGrading removed — objective-only portal, no manual grading needed
   setManualScore: (body: {
     answer_id: string;
     marks_awarded: number;
@@ -170,9 +160,7 @@ export const facultyApi = {
     patch(`/api/v1/results/${resultId}/publish`),
 
   publishAllResults: (examId: string) =>
-  post<{ published: number }>(
-        `/api/v1/faculty/publish-results/${examId}`
-    ),
+    post<{ published: number }>(`/api/v1/faculty/publish-results/${examId}`),
 
   // ── Analytics ───────────────────────────────────────────────────────────────
   getExamAnalytics: (examId: string) =>
@@ -194,8 +182,7 @@ export const facultyApi = {
   markNotificationRead: (notificationId: string) =>
     patch(`/api/v1/notifications/${notificationId}/read`),
 
-  markAllNotificationsRead: () =>
-    patch("/api/v1/notifications/read-all"),
+  markAllNotificationsRead: () => patch("/api/v1/notifications/read-all"),
 
   // ── Master Data ─────────────────────────────────────────────────────────────
   listDepartments: () => get<Department[]>("/api/v1/departments/"),

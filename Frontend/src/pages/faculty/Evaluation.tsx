@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import {
@@ -83,7 +84,7 @@ function fmtDuration(sec: number) {
 function useAttemptDetail(attemptId: string | null) {
   return useQuery<AttemptDetail>({
     queryKey: ["attempt-detail", attemptId],
-    queryFn: () => facultyApi.getAttemptDetail(attemptId!),
+    queryFn: () => facultyApi.getAttemptDetail(attemptId!) as unknown as Promise<AttemptDetail>,
     enabled: !!attemptId,
     staleTime: 30_000,
   });
@@ -124,78 +125,115 @@ function ScoreRing({ pct, passed }: { pct: number; passed: boolean }) {
 function AnswerCard({ ans, idx }: { ans: AnswerDetail; idx: number }) {
   const [expanded, setExpanded] = useState(false);
 
-  const statusStyle = !ans.was_answered
-    ? { bg: "#f1f2f5", text: "#616573", label: "Skipped" }
+  const status = !ans.was_answered
+    ? { bg: "#f3f4f6", text: "#6b7280", label: "Skipped" }
     : ans.is_correct
-    ? { bg: "#def8ee", text: "#08775b", label: "Correct" }
-    : { bg: "#fde8e8", text: "#b91c1c", label: "Wrong" };
+    ? { bg: "#dcfce7", text: "#15803d", label: "Correct" }
+    : { bg: "#fee2e2", text: "#dc2626", label: "Wrong" };
 
   return (
-    <div className="q-card" style={{ marginBottom: 8, border: "1px solid var(--c-gray-200)", borderRadius: 8, overflow: "hidden" }}>
-      <div className="q-card-hdr" style={{ cursor: "pointer", padding: "10px 14px" }} onClick={() => setExpanded((p) => !p)}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
-          <span className="q-num" style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {idx + 1}
+    <div style={{ marginBottom: 10, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden", background: "white" }}>
+      {/* Collapsed header */}
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", userSelect: "none" }}
+        onClick={() => setExpanded((p) => !p)}
+      >
+        <span style={{ width: 28, height: 28, borderRadius: "50%", background: status.bg, color: status.text, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+          {idx + 1}
+        </span>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {ans.question_text || "(No question text)"}
+        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {ans.difficulty && (
+            <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 4, border: "1px solid #e5e7eb", color: "#9ca3af" }}>
+              {ans.difficulty}
+            </span>
+          )}
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#6b7280" }}>
+            {ans.marks_awarded ?? 0}<span style={{ color: "#d1d5db" }}>/{ans.max_marks}</span>
           </span>
-          <span style={{ fontSize: 12, color: "var(--c-gray-700)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-            {ans.question_text}
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-          <span style={{ background: statusStyle.bg, color: statusStyle.text, fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
-            {statusStyle.label}
-          </span>
-          <span style={{ fontSize: 12, color: "var(--c-gray-500)" }}>{ans.marks_awarded ?? 0}/{ans.max_marks}</span>
           {ans.time_spent_sec > 0 && (
-            <span style={{ fontSize: 11, color: "var(--c-gray-400)" }}>⏱ {fmtTime(ans.time_spent_sec)}</span>
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>⏱ {fmtTime(ans.time_spent_sec)}</span>
           )}
-          {ans.is_marked_for_review && (
-            <i className="ti ti-flag" style={{ fontSize: 12, color: "var(--c-warning-500)" }} title="Marked for review" />
-          )}
-          <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ color: "var(--c-gray-400)", fontSize: 13 }} />
+          <span style={{ background: status.bg, color: status.text, fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20 }}>
+            {status.label}
+          </span>
+          <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ color: "#9ca3af", fontSize: 13 }} />
         </div>
       </div>
 
+      {/* Expanded body */}
       {expanded && (
-        <div className="q-body" style={{ padding: "12px 14px", borderTop: "1px solid var(--c-gray-100)" }}>
-          <div className="q-text" style={{ marginBottom: 12, fontWeight: 500 }}>{ans.question_text}</div>
+        <div style={{ borderTop: "1px solid #f3f4f6", padding: "16px" }}>
+          {/* Question text */}
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#111827", marginBottom: 14, lineHeight: 1.6 }}>
+            {ans.question_text}
+          </div>
 
+          {/* Options */}
           {ans.all_options.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {ans.all_options.map((opt) => {
                 const isSelected = opt.id === ans.student_selected_option_id;
                 const isCorrect = opt.is_correct;
-                let bg = "var(--c-gray-50)", borderColor = "var(--c-gray-200)", dotColor = "var(--c-gray-300)";
-                if (isCorrect && isSelected) { bg = "#def8ee"; borderColor = "#08775b"; dotColor = "#08775b"; }
-                else if (isCorrect) { bg = "#f0fdf7"; borderColor = "#34d399"; dotColor = "#34d399"; }
-                else if (isSelected) { bg = "#fde8e8"; borderColor = "#b91c1c"; dotColor = "#b91c1c"; }
+
+                let bg = "#fafafa", border = "1.5px solid #e5e7eb", textColor = "#374151";
+                let icon: ReactNode = null;
+
+                if (isCorrect && isSelected) {
+                  bg = "#f0fdf4"; border = "1.5px solid #16a34a"; textColor = "#14532d";
+                  icon = <span style={{ fontSize: 12, color: "#16a34a", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>✓ Correct</span>;
+                } else if (isCorrect) {
+                  bg = "#f0fdf4"; border = "1.5px dashed #4ade80"; textColor = "#166534";
+                  icon = <span style={{ fontSize: 12, color: "#16a34a", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>✓ Correct answer</span>;
+                } else if (isSelected) {
+                  bg = "#fff1f2"; border = "1.5px solid #f87171"; textColor = "#7f1d1d";
+                  icon = <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>✗ Student picked</span>;
+                }
 
                 return (
-                  <div key={opt.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 6, border: `1.5px solid ${borderColor}`, background: bg, fontSize: 13 }}>
-                    <span style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${dotColor}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      {isSelected && <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, display: "block" }} />}
+                  <div key={opt.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 8, background: bg, border, fontSize: 13, color: textColor }}>
+                    <span style={{
+                      width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                      border: `2px solid ${isCorrect ? "#16a34a" : isSelected ? "#dc2626" : "#d1d5db"}`,
+                      background: isSelected ? (isCorrect ? "#16a34a" : "#dc2626") : "white",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {isSelected && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "white", display: "block" }} />}
                     </span>
-                    <span style={{ flex: 1 }}>{opt.option_text}</span>
-                    {isCorrect && isSelected && <span style={{ fontSize: 11, color: "#08775b", fontWeight: 600 }}><i className="ti ti-check" /> Correct · Student's answer</span>}
-                    {isCorrect && !isSelected && <span style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}><i className="ti ti-check" /> Correct answer</span>}
-                    {isSelected && !isCorrect && <span style={{ fontSize: 11, color: "#b91c1c", fontWeight: 600 }}><i className="ti ti-x" /> Student's answer</span>}
+                    <span style={{ flex: 1, lineHeight: 1.5 }}>{opt.option_text}</span>
+                    {icon}
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div style={{ fontSize: 13, color: "var(--c-gray-600)" }}>
-              {ans.was_answered ? (
-                <><strong>Student answered:</strong> {ans.student_selected_option_text || "—"}<br /><strong>Correct:</strong> {ans.correct_option_texts.join(", ") || "—"}</>
-              ) : (
-                <span style={{ color: "var(--c-gray-400)" }}>Not answered</span>
+            /* Fallback — options not loaded, show text summary */
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: ans.was_answered ? "#fff1f2" : "#f9fafb", border: `1.5px solid ${ans.was_answered ? "#fca5a5" : "#e5e7eb"}`, fontSize: 13 }}>
+                <span style={{ color: "#9ca3af", marginRight: 6 }}>Student answered:</span>
+                <span style={{ fontWeight: 600, color: ans.was_answered ? "#dc2626" : "#9ca3af" }}>
+                  {ans.student_selected_option_text || (ans.was_answered ? "—" : "Not answered")}
+                </span>
+              </div>
+              {ans.correct_option_texts.length > 0 && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "#f0fdf4", border: "1.5px solid #86efac", fontSize: 13 }}>
+                  <span style={{ color: "#9ca3af", marginRight: 6 }}>Correct answer:</span>
+                  <span style={{ fontWeight: 600, color: "#166534" }}>{ans.correct_option_texts.join(", ")}</span>
+                </div>
               )}
             </div>
           )}
 
           {!ans.was_answered && (
-            <div style={{ marginTop: 10, padding: "8px 12px", background: "#f1f2f5", borderRadius: 6, fontSize: 12, color: "#616573" }}>
-              Student did not attempt this question.
+            <div style={{ marginTop: 10, padding: "8px 14px", background: "#f9fafb", borderRadius: 8, fontSize: 12, color: "#9ca3af", border: "1px dashed #e5e7eb" }}>
+              Student did not attempt this question
+            </div>
+          )}
+          {ans.is_marked_for_review && (
+            <div style={{ marginTop: 8, fontSize: 11, color: "#d97706", display: "flex", alignItems: "center", gap: 4 }}>
+              <i className="ti ti-flag" /> Marked for review
             </div>
           )}
         </div>
@@ -203,6 +241,7 @@ function AnswerCard({ ans, idx }: { ans: AnswerDetail; idx: number }) {
     </div>
   );
 }
+
 
 /* ── Student detail panel ─────────────────────────────────── */
 function StudentDetailPanel({ attemptId }: { attemptId: string }) {
@@ -216,7 +255,6 @@ function StudentDetailPanel({ attemptId }: { attemptId: string }) {
   );
 
   if (isError || !data) {
-    // Log the real error so it's visible in browser console
     if (isError) console.error("[attempt-detail] fetch failed:", error);
     return (
       <div className="grading-panel" style={{ padding: 32, textAlign: "center", color: "var(--c-gray-500)" }}>
@@ -231,11 +269,16 @@ function StudentDetailPanel({ attemptId }: { attemptId: string }) {
     );
   }
 
-  const { summary, answers, attempt } = data;
+  // FIX: access properties individually to avoid destructuring type errors
+  const summary = data.summary;
+  const answers = data.answers;
+  const attempt = data.attempt;
+
   const user = attempt?.users ?? {};
   const student = attempt?.students ?? {};
 
-  const filteredAnswers = answers.filter((a) => {
+  // FIX: explicit type annotation on filter callback parameter
+  const filteredAnswers = answers.filter((a: AnswerDetail) => {
     if (filter === "correct") return a.is_correct === true;
     if (filter === "wrong") return a.was_answered && a.is_correct === false;
     if (filter === "skipped") return !a.was_answered;
@@ -274,15 +317,31 @@ function StudentDetailPanel({ attemptId }: { attemptId: string }) {
       </div>
 
       {/* Score summary */}
-      <div style={{ display: "flex", alignItems: "center", gap: 24, padding: "16px 20px", borderBottom: "1px solid var(--c-gray-100)", background: "var(--c-gray-50)", flexShrink: 0 }}>
-        <ScoreRing pct={summary.percentage} passed={summary.is_passed} />
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", flex: 1 }}>
-          <StatPill label="Score" value={`${summary.score}/${summary.max_score}`} color="var(--c-primary-700)" />
-          <StatPill label="Correct" value={summary.correct} color="var(--c-success-700)" />
-          <StatPill label="Wrong" value={summary.incorrect} color="var(--c-danger-700)" />
-          <StatPill label="Skipped" value={summary.skipped} />
-          <StatPill label="Grade" value={summary.grade || "—"} color={summary.is_passed ? "var(--c-success-700)" : "var(--c-danger-700)"} />
-          <StatPill label="Time" value={fmtDuration(summary.time_spent_sec)} />
+      <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--c-gray-100)", background: "var(--c-gray-50)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          {/* Ring */}
+          <ScoreRing pct={summary.percentage} passed={summary.is_passed} />
+
+          {/* Stats grid */}
+          <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 20px" }}>
+            {[
+              { label: "Score", value: `${summary.score} / ${summary.max_score}`, color: "var(--c-primary-700)" },
+              { label: "Grade", value: summary.grade || "—", color: summary.is_passed ? "var(--c-success-700)" : "var(--c-danger-700)" },
+              { label: "Time Spent", value: fmtDuration(summary.time_spent_sec), color: undefined },
+              { label: "Correct", value: summary.correct, color: "var(--c-success-700)" },
+              { label: "Wrong", value: summary.incorrect, color: "var(--c-danger-700)" },
+              { label: "Skipped", value: summary.skipped, color: "var(--c-gray-500)" },
+            ].map(({ label, value, color }) => (
+              <div key={label}>
+                <div style={{ fontSize: 11, color: "var(--c-gray-400)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
+                  {label}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: color ?? "var(--c-gray-900)" }}>
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -305,7 +364,8 @@ function StudentDetailPanel({ attemptId }: { attemptId: string }) {
         {filteredAnswers.length === 0 ? (
           <div style={{ textAlign: "center", color: "var(--c-gray-400)", padding: 32, fontSize: 13 }}>No answers in this category.</div>
         ) : (
-          filteredAnswers.map((ans) => <AnswerCard key={ans.answer_id} ans={ans} idx={answers.indexOf(ans)} />)
+          // FIX: explicit type annotation on map callback parameter
+          filteredAnswers.map((ans: AnswerDetail) => <AnswerCard key={ans.answer_id} ans={ans} idx={answers.indexOf(ans)} />)
         )}
       </div>
     </div>
