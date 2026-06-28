@@ -22,6 +22,7 @@ import {
 import type { AlertItem } from "../../features/proctor/components";
 import type { FlaggedAttempt, ProctoringVerdict } from "../../features/proctor/types";
 import { studentName, verdictLabel } from "../../features/proctor/format";
+import CandidateGrid from "../../features/proctor/CandidateGrid";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function makeAlertId() {
@@ -221,6 +222,25 @@ export default function ProctorDashboard() {
       ) : (
         <StatsRow stats={stats} />
       )}
+
+      {/* ── Live Candidate Snapshots ── */}
+      <div className="pcard">
+        <div className="pcard-head">
+          <i className="ti ti-camera" style={{ color: "var(--c-primary-700)", fontSize: 17 }} />
+          <span className="pcard-title">Live Candidate Feeds</span>
+          <span className="pcard-count" style={{ background: "#f0fdf4", color: "#166534" }}>
+            ~30s delay
+          </span>
+          {flagged.length > 0 && (
+            <span style={{ fontSize: 11, color: "#aaa", marginLeft: "auto" }}>
+              {flagged.length} candidate{flagged.length !== 1 ? "s" : ""} monitored
+            </span>
+          )}
+        </div>
+        <div className="pcard-body">
+          <CandidateGrid attempts={flagged} refreshMs={30_000} />
+        </div>
+      </div>
 
       {/* Main grid */}
       <div className="proctor-grid">
