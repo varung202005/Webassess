@@ -5,6 +5,9 @@ import { studentApi } from "../../features/student/api";
 import { apiMessage } from "../../features/student/format";
 import type { ExamQuestion } from "../../features/student/types";
 import "./liveExam.css";
+import WebcamCapture from "../../features/proctor/WebcamCapture";
+import CameraPermission from "../../features/proctor/CameraPermission";
+import { useAuthStore } from "../../store/authStore";
 
 interface AnswerState {
   selected_option_id?: string | null;
@@ -37,10 +40,12 @@ export default function LiveExam() {
   const [submitOpen, setSubmitOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cameraCleared, setCameraCleared] = useState(false);
   const dirty = useRef(new Set<string>());
   const submitted = useRef(false);
   const enteredQuestionAt = useRef(Date.now());
   const session = sessionQuery.data;
+  const currentUser = useAuthStore((s) => s.user);
 
   useEffect(() => {
     if (!answersQuery.data) return;
@@ -170,6 +175,23 @@ export default function LiveExam() {
     };
   }, [answers, questions]);
 
+  // ── Camera gate — show before exam renders ──────────────────────────────
+  if (session && !cameraCleared) {
+    const rule = Array.isArray(session.exam.exam_rules)
+      ? session.exam.exam_rules[0]
+      : session.exam.exam_rules;
+    const courseCode = session.exam.courses?.code ?? "";
+    return (
+      <CameraPermission
+        examTitle={session.exam.title}
+        courseCode={courseCode}
+        cameraRequired={rule?.fullscreen_required ?? true}
+        onProceed={() => setCameraCleared(true)}
+        onSkip={() => setCameraCleared(true)}
+      />
+    );
+  }
+
   if (sessionQuery.isLoading || answersQuery.isLoading) return <div className="exam-state"><span className="spinner" />Preparing your secure exam session...</div>;
   if (sessionQuery.error || !session) return <div className="exam-state error"><i className="ti ti-alert-triangle" /><h2>Unable to open exam</h2><p>{apiMessage(sessionQuery.error)}</p><button className="btn btn-primary" onClick={() => navigate("/student/registered")}>Back to Registered Exams</button></div>;
   if (!question) return <div className="exam-state error"><h2>No questions configured</h2><p>This exam cannot be attempted until faculty add questions.</p><button className="btn btn-primary" onClick={() => navigate("/student/registered")}>Go Back</button></div>;
@@ -214,6 +236,14 @@ export default function LiveExam() {
         <div className="timer-policy">Timer policy: your attempt closes at the earlier of the full duration or the published exam closing time.</div>
       </aside>
     </div>
+    {/* Invisible webcam capture — runs silently in background */}
+    {session && (
+      <WebcamCapture
+        attemptId={session.attempt.id}
+        studentId={currentUser?.id ?? ""}
+        intervalMs={30000}
+      />
+    )}
     {submitOpen && <div className="modal-backdrop"><section className="modal"><div className="modal-header"><h2>Submit examination?</h2><button onClick={() => setSubmitOpen(false)}><i className="ti ti-x" /></button></div><div className="modal-body"><p>You have answered <strong>{summary.answered}</strong> of {questions.length} questions. {summary.unanswered > 0 && `${summary.unanswered} remain unanswered.`}</p><div className="detail-grid" style={{ marginTop: 14 }}><div className="detail-item"><span>Answered</span><strong>{summary.answered}</strong></div><div className="detail-item"><span>Marked for review</span><strong>{summary.flagged}</strong></div></div></div><div className="modal-footer"><button className="btn btn-secondary" onClick={() => setSubmitOpen(false)}>Continue Exam</button><button className="btn btn-primary" disabled={submitting} onClick={() => void submit("MANUAL")}>{submitting ? "Submitting..." : "Confirm Submit"}</button></div></section></div>}
   </div>;
 }

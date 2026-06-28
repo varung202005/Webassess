@@ -1,0 +1,266 @@
+/* ============================================================
+   Camera Permission Gate — Pre-exam screen
+   Matches the LiveExam dark header + EXAM.TIET brand colours
+   ============================================================ */
+
+.cam-gate {
+  min-height: 100vh;
+  background: #f3f4f7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 16px 40px;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.cam-gate-header {
+  width: 100%;
+  max-width: 520px;
+  background: #202330;
+  border-bottom: 3px solid #b31234;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-radius: 0 0 12px 12px;
+  margin-bottom: 32px;
+}
+.cam-gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.3px;
+}
+.cam-gate-brand i { color: #ffbbc8; font-size: 18px; }
+
+.cam-gate-exam  { text-align: right; }
+.cam-gate-code  { display: block; font-size: 10px; color: #8a8fa3; text-transform: uppercase; letter-spacing: 1px; }
+.cam-gate-title { display: block; font-size: 12px; color: #d3d5dc; font-weight: 500; max-width: 220px; }
+
+/* ── Card ───────────────────────────────────────────────── */
+.cam-gate-card {
+  width: 100%;
+  max-width: 520px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px 32px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* ── State icon ─────────────────────────────────────────── */
+.cam-gate-icon {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 34px;
+  margin-bottom: 20px;
+}
+.cam-gate-icon--blue { background: #eff6ff; color: #1d4ed8; }
+.cam-gate-icon--red  { background: #fff0f2; color: #b31234; }
+
+/* ── Text ───────────────────────────────────────────────── */
+.cam-gate-heading {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0 0 10px;
+}
+.cam-gate-body {
+  font-size: 14px;
+  color: #666;
+  line-height: 1.6;
+  max-width: 400px;
+  margin: 0 0 24px;
+}
+.cam-gate-body--error { color: #b31234; font-weight: 500; }
+
+/* ── Checklist ──────────────────────────────────────────── */
+.cam-gate-checklist {
+  width: 100%;
+  background: #f8f9fb;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+.cam-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #444;
+}
+.cam-check-ok { color: #16a34a; font-size: 16px; flex-shrink: 0; }
+
+/* ── Rules list ─────────────────────────────────────────── */
+.cam-gate-rules {
+  list-style: none;
+  padding: 0; margin: 0 0 24px;
+  width: 100%;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  text-align: left;
+}
+.cam-gate-rules li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #78350f;
+}
+.cam-gate-rules li i { color: #d97706; font-size: 15px; flex-shrink: 0; }
+
+/* ── Camera preview ─────────────────────────────────────── */
+.cam-preview-wrap {
+  position: relative;
+  width: 280px;
+  height: 210px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #111;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.25);
+}
+.cam-preview-video {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scaleX(-1); /* Mirror like a selfie */
+}
+.cam-preview-live {
+  position: absolute;
+  top: 8px; left: 8px;
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(0,0,0,.55);
+  padding: 3px 9px; border-radius: 20px;
+  font-size: 10px; font-weight: 700; color: #fff;
+  letter-spacing: .8px;
+  backdrop-filter: blur(2px);
+}
+.cam-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74,222,128,.3);
+  animation: blink 1.4s infinite;
+}
+@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+
+/* Corner brackets — viewfinder effect */
+.cam-preview-corner {
+  position: absolute;
+  width: 18px; height: 18px;
+  border-color: #fff;
+  border-style: solid;
+  opacity: .7;
+}
+.cam-preview-tl { top: 8px;  left: 8px;  border-width: 2px 0 0 2px; border-radius: 3px 0 0 0; }
+.cam-preview-tr { top: 8px;  right: 8px; border-width: 2px 2px 0 0; border-radius: 0 3px 0 0; }
+.cam-preview-bl { bottom: 8px; left: 8px;  border-width: 0 0 2px 2px; border-radius: 0 0 0 3px; }
+.cam-preview-br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; border-radius: 0 0 3px 0; }
+
+/* ── Granted badge ──────────────────────────────────────── */
+.cam-granted-badge {
+  display: flex; align-items: center; gap: 7px;
+  background: #f0fdf4;
+  border: 1px solid #a7e8cf;
+  color: #166534;
+  font-size: 13px; font-weight: 600;
+  padding: 7px 16px; border-radius: 20px;
+}
+.cam-granted-badge i { font-size: 17px; }
+
+/* ── Fix steps ──────────────────────────────────────────── */
+.cam-fix-steps {
+  width: 100%;
+  background: #fff4f6;
+  border: 1px solid #ffcbd4;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+  text-align: left;
+}
+.cam-fix-heading { font-size: 12px; font-weight: 700; color: #9d0226; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .7px; }
+.cam-fix-step {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13px; color: #555; margin-bottom: 9px;
+}
+.cam-fix-step:last-child { margin-bottom: 0; }
+.cam-fix-num {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #b31234; color: #fff;
+  font-size: 10px; font-weight: 800;
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.cam-fix-actions {
+  display: flex; flex-direction: column; gap: 10px; width: 100%;
+}
+
+/* ── Buttons ────────────────────────────────────────────── */
+.cam-gate-btn {
+  width: 100%;
+  padding: 13px 20px;
+  border-radius: 10px;
+  font-size: 14px; font-weight: 700;
+  border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: opacity .15s, transform .1s;
+}
+.cam-gate-btn:active { transform: scale(.98); }
+.cam-gate-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.cam-gate-btn--primary {
+  background: #b31234; color: #fff;
+  box-shadow: 0 4px 14px rgba(179,18,52,.3);
+  margin-top: 8px;
+}
+.cam-gate-btn--primary:not(:disabled):hover { opacity: .9; }
+
+.cam-gate-btn--start {
+  background: #166534; color: #fff;
+  box-shadow: 0 4px 14px rgba(22,101,52,.25);
+  margin-top: 20px; font-size: 15px; padding: 15px;
+}
+.cam-gate-btn--start:hover { opacity: .9; }
+
+.cam-gate-btn--ghost {
+  background: transparent; color: #888;
+  border: 1px solid #ddd;
+  margin-top: 6px;
+}
+.cam-gate-btn--ghost:hover { background: #f5f5f8; }
+
+/* Spinner animation */
+.spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Footer note ────────────────────────────────────────── */
+.cam-gate-footer {
+  margin-top: 24px;
+  font-size: 11px;
+  color: #aaa;
+  display: flex; align-items: center; gap: 5px;
+}
+.cam-gate-footer i { font-size: 13px; }
+
+/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .cam-gate-card  { padding: 24px 18px; }
+  .cam-gate-header { border-radius: 0; margin-bottom: 20px; }
+  .cam-preview-wrap { width: 240px; height: 180px; }
+}
