@@ -14,6 +14,7 @@
  * Place at: Frontend/src/features/proctor/CameraPermission.tsx
  */
 import { useEffect, useRef, useState } from "react";
+import "./cameraPermission.css";
 
 type PermissionState = "idle" | "requesting" | "granted" | "denied";
 
@@ -41,6 +42,15 @@ export default function CameraPermission({
   useEffect(() => {
     return () => { streamRef.current?.getTracks().forEach((t) => t.stop()); };
   }, []);
+
+  // Attach stream to video element once it mounts (state === "granted")
+  useEffect(() => {
+    if (state !== "granted") return;
+    const video = videoRef.current;
+    if (!video || !streamRef.current) return;
+    video.srcObject = streamRef.current;
+    video.play().catch(() => undefined);
+  }, [state]);
 
   const requestCamera = async () => {
     setState("requesting");

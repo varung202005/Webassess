@@ -1,11 +1,6 @@
 /**
  * pages/proctor/Dashboard.tsx
- *
- * Live Proctor Dashboard — fully wired to real API + Supabase Realtime.
- * Covers face logs, browser activity (tab switch / fullscreen), and
- * audio_monitoring_logs for noise detection events.
- *
- * Place this file at: Frontend/src/pages/proctor/Dashboard.tsx
+ * Live Proctor Dashboard — multi-exam support with per-exam filter tabs.
  */
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
@@ -20,7 +15,7 @@ import {
   StatsRow,
 } from "../../features/proctor/components";
 import type { AlertItem } from "../../features/proctor/components";
-import type { FlaggedAttempt, ProctoringVerdict } from "../../features/proctor/types";
+import type { ActiveSession, FlaggedAttempt, ProctoringVerdict } from "../../features/proctor/types";
 import { studentName, verdictLabel } from "../../features/proctor/format";
 import CandidateGrid from "../../features/proctor/CandidateGrid";
 
@@ -29,126 +24,96 @@ function makeAlertId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function faceViolationType(payload: Record<string, unknown>): {
-  type: AlertItem["type"];
-  label: string;
-} {
-  if (Number(payload.multi_person_detected ?? 0) > 0)
-    return { type: "danger",  label: "Multiple people detected" };
-  if (Number(payload.phone_detected ?? 0) > 0)
-    return { type: "danger",  label: "Phone detected" };
-  if (Number(payload.face_detected) === 0)
-    return { type: "warning", label: "Face not visible" };
+function faceViolationType(payload: Record<string, unknown>): { type: AlertItem["type"]; label: string } {
+  if (Number(payload.multi_person_detected ?? 0) > 0) return { type: "danger",  label: "Multiple people detected" };
+  if (Number(payload.phone_detected ?? 0) > 0)        return { type: "danger",  label: "Phone detected" };
+  if (Number(payload.face_detected) === 0)            return { type: "warning", label: "Face not visible" };
   return { type: "info", label: "Face event" };
 }
 
 function noiseLabel(payload: Record<string, unknown>): string {
   const db = Number(payload.noise_level_db ?? 0);
   if (db >= 80) return `Loud noise detected (${db} dB)`;
-  if (db >= 60) return `Moderate noise detected (${db} dB)`;
+  if (db >= 60) return `Moderate noise (${db} dB)`;
   return payload.notes ? String(payload.notes) : "Audio noise detected";
 }
 
 const EMPTY_STATS = {
-  total_flagged: 0,
-  total_live: 0,
-  tab_switches_last_30m: 0,
-  avg_integrity: 1,
-  face_absence_events: 0,
-  multi_person_events: 0,
-  phone_events: 0,
-  total_tab_switches: 0,
-  noise_events_last_30m: 0,
-  total_noise_events: 0,
+  total_flagged: 0, total_live: 0, tab_switches_last_30m: 0,
+  avg_integrity: 1, face_absence_events: 0, multi_person_events: 0,
+  phone_events: 0, total_tab_switches: 0, noise_events_last_30m: 0, total_noise_events: 0,
 };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function ProctorDashboard() {
-  const { data: portal, isLoading: portalLoading, isError: portalError } =
-    useProctorDashboard();
+  const { data: portal, isLoading: portalLoading, isError: portalError } = useProctorDashboard();
   const { data: flaggedData, isLoading: flaggedLoading } = useFlaggedAttempts();
   const setVerdict = useSetVerdict();
 
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [alerts,    setAlerts]    = useState<AlertItem[]>([]);
+  const [pendingId,      setPendingId]      = useState<string | null>(null);
+  const [alerts,         setAlerts]         = useState<AlertItem[]>([]);
+  // "all" or a schedule_id to filter by exam
+  const [selectedExam,   setSelectedExam]   = useState<string>("all");
+
+  const sessions: ActiveSession[] = portal?.activeSessions ?? (portal?.activeSession ? [portal.activeSession] : []);
+  const stats    = portal?.stats   ?? EMPTY_STATS;
+  const flagged  = flaggedData     ?? [];
+
+  // Debug — remove after confirming
+  console.log("[Dashboard] portal:", portal);
+  console.log("[Dashboard] sessions:", sessions);
+  console.log("[Dashboard] visibleAttempts will be from sessions.flatMap active_attempts");
+
+  // ── Derived: filter by selected exam ─────────────────────────────────────
+  const selectedSession = selectedExam === "all" ? null : sessions.find((s) => s.schedule_id === selectedExam) ?? null;
+
+  const visibleAttempts = selectedExam === "all"
+    ? sessions.flatMap((s) => s.active_attempts)
+    : (selectedSession?.active_attempts ?? []);
+
+  const visibleFlagged: FlaggedAttempt[] = selectedExam === "all"
+    ? flagged
+    : flagged.filter((f) =>
+        f.exam_attempts?.exam_schedule_id === selectedExam
+      );
 
   // ── Supabase Realtime channels ────────────────────────────────────────────
   useEffect(() => {
-    // 1. Face verification events
-    const faceCh = supabase
-      .channel("proctor-face-alerts")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "face_verification_logs" },
-        (payload) => {
-          const rec = payload.new as Record<string, unknown>;
-          const { type, label } = faceViolationType(rec);
-          setAlerts((prev) =>
-            [
-              {
-                id:    makeAlertId(),
-                type,
-                title: `${label} — attempt ${String(rec.attempt_id ?? "").slice(0,8).toUpperCase()}`,
-                time:  new Date().toLocaleTimeString(),
-              } satisfies AlertItem,
-              ...prev,
-            ].slice(0, 60)
-          );
-        }
-      )
-      .subscribe();
+    const faceCh = supabase.channel("proctor-face-alerts")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "face_verification_logs" }, (payload) => {
+        const rec = payload.new as Record<string, unknown>;
+        const { type, label } = faceViolationType(rec);
+        setAlerts((prev) => [{
+          id: makeAlertId(), type,
+          title: `${label} — attempt ${String(rec.attempt_id ?? "").slice(0, 8).toUpperCase()}`,
+          time: new Date().toLocaleTimeString(),
+        } satisfies AlertItem, ...prev].slice(0, 60));
+      }).subscribe();
 
-    // 2. Browser activity (tab switch / fullscreen exit)
-    const browseCh = supabase
-      .channel("proctor-browser-alerts")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "browser_activity_logs" },
-        (payload) => {
-          const rec       = payload.new as Record<string, unknown>;
-          const eventType = String(rec.event_type ?? "").toLowerCase();
-          const isTab     = eventType.includes("tab");
-          const isFull    = eventType.includes("fullscreen");
-          if (!isTab && !isFull) return;
-          setAlerts((prev) =>
-            [
-              {
-                id:    makeAlertId(),
-                type:  isTab ? "warning" : "info",
-                title: `${isTab ? "Tab switch" : "Fullscreen exit"} — attempt ${String(rec.attempt_id ?? "").slice(0,8).toUpperCase()}`,
-                time:  new Date().toLocaleTimeString(),
-              } satisfies AlertItem,
-              ...prev,
-            ].slice(0, 60)
-          );
-        }
-      )
-      .subscribe();
+    const browseCh = supabase.channel("proctor-browser-alerts")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "browser_activity_logs" }, (payload) => {
+        const rec = payload.new as Record<string, unknown>;
+        const ev  = String(rec.event_type ?? "").toLowerCase();
+        const isTab  = ev.includes("tab");
+        const isFull = ev.includes("fullscreen");
+        if (!isTab && !isFull) return;
+        setAlerts((prev) => [{
+          id: makeAlertId(), type: isTab ? "warning" : "info",
+          title: `${isTab ? "Tab switch" : "Fullscreen exit"} — attempt ${String(rec.attempt_id ?? "").slice(0, 8).toUpperCase()}`,
+          time: new Date().toLocaleTimeString(),
+        } satisfies AlertItem, ...prev].slice(0, 60));
+      }).subscribe();
 
-    // 3. Audio monitoring events ← NEW
-    const audioCh = supabase
-      .channel("proctor-audio-alerts")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "audio_monitoring_logs" },
-        (payload) => {
-          const rec = payload.new as Record<string, unknown>;
-          // Only surface events where noise_detected is true
-          if (!rec.noise_detected) return;
-          setAlerts((prev) =>
-            [
-              {
-                id:    makeAlertId(),
-                type:  "audio",
-                title: `${noiseLabel(rec)} — attempt ${String(rec.attempt_id ?? "").slice(0,8).toUpperCase()}`,
-                time:  new Date().toLocaleTimeString(),
-              } satisfies AlertItem,
-              ...prev,
-            ].slice(0, 60)
-          );
-        }
-      )
-      .subscribe();
+    const audioCh = supabase.channel("proctor-audio-alerts")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "audio_monitoring_logs" }, (payload) => {
+        const rec = payload.new as Record<string, unknown>;
+        if (!rec.noise_detected) return;
+        setAlerts((prev) => [{
+          id: makeAlertId(), type: "audio",
+          title: `${noiseLabel(rec)} — attempt ${String(rec.attempt_id ?? "").slice(0, 8).toUpperCase()}`,
+          time: new Date().toLocaleTimeString(),
+        } satisfies AlertItem, ...prev].slice(0, 60));
+      }).subscribe();
 
     return () => {
       void supabase.removeChannel(faceCh);
@@ -157,33 +122,24 @@ export default function ProctorDashboard() {
     };
   }, []);
 
-  // ── Verdict handler ───────────────────────────────────────────────────────
+  // ── Verdict handler ────────────────────────────────────────────────────────
   const handleVerdict = (attemptId: string, verdict: ProctoringVerdict) => {
     setPendingId(attemptId);
-    setVerdict.mutate(
-      { attemptId, verdict },
-      {
-        onSettled: () => setPendingId(null),
-        onSuccess: () => {
-          const attempt = flaggedData?.find((a: FlaggedAttempt) => a.attempt_id === attemptId);
-          const name    = attempt ? studentName(attempt) : attemptId.slice(0,8).toUpperCase();
-          setAlerts((prev) =>
-            [
-              {
-                id:    makeAlertId(),
-                type:  verdict === "VIOLATED" ? "danger" : verdict === "SUSPICIOUS" ? "warning" : "info",
-                title: `Verdict set to "${verdictLabel(verdict)}" for ${name}`,
-                time:  new Date().toLocaleTimeString(),
-              } satisfies AlertItem,
-              ...prev,
-            ].slice(0, 60)
-          );
-        },
-      }
-    );
+    setVerdict.mutate({ attemptId, verdict }, {
+      onSettled: () => setPendingId(null),
+      onSuccess: () => {
+        const attempt = flaggedData?.find((a: FlaggedAttempt) => a.attempt_id === attemptId);
+        const name    = attempt ? studentName(attempt) : attemptId.slice(0, 8).toUpperCase();
+        setAlerts((prev) => [{
+          id: makeAlertId(),
+          type: verdict === "VIOLATED" ? "danger" : verdict === "SUSPICIOUS" ? "warning" : "info",
+          title: `Verdict set to "${verdictLabel(verdict)}" for ${name}`,
+          time: new Date().toLocaleTimeString(),
+        } satisfies AlertItem, ...prev].slice(0, 60));
+      },
+    });
   };
 
-  // ── Error state ───────────────────────────────────────────────────────────
   if (portalError) {
     return (
       <ProctorLayout activePage="dashboard">
@@ -195,24 +151,55 @@ export default function ProctorDashboard() {
     );
   }
 
-  const stats   = portal?.stats   ?? EMPTY_STATS;
-  const session = portal?.activeSession ?? null;
-  const flagged = flaggedData ?? [];
-
   return (
     <ProctorLayout activePage="dashboard">
 
-      {/* Live session banner */}
-      {session && (
-        <SessionBanner
-          title={session.exam_title}
-          courseCode={session.course_code}
-          activeStudents={session.active_students}
-          endsAt={session.ends_at}
-        />
+      {/* ── Exam Filter Tabs ── */}
+      {sessions.length > 0 && (
+        <div className="exam-tabs">
+          <button
+            className={`exam-tab ${selectedExam === "all" ? "active" : ""}`}
+            onClick={() => setSelectedExam("all")}
+          >
+            <i className="ti ti-layout-grid" />
+            All Exams
+            <span className="exam-tab-badge">{sessions.reduce((n, s) => n + s.active_students, 0)}</span>
+          </button>
+          {sessions.map((s) => (
+            <button
+              key={s.schedule_id}
+              className={`exam-tab ${selectedExam === s.schedule_id ? "active" : ""}`}
+              onClick={() => setSelectedExam(s.schedule_id)}
+            >
+              <i className="ti ti-file-text" />
+              <span className="exam-tab-title">{s.exam_title}</span>
+              <span className="exam-tab-code">{s.course_code}</span>
+              <span className="exam-tab-badge">{s.active_students}</span>
+            </button>
+          ))}
+        </div>
       )}
 
-      {/* Stats row — 5 cards including audio */}
+      {/* ── Session Banner ── */}
+      {selectedExam === "all" ? (
+        sessions.length > 0 && (
+          <SessionBanner
+            title={`${sessions.length} exam${sessions.length > 1 ? "s" : ""} running`}
+            courseCode=""
+            activeStudents={sessions.reduce((n, s) => n + s.active_students, 0)}
+            endsAt={sessions[0].ends_at}
+          />
+        )
+      ) : selectedSession ? (
+        <SessionBanner
+          title={selectedSession.exam_title}
+          courseCode={selectedSession.course_code}
+          activeStudents={selectedSession.active_students}
+          endsAt={selectedSession.ends_at}
+        />
+      ) : null}
+
+      {/* ── Stats ── */}
       {portalLoading ? (
         <div className="stats-row">
           {[1,2,3,4,5].map((i) => (
@@ -223,38 +210,36 @@ export default function ProctorDashboard() {
         <StatsRow stats={stats} />
       )}
 
-      {/* ── Live Candidate Snapshots ── */}
+      {/* ── Live Candidate Feeds ── */}
       <div className="pcard">
         <div className="pcard-head">
           <i className="ti ti-camera" style={{ color: "var(--c-primary-700)", fontSize: 17 }} />
           <span className="pcard-title">Live Candidate Feeds</span>
-          <span className="pcard-count" style={{ background: "#f0fdf4", color: "#166534" }}>
-            ~30s delay
-          </span>
-          {flagged.length > 0 && (
+          <span className="pcard-count" style={{ background: "#f0fdf4", color: "#166534" }}>~30s delay</span>
+          {visibleAttempts.length > 0 && (
             <span style={{ fontSize: 11, color: "#aaa", marginLeft: "auto" }}>
-              {flagged.length} candidate{flagged.length !== 1 ? "s" : ""} monitored
+              {visibleAttempts.length} candidate{visibleAttempts.length !== 1 ? "s" : ""} monitored
             </span>
           )}
         </div>
         <div className="pcard-body">
-          <CandidateGrid attempts={flagged} refreshMs={30_000} />
+          <CandidateGrid attempts={visibleAttempts} refreshMs={30_000} />
         </div>
       </div>
 
-      {/* Main grid */}
+      {/* ── Main grid ── */}
       <div className="proctor-grid">
 
-        {/* Flagged attempts table */}
+        {/* Flagged table */}
         <div className="pcard">
           <div className="pcard-head">
             <i className="ti ti-alert-triangle" style={{ color: "var(--c-danger-600)", fontSize: 17 }} />
             <span className="pcard-title">Flagged Attempts</span>
-            {flagged.length > 0 && <span className="pcard-count">{flagged.length}</span>}
+            {visibleFlagged.length > 0 && <span className="pcard-count">{visibleFlagged.length}</span>}
           </div>
           <div className="pcard-body" style={{ padding: 0 }}>
             <FlaggedTable
-              attempts={flagged}
+              attempts={visibleFlagged}
               loading={flaggedLoading}
               onVerdict={handleVerdict}
               pendingId={pendingId}
@@ -262,21 +247,19 @@ export default function ProctorDashboard() {
           </div>
         </div>
 
-        {/* Right sidebar panels */}
+        {/* Right sidebar */}
         <div className="proctor-sidebar-right">
 
-          {/* Integrity distribution */}
           <div className="pcard">
             <div className="pcard-head">
               <i className="ti ti-chart-bar" style={{ color: "var(--c-primary-700)", fontSize: 17 }} />
               <span className="pcard-title">Integrity Distribution</span>
             </div>
             <div className="pcard-body">
-              <IntegrityDistribution flagged={flagged} totalLive={stats.total_live} />
+              <IntegrityDistribution flagged={visibleFlagged} totalLive={visibleAttempts.length} />
             </div>
           </div>
 
-          {/* Audio noise monitor — NEW */}
           <div className="pcard">
             <div className="pcard-head">
               <i className="ti ti-microphone" style={{ color: "#7c3aed", fontSize: 17 }} />
@@ -288,11 +271,10 @@ export default function ProctorDashboard() {
               )}
             </div>
             <div className="pcard-body">
-              <AudioMonitorPanel flagged={flagged} />
+              <AudioMonitorPanel flagged={visibleFlagged} activeAttempts={visibleAttempts} />
             </div>
           </div>
 
-          {/* Live alert feed */}
           <div className="pcard">
             <div className="pcard-head">
               <i className="ti ti-activity" style={{ color: "var(--c-warning-700)", fontSize: 17 }} />

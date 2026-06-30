@@ -1,2 +1,184 @@
 .live-exam{height:100vh;overflow:hidden;background:#f3f4f7;color:#242735;display:flex;flex-direction:column}.live-header{height:66px;flex:none;background:#202330;color:#fff;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 20px;border-bottom:3px solid #b31234;gap:18px}.live-title{display:flex;align-items:center;gap:12px;min-width:0}.live-title strong{color:#ffbbc8}.live-title span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#d3d5dc}.live-timer{display:flex;align-items:center;gap:8px;padding:7px 13px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:12px}.live-timer span{font-size:9px;color:#afb2bd;text-transform:uppercase}.live-timer strong{font:700 20px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px}.live-timer.danger strong{color:#ff8ca1}.save-state{justify-self:end;display:flex;align-items:center;gap:7px;color:#b9bcc6;font-size:10px}.save-state>span:first-child{width:8px;height:8px;border-radius:50%;background:#22c98c}.save-state>span.saving{background:#f5b942;animation:pulse 1s infinite}@keyframes pulse{50%{opacity:.35}}.exam-error{background:#fff0f2;color:#a30f2e;padding:9px 18px;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}.exam-error button{margin-left:auto;border:0;background:transparent;color:inherit}.live-body{display:flex;min-height:0;flex:1}.question-pane{min-width:0;flex:1;display:flex;flex-direction:column}.question-scroll{flex:1;overflow:auto;padding:30px clamp(20px,5vw,70px)}.question-meta{display:flex;justify-content:space-between;align-items:center;color:#747887;font-size:11px;margin-bottom:18px}.question-meta>div{display:flex;gap:7px}.question-meta b{padding:4px 8px;border-radius:7px;background:#fff;border:1px solid #dfe1e7;color:#555967;text-transform:uppercase;font-size:9px}.question-meta b.negative{background:#fff0f2;color:#a30f2e;border-color:#ffcbd4}.question-scroll h1{font-size:18px;line-height:1.65;max-width:950px;margin-bottom:24px}.answer-options{display:flex;flex-direction:column;gap:10px;max-width:960px}.answer-options button{border:1px solid #dfe2e8;border-radius:14px;background:#fff;padding:13px 15px;display:grid;grid-template-columns:28px 18px 1fr;align-items:center;gap:10px;text-align:left;color:#303342}.answer-options button:hover{border-color:#d98a9a;background:#fffafb}.answer-options button.selected{border-color:#b31234;background:#fff4f6;box-shadow:0 0 0 2px rgba(179,18,52,.08)}.answer-options button>span{width:28px;height:28px;display:grid;place-items:center;background:#f0f1f4;border-radius:9px;font-size:11px;font-weight:800}.answer-options button.selected>span{background:#b31234;color:#fff}.answer-options button>i{color:#a30f2e;font-size:17px}.answer-options p{font-size:13px;line-height:1.5}.answer-text{width:min(960px,100%);border:1px solid #dfe2e8;border-radius:14px;padding:15px;font:inherit;line-height:1.6;resize:vertical;outline:none}.answer-text:focus{border-color:#b31234;box-shadow:0 0 0 3px rgba(179,18,52,.08)}.question-tools{display:flex;gap:8px;margin-top:18px}.question-tools button{border:1px solid #dfe2e8;background:#fff;border-radius:10px;padding:8px 11px;color:#5d6170;font-weight:700;font-size:11px}.question-tools button.flagged{background:#fff3d8;color:#8a5908;border-color:#f2cd7c}.question-nav{min-height:66px;background:#fff;border-top:1px solid #dfe2e8;display:flex;justify-content:space-between;align-items:center;padding:10px 22px}.question-nav>div{display:flex;gap:8px}.question-palette{width:286px;flex:none;background:#fff;border-left:1px solid #dfe2e8;display:flex;flex-direction:column;padding:16px;overflow:auto}.palette-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:13px;border-bottom:1px solid #eceef2}.palette-head strong{font-size:12px}.palette-head span{font-size:9px;color:#858997}.palette-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;padding:16px 0}.palette-grid button{aspect-ratio:1;border-radius:10px;border:1px solid #dfe2e8;background:#f8f9fb;color:#555967;font-weight:800;font-size:11px}.palette-grid button.visited{background:#e9ebef}.palette-grid button.answered{background:#148b68;color:#fff;border-color:#148b68}.palette-grid button.flagged{background:#e49a20;color:#fff;border-color:#e49a20}.palette-grid button.current{box-shadow:0 0 0 3px rgba(179,18,52,.24);border-color:#b31234}.palette-legend{display:flex;flex-direction:column;gap:7px;border-top:1px solid #eceef2;padding-top:13px;font-size:10px;color:#686c7a}.palette-legend span{display:flex;align-items:center;gap:7px}.palette-legend i{width:11px;height:11px;background:#f8f9fb;border:1px solid #dfe2e8;border-radius:3px}.palette-legend i.answered{background:#148b68}.palette-legend i.flagged{background:#e49a20}.fullscreen{margin-top:16px}.timer-policy{margin-top:auto;padding-top:16px;font-size:9px;color:#9699a5;line-height:1.5}.exam-state{height:100vh;display:flex;align-items:center;justify-content:center;gap:10px;color:#737786}.exam-state.error{flex-direction:column;text-align:center;padding:20px}.exam-state.error i{font-size:36px;color:#a30f2e}.exam-state.error p{margin:5px 0 12px;color:#777b89}
 @media(max-width:850px){.live-header{grid-template-columns:1fr auto}.save-state{display:none}.question-palette{width:220px}.question-scroll{padding:22px}.palette-grid{grid-template-columns:repeat(4,1fr)}}@media(max-width:650px){.live-header{height:auto;min-height:74px;padding:9px 12px}.live-title{flex-direction:column;align-items:flex-start;gap:2px}.live-timer span,.live-timer>i{display:none}.live-timer strong{font-size:16px}.question-palette{display:none}.question-scroll{padding:18px 14px}.question-meta{align-items:flex-start;gap:8px}.question-meta>div{flex-wrap:wrap;justify-content:flex-end}.question-scroll h1{font-size:15px}.answer-options button{grid-template-columns:25px 16px 1fr;padding:11px}.question-nav{padding:8px;gap:7px}.question-nav .btn{padding:0 10px}.question-nav>div{gap:5px}}
+/* ============================================================
+   LiveExam — Proctoring UI additions
+   Add these rules to your existing liveExam.css
+   ============================================================ */
+
+/* ── Fullscreen nag bar ─────────────────────────────────── */
+.proctor-nag-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: #7c2d12;         /* amber-900 — serious but not panic */
+  color: #fef3c7;
+  font-size: 13.5px;
+  font-weight: 500;
+  border-bottom: 2px solid #b45309;
+}
+.proctor-nag-bar i { font-size: 17px; flex-shrink: 0; color: #fbbf24; }
+.proctor-nag-bar span { flex: 1; }
+
+.nag-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #fbbf24;
+  color: #1c1c1c;
+  border: none;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity .15s;
+}
+.nag-btn:hover { opacity: .85; }
+
+/* ── Conflict bar (red, sticky) ─────────────────────────── */
+.proctor-conflict-bar {
+  position: sticky;
+  top: 0;
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: #7f1d1d;
+  color: #fee2e2;
+  font-size: 13.5px;
+  border-bottom: 2px solid #dc2626;
+}
+.proctor-conflict-bar i { font-size: 19px; flex-shrink: 0; color: #f87171; }
+
+/* ── Violation banner stack ─────────────────────────────── */
+.proctor-banners {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 0;
+  position: sticky;
+  top: 44px;   /* below nag bar */
+  z-index: 90;
+}
+
+.proctor-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  animation: bannerSlideIn .22s ease;
+}
+@keyframes bannerSlideIn {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.proctor-banner i        { font-size: 16px; flex-shrink: 0; }
+.proctor-banner span     { flex: 1; }
+.banner-dismiss {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  opacity: .6;
+  transition: opacity .1s;
+}
+.banner-dismiss:hover { opacity: 1; }
+.banner-dismiss i { font-size: 14px; }
+
+/* Tab-switch banner — amber */
+.proctor-banner--tab {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #78350f;
+}
+.proctor-banner--tab i       { color: #d97706; }
+.proctor-banner--tab .banner-dismiss { color: #b45309; }
+
+/* Fullscreen exit banner — orange */
+.proctor-banner--fullscreen {
+  background: #fff7ed;
+  border: 1px solid #fb923c;
+  color: #7c2d12;
+}
+.proctor-banner--fullscreen i       { color: #ea580c; }
+.proctor-banner--fullscreen .banner-dismiss { color: #c2410c; }
+
+/* Conflict banner — red */
+.proctor-banner--conflict {
+  background: #fef2f2;
+  border: 1px solid #f87171;
+  color: #7f1d1d;
+}
+.proctor-banner--conflict i       { color: #dc2626; }
+.proctor-banner--conflict .banner-dismiss { color: #b91c1c; }
+
+/* ── Monitoring indicator (header chip) ─────────────────── */
+.proctor-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a8a8c0;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  margin-left: 12px;
+}
+.proctor-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74,222,128,.25);
+  animation: monitorPulse 2s infinite;
+}
+@keyframes monitorPulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(74,222,128,.25); }
+  50%       { box-shadow: 0 0 0 6px rgba(74,222,128,.08); }
+}
+
+/* ── Fullscreen palette button — urgent state ───────────── */
+.btn.fullscreen-urgent {
+  background: #7c2d12;
+  color: #fef3c7;
+  border-color: #b45309;
+  animation: urgentPulse 1.5s ease infinite;
+}
+@keyframes urgentPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .75; }
+}
+
+/* ── Proctor status chip (palette footer) ───────────────── */
+.proctor-status-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 7px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: #166534;
+  font-weight: 500;
+}
+.proctor-status-chip .proctor-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+}

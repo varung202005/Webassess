@@ -1,27 +1,17 @@
 /**
  * features/proctor/CandidateGrid.tsx
  *
- * Proctor dashboard panel — shows the latest webcam snapshot
- * for every active student, refreshed every 30 seconds.
- *
- * Data source: Supabase Storage bucket "exam-snapshots"
- * Path pattern: {student_id}/{attempt_id}/{timestamp}.jpg
- *
- * The panel lists all flagged attempts and resolves their latest
- * snapshot URL from Storage. A Supabase Realtime channel triggers
- * a refresh whenever a new face_verification_log is inserted.
+ * Shows latest webcam snapshot for EVERY active student (not just flagged).
+ * Refreshes every 30s + instantly via Supabase Realtime on new face log.
  *
  * Place at: Frontend/src/features/proctor/CandidateGrid.tsx
  */
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../../lib/supabase";
-import type { FlaggedAttempt } from "./types";
-import { integrityColor, scoreDisplay, studentName } from "./format";
+import type { ActiveAttempt } from "./types";
 
 interface CandidateGridProps {
-  /** All flagged attempts — used to resolve student IDs and attempt IDs */
-  attempts: FlaggedAttempt[];
-  /** Refresh interval in ms. Default: 30000 */
+  attempts: ActiveAttempt[];
   refreshMs?: number;
 }
 
@@ -29,17 +19,14 @@ interface CandidateCard {
   attemptId:   string;
   studentId:   string;
   name:        string;
-  score:       number;
   snapshotUrl: string | null;
   capturedAt:  number | null;
   loading:     boolean;
-  error:       boolean;
 }
 
 const BUCKET          = "exam-snapshots";
 const DEFAULT_REFRESH = 30_000;
 
-// ── Fetch the most recent snapshot for an attempt ──────────────────────────────
 async function fetchLatestSnapshot(
   studentId: string,
   attemptId: string
@@ -49,18 +36,23 @@ async function fetchLatestSnapshot(
     limit:  1,
     sortBy: { column: "created_at", order: "desc" },
   });
-
   if (error || !data?.length) return null;
-
   const file = data[0];
   const { data: urlData } = supabase.storage
     .from(BUCKET)
     .getPublicUrl(`${prefix}${file.name}`);
+  return {
+    url: `${urlData.publicUrl}?t=${Date.now()}`,
+    ts:  file.updated_at ? new Date(file.updated_at).getTime() : Date.now(),
+  };
+}
 
-  // Add cache-busting so browser always re-fetches
-  const url = `${urlData.publicUrl}?t=${Date.now()}`;
-  const ts  = file.updated_at ? new Date(file.updated_at).getTime() : Date.now();
-  return { url, ts };
+function relativeSeconds(ts: number): string {
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 10)   return "just now";
+  if (diff < 60)   return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
 }
 
 export default function CandidateGrid({
@@ -69,55 +61,52 @@ export default function CandidateGrid({
 }: CandidateGridProps) {
   const [cards, setCards] = useState<CandidateCard[]>([]);
 
-  // Build initial card list from attempts
+  // Build card list whenever attempts changes
   useEffect(() => {
     if (!attempts.length) { setCards([]); return; }
     setCards(
       attempts.map((a) => ({
-        attemptId:   a.attempt_id,
-        studentId:   a.exam_attempts?.student_id ?? "",
-        name:        studentName(a),
-        score:       scoreDisplay(a.integrity_score),
+        attemptId:   a.id,
+        studentId:   a.student_id,
+        name:        a.users?.full_name ?? "Student",
         snapshotUrl: null,
         capturedAt:  null,
         loading:     true,
-        error:       false,
       }))
     );
   }, [attempts]);
 
-  // Fetch snapshots for all cards
-  const refreshAll = useCallback(async () => {
-    if (!cards.length) return;
+  // Fetch all snapshots
+  const refreshAll = useCallback(async (currentCards: CandidateCard[]) => {
+    if (!currentCards.length) return;
     const updates = await Promise.all(
-      cards.map(async (card) => {
-        if (!card.studentId) return { ...card, loading: false, error: true };
+      currentCards.map(async (card) => {
         try {
           const result = await fetchLatestSnapshot(card.studentId, card.attemptId);
-          return {
-            ...card,
-            snapshotUrl: result?.url ?? null,
-            capturedAt:  result?.ts  ?? null,
-            loading:     false,
-            error:       !result,
-          };
+          return { ...card, snapshotUrl: result?.url ?? null, capturedAt: result?.ts ?? null, loading: false };
         } catch {
-          return { ...card, loading: false, error: true };
+          return { ...card, loading: false };
         }
       })
     );
     setCards(updates);
-  }, [cards]);
+  }, []);
 
-  // Initial load + periodic refresh
+  // Initial fetch + periodic refresh
   useEffect(() => {
-    void refreshAll();
-    const timer = setInterval(() => void refreshAll(), refreshMs);
+    if (!cards.length) return;
+    void refreshAll(cards);
+    const timer = setInterval(() => {
+      setCards((prev) => {
+        void refreshAll(prev);
+        return prev;
+      });
+    }, refreshMs);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshMs, attempts.length]);
+  }, [cards.length, refreshMs]);
 
-  // Realtime: re-fetch when a new face log is inserted (means new snapshot)
+  // Realtime: refresh just the affected card on new face log
   useEffect(() => {
     const ch = supabase
       .channel("candidate-grid-refresh")
@@ -126,55 +115,50 @@ export default function CandidateGrid({
         { event: "INSERT", schema: "public", table: "face_verification_logs" },
         (payload) => {
           const newAttemptId = (payload.new as Record<string, unknown>).attempt_id as string;
-          setCards((prev) =>
-            prev.map((c) =>
-              c.attemptId === newAttemptId ? { ...c, loading: true } : c
-            )
-          );
-          // Fetch just this card
-          const card = cards.find((c) => c.attemptId === newAttemptId);
-          if (card?.studentId) {
+          setCards((prev) => {
+            const card = prev.find((c) => c.attemptId === newAttemptId);
+            if (!card) return prev;
             void fetchLatestSnapshot(card.studentId, card.attemptId).then((result) => {
-              setCards((prev) =>
-                prev.map((c) =>
+              if (!result) return;
+              setCards((p) =>
+                p.map((c) =>
                   c.attemptId === newAttemptId
-                    ? { ...c, snapshotUrl: result?.url ?? c.snapshotUrl, capturedAt: result?.ts ?? c.capturedAt, loading: false }
+                    ? { ...c, snapshotUrl: result.url, capturedAt: result.ts, loading: false }
                     : c
                 )
               );
             });
-          }
+            return prev.map((c) => c.attemptId === newAttemptId ? { ...c, loading: true } : c);
+          });
         }
       )
       .subscribe();
     return () => { void supabase.removeChannel(ch); };
-  }, [cards]);
+  }, []);
 
-  if (!cards.length) {
+  if (!attempts.length) {
     return (
       <div className="empty-state">
         <i className="ti ti-camera-off" />
-        No active candidates to monitor
+        No active candidates — waiting for students to start
       </div>
     );
   }
 
+  if (!cards.length) return null;
+
   return (
     <div className="candidate-grid">
       {cards.map((card) => (
-        <CandidateCard key={card.attemptId} card={card} />
+        <SingleCard key={card.attemptId} card={card} />
       ))}
     </div>
   );
 }
 
-// ── Single student card ────────────────────────────────────────────────────────
-function CandidateCard({ card }: { card: CandidateCard }) {
-  const color = integrityColor(card.score);
-
+function SingleCard({ card }: { card: CandidateCard }) {
   return (
-    <div className={`candidate-card ${card.score < 50 ? "card-flagged" : card.score < 70 ? "card-warning" : ""}`}>
-      {/* Snapshot image */}
+    <div className="candidate-card">
       <div className="candidate-snapshot">
         {card.loading ? (
           <div className="snapshot-skeleton skeleton" />
@@ -183,43 +167,30 @@ function CandidateCard({ card }: { card: CandidateCard }) {
             src={card.snapshotUrl}
             alt={`${card.name} webcam`}
             className="snapshot-img"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-            }}
           />
         ) : (
           <div className="snapshot-placeholder">
             <i className="ti ti-camera-off" />
-            <span>No snapshot yet</span>
+            <span>Waiting for snapshot…</span>
           </div>
         )}
-
-        {/* Live indicator */}
         <div className="snapshot-live-dot" />
-
-        {/* Integrity score overlay */}
-        <div className="snapshot-score-badge" style={{ color }}>
-          {card.score}%
-        </div>
+        {card.capturedAt && (
+          <div className="snapshot-score-badge" style={{ color: "#4ade80" }}>
+            {relativeSeconds(card.capturedAt)}
+          </div>
+        )}
       </div>
-
-      {/* Student info */}
       <div className="candidate-info">
         <div className="candidate-name">{card.name}</div>
         <div className="candidate-meta">
           {card.capturedAt
-            ? `Updated ${relativeSeconds(card.capturedAt)}`
-            : "Waiting for snapshot..."}
+            ? `Snapshot ${relativeSeconds(card.capturedAt)}`
+            : card.loading
+            ? "Loading snapshot…"
+            : "No snapshot yet — exam just started"}
         </div>
       </div>
     </div>
   );
-}
-
-function relativeSeconds(ts: number): string {
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 10)  return "just now";
-  if (diff < 60)  return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
 }

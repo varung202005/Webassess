@@ -37,19 +37,27 @@ export interface ProctoringStats {
   total_noise_events: number;     // audio — new
 }
 
+export interface ActiveAttempt {
+  id: string;
+  student_id: string;
+  users?: { full_name: string } | null;
+}
+
 export interface ActiveSession {
   schedule_id: string;
   exam_title: string;
   course_code: string;
   active_students: number;
   ends_at: string;
+  active_attempts: ActiveAttempt[];
 }
 
 export interface ProctoringDashboard {
   profile: ProctorProfile;
   stats: ProctoringStats;
   flagged: FlaggedAttempt[];
-  activeSession: ActiveSession | null;
+  activeSession: ActiveSession | null;      // first session (backward compat)
+  activeSessions: ActiveSession[];          // ALL running exams
 }
 
 export interface ProctorProfile {
