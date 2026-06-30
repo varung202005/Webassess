@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "../../lib/supabase";
 import type { FlaggedAttempt, IntegrityBand, ProctoringStats } from "./types";
 import {
   buildIntegrityBands,
@@ -191,7 +193,7 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
                   {a.total_incidents}
                 </td>
 
-                {/* Issue chips — audio chip gets purple styling */}
+                {/* Issue chips */}
                 <td>
                   {issues.length > 0 ? (
                     <div className="issues-list">
@@ -283,37 +285,95 @@ export function IntegrityDistribution({
 }
 
 /* ── Audio Monitor Panel ───────────────────────────────────────────────────── */
-export function AudioMonitorPanel({ flagged }: { flagged: FlaggedAttempt[] }) {
-  // Show top noise offenders sorted by noise_event_count desc
-  const noisy = [...flagged]
-    .filter((a) => (a.noise_event_count ?? 0) > 0)
-    .sort((a, b) => (b.noise_event_count ?? 0) - (a.noise_event_count ?? 0))
-    .slice(0, 6);
+export function AudioMonitorPanel({
+  activeAttempts,
+}: {
+  flagged?: FlaggedAttempt[];
+  activeAttempts?: { id: string; users?: { full_name: string } | null }[];
+}) {
+  const attemptIds = (activeAttempts ?? []).map((a) => a.id);
 
-  const maxCount = noisy[0]?.noise_event_count ?? 1;
+  const { data: audioRows, isLoading } = useQuery({
+    queryKey: ["audio-monitor-panel", ...attemptIds],
+    queryFn: async () => {
+      let q = supabase
+        .from("audio_monitoring_logs")
+        .select("attempt_id")
+        .eq("noise_detected", true)
+        .limit(500);
 
-  if (noisy.length === 0) {
+      // Only scope to specific attempts if we have IDs (exam tab filter)
+      if (attemptIds.length > 0) {
+        q = q.in("attempt_id", attemptIds);
+      }
+
+      const { data, error } = await q;
+      if (error) {
+        console.error("[AudioMonitorPanel] query error:", error.message);
+        return [];
+      }
+      console.log("[AudioMonitorPanel] rows fetched:", data?.length, "attemptIds filter:", attemptIds);
+      return data ?? [];
+    },
+    // ALWAYS enabled — no longer gated on attemptIds
+    enabled: true,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+  });
+
+  // Count noise events per attempt
+  const counts: Record<string, number> = {};
+  for (const row of audioRows ?? []) {
+    counts[row.attempt_id] = (counts[row.attempt_id] ?? 0) + 1;
+  }
+
+  // Build name map from activeAttempts (best-effort — falls back to ID)
+  const nameMap: Record<string, string> = {};
+  for (const a of activeAttempts ?? []) {
+    nameMap[a.id] = a.users?.full_name ?? "Student";
+  }
+
+  const entries = Object.entries(counts)
+    .map(([id, count]) => ({
+      id,
+      name: nameMap[id] ?? id.slice(0, 8).toUpperCase(),
+      count,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  const maxCount = entries[0]?.count ?? 1;
+
+  if (isLoading) {
+    return (
+      <div style={{ padding: "16px 0" }}>
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="skeleton" style={{ height: 28, marginBottom: 8, borderRadius: 6 }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (!entries.length) {
     return (
       <div className="empty-state" style={{ padding: "16px 0" }}>
         <i className="ti ti-microphone-off" style={{ fontSize: 28, marginBottom: 6 }} />
-        No audio events recorded
+        No noise events in the last 2 hours
       </div>
     );
   }
 
   return (
     <div className="audio-rows">
-      {noisy.map((a) => {
-        const count = a.noise_event_count ?? 0;
-        const pct   = Math.round((count / maxCount) * 100);
-        const name  = studentName(a);
+      {entries.map((a) => {
+        const pct = Math.round((a.count / maxCount) * 100);
         return (
-          <div className="audio-row" key={a.attempt_id}>
-            <span className="audio-name" title={name}>{name}</span>
+          <div className="audio-row" key={a.id}>
+            <span className="audio-name" title={a.name}>{a.name}</span>
             <div className="audio-bar-bg">
               <div className="audio-bar-fill" style={{ width: `${pct}%` }} />
             </div>
-            <span className="audio-count">{count}×</span>
+            <span className="audio-count">{a.count}×</span>
           </div>
         );
       })}
