@@ -6,7 +6,7 @@ const API_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 function normalizeRole(role: string): Role | null {
   const value = role.toUpperCase();
-  return ["STUDENT", "FACULTY", "PROCTOR", "ADMIN"].includes(value)
+  return ["STUDENT", "FACULTY", "PROCTOR", "ADMIN", "CANDIDATE"].includes(value)
     ? (value as Role)
     : null;
 }

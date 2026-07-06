@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
+import { candidateApi } from "../../features/candidate/api";
 import { studentApi } from "../../features/student/api";
 import { apiMessage } from "../../features/student/format";
 import type { ExamQuestion } from "../../features/student/types";
+import { useAuthStore } from "../../store/authStore";
 import "./liveExam.css";
 import WebcamCapture from "../../features/proctor/WebcamCapture";
 import AudioMonitor from "../../features/proctor/AudioMonitor";
 import BrowserMonitor from "../../features/proctor/BrowserMonitor";
 import CameraPermission from "../../features/proctor/CameraPermission";
-import { useAuthStore } from "../../store/authStore";
 
 interface AnswerState {
   selected_option_id?: string | null;
@@ -31,7 +32,7 @@ let bannerCounter = 0;
 export default function LiveExam() {
   const { scheduleId } = useParams();
   const navigate = useNavigate();
-
+  const activeRole = useAuthStore((s) => s.activeRole);
   const sessionQuery = useQuery({
     queryKey: ["exam-session", scheduleId],
     queryFn: () => studentApi.examSession(scheduleId!),
@@ -125,8 +126,13 @@ export default function LiveExam() {
     setError(null);
     try {
       await flushAnswers();
-      await studentApi.submitAttempt(session.attempt.id, type);
-      navigate("/student/history", { replace: true, state: { submitted: true } });
+      if (activeRole === "CANDIDATE") {
+        await candidateApi.submitAttempt(session.attempt.id, type);
+        navigate("/candidate/thank-you", { replace: true });
+      } else {
+        await studentApi.submitAttempt(session.attempt.id, type);
+        navigate("/student/history", { replace: true, state: { submitted: true } });
+      }
     } catch (cause) {
       submitted.current = false;
       setError(apiMessage(cause));

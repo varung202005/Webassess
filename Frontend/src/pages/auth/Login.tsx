@@ -1,4 +1,4 @@
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuthStore, type Role } from "../../store/authStore";
@@ -116,10 +116,20 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [invitationBanner, setInvitationBanner] = useState<string | null>(null);
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveRole = useAuthStore((s) => s.setActiveRole);
   const apiUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+  // If arriving via invitation link (?token=xxx), show a welcome banner
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      setInvitationBanner("You've been invited to take an assessment. Sign in below to proceed.");
+    }
+  }, []);
 
   const bootstrapPortalSession = async (token: string) => {
     const response = await fetch(`${apiUrl}/api/v1/auth/me`, {
@@ -132,7 +142,7 @@ export default function Login() {
     };
     const roles = payload.roles
       .map((role) => role.toUpperCase())
-      .filter((role): role is Role => ["STUDENT", "FACULTY", "PROCTOR", "ADMIN"].includes(role));
+      .filter((role): role is Role => ["STUDENT", "FACULTY", "PROCTOR", "ADMIN", "CANDIDATE"].includes(role));
     if (!roles.length) throw new Error("No portal role is assigned to this account.");
     const role = roles[0];
     setSession({
@@ -142,7 +152,12 @@ export default function Login() {
       roles,
     }, token);
     setActiveRole(role);
-    navigate(`/${role.toLowerCase()}/dashboard`, { replace: true });
+    // Candidates skip the dashboard — go directly to exam state gate
+    if (role === "CANDIDATE") {
+      navigate("/candidate/state", { replace: true });
+    } else {
+      navigate(`/${role.toLowerCase()}/dashboard`, { replace: true });
+    }
   };
 
   const switchMode = (next: "login" | "signup") => {
@@ -290,6 +305,11 @@ export default function Login() {
             </button>
           </div>
 
+          {invitationBanner && (
+            <div className="success-banner">
+              <i className="ti ti-mail"></i> {invitationBanner}
+            </div>
+          )}
           {error && (
             <div className="error-banner">
               <i className="ti ti-alert-circle"></i> {error}

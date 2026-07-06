@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuthStore } from "../../store/authStore";
-import { useStudentPortal } from "./hooks";
+import { usePortalAction, useStudentPortal } from "./hooks";
+import { studentApi } from "./api";
 import { initials, relativeTime } from "./format";
 import "./student.css";
 
@@ -47,29 +48,27 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("student-sidebar") === "collapsed");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const notifRef = useRef<HTMLDivElement | null>(null);
+  const notifRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const signOut = useAuthStore((state) => state.signOut);
   const { data } = useStudentPortal();
+  const markAll = usePortalAction(studentApi.markAllNotificationsRead);
+  const markRead = usePortalAction(studentApi.markNotificationRead);
   const profile = data?.profile;
-  const unread = data?.notifications.filter((item) => !item.is_read).length ?? 0;
-  const latestNotifications = useMemo(() => [...(data?.notifications ?? [])]
-    .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
-    .slice(0, 5), [data?.notifications]);
+  const notifications = data?.notifications ?? [];
+  const unread = notifications.filter((item) => !item.is_read).length;
 
-  useEffect(() => {
-    setMobileOpen(false);
-    setNotifOpen(false);
-  }, [location.pathname]);
+  useEffect(() => setMobileOpen(false), [location.pathname]);
+  useEffect(() => setNotifOpen(false), [location.pathname]);
 
   useEffect(() => {
     if (!notifOpen) return;
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(event.target as Node)) setNotifOpen(false);
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
     };
-    document.addEventListener("mousedown", closeOnOutsideClick);
-    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, [notifOpen]);
 
   const toggleCollapsed = () => {
@@ -132,32 +131,55 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
           </div>
           <div className="topbar-actions">
             <div className="notif-wrapper" ref={notifRef}>
-              <button className="topbar-icon" onClick={() => setNotifOpen((open) => !open)} aria-label="Notifications" aria-expanded={notifOpen}>
+              <button className="topbar-icon" onClick={() => setNotifOpen((o) => !o)} aria-label="Notifications">
                 <i className="ti ti-bell" />
                 {unread > 0 && <span>{unread > 9 ? "9+" : unread}</span>}
               </button>
               {notifOpen && (
-                <div className="notif-dropdown" role="menu" aria-label="Latest notifications">
+                <div className="notif-dropdown">
                   <div className="notif-dropdown-header">
                     <strong>Notifications</strong>
-                    {unread > 0 && <span className="notif-count">{unread} unread</span>}
+                    {unread > 0 && (
+                      <button
+                        className="notif-mark-all"
+                        disabled={markAll.isPending}
+                        onClick={() => markAll.mutateAsync(undefined)}
+                      >
+                        Mark all read
+                      </button>
+                    )}
                   </div>
                   <div className="notif-dropdown-list">
-                    {!latestNotifications.length ? (
+                    {!notifications.length ? (
                       <div className="notif-empty"><i className="ti ti-bell-off" />No notifications</div>
-                    ) : latestNotifications.map((item) => (
+                    ) : notifications.slice(0, 8).map((item) => (
                       <div className={`notif-dropdown-item ${item.is_read ? "" : "unread"}`} key={item.id}>
-                        <div className="notif-dot-col">{!item.is_read && <span className="notif-dot" />}</div>
+                        <div className="notif-dot-col">
+                          {!item.is_read && <span className="notif-dot" />}
+                        </div>
                         <div className="notif-dropdown-copy">
                           <strong>{item.title}</strong>
                           <p>{item.body}</p>
                           <time>{relativeTime(item.created_at)}</time>
                         </div>
+                        {!item.is_read && (
+                          <button
+                            className="notif-read-btn"
+                            disabled={markRead.isPending}
+                            onClick={() => markRead.mutateAsync(item.id)}
+                            title="Mark as read"
+                          >
+                            <i className="ti ti-check" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
-                  <button className="notif-view-all" onClick={() => navigate("/student/notifications")}>
-                    View All <i className="ti ti-arrow-right" />
+                  <button
+                    className="notif-view-all"
+                    onClick={() => { setNotifOpen(false); navigate("/student/notifications"); }}
+                  >
+                    View All Notifications <i className="ti ti-arrow-right" />
                   </button>
                 </div>
               )}

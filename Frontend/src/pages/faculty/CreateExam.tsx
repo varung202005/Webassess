@@ -28,6 +28,7 @@ import { PageState } from "../../features/faculty/components";
 import { useFacultyDashboard, useQuestions, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import type { Question } from "../../features/faculty/types";
+import CandidateManager from "./CandidateManager";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -95,7 +96,7 @@ interface ExamDraft {
   savedAt: string;
   currentStep: number;
   form: ExamForm;
-  rules: Record<string, any>;
+  rules: ExamRules;
   schedule: ScheduleForm;
   selectedQuestionIds: string[];
 }
@@ -166,6 +167,8 @@ const defaultRules = () => ({
   max_tab_switches: 3,
   auto_save_interval_sec: 30,
 });
+
+type ExamRules = ReturnType<typeof defaultRules>;
 
 const defaultSchedule = (): ScheduleForm => ({
   start_time: "",
@@ -837,22 +840,25 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepRules({ rules, onChange }: {
-  rules: Record<string, any>; onChange: (r: Record<string, any>) => void;
+  rules: ExamRules; onChange: (r: ExamRules) => void;
 }) {
-  const rule = (key: string, label: string, type: "bool" | "num" = "bool", min?: number) => (
-    <div className="form-field rule-field">
-      <div className="rule-label">{label}</div>
-      {type === "bool" ? (
-        <label className="toggle-switch">
-          <input type="checkbox" checked={!!rules[key]} onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
-          <span className="toggle-slider" />
-        </label>
-      ) : (
-        <input type="number" className="form-input rule-num" min={min ?? 0} value={rules[key] ?? 0}
-          onChange={(e) => onChange({ ...rules, [key]: +e.target.value })} />
-      )}
-    </div>
-  );
+  const rule = (key: keyof ExamRules, label: string, type: "bool" | "num" = "bool", min?: number) => {
+    const numericValue = typeof rules[key] === "number" ? rules[key] : 0;
+    return (
+      <div className="form-field rule-field">
+        <div className="rule-label">{label}</div>
+        {type === "bool" ? (
+          <label className="toggle-switch">
+            <input type="checkbox" checked={!!rules[key]} onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
+            <span className="toggle-slider" />
+          </label>
+        ) : (
+          <input type="number" className="form-input rule-num" min={min ?? 0} value={numericValue}
+            onChange={(e) => onChange({ ...rules, [key]: +e.target.value })} />
+        )}
+      </div>
+    );
+  };
   return (
     <div className="step-panel">
       <div className="step-header">
@@ -1065,6 +1071,7 @@ export default function CreateExam() {
   const [saving,       setSaving]       = useState(false);
   const [saveError,    setSaveError]    = useState("");
   const [examId,       setExamId]       = useState<string | null>(null);
+  const [scheduleId,   setScheduleId]   = useState<string | null>(null);
 
   const [form,     setForm]     = useState<ExamForm>(defaultForm);
   const [rules,    setRules]    = useState(defaultRules);
@@ -1189,7 +1196,7 @@ export default function CreateExam() {
       // Step 4 — create schedule
       // toUTCString converts the datetime-local value (IST) to UTC ISO string
       // so the backend stores the correct UTC time.
-      await facultyApi.createExamSchedule({
+      const scheduleResult = await facultyApi.createExamSchedule({
         exam_id:               newExamId,
         start_time:            schedule.start_time ? toUTCString(schedule.start_time) : null,
         end_time:              schedule.end_time ? toUTCString(schedule.end_time) : null,
@@ -1198,6 +1205,7 @@ export default function CreateExam() {
       });
 
       setExamId(newExamId);
+      setScheduleId(scheduleResult?.id ?? null);
       deleteDraft(draftId);
 
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
@@ -1344,9 +1352,30 @@ export default function CreateExam() {
 
                 {examId && (
                   <div className="workspace-footer">
-                    <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
-                      <i className="ti ti-home" /> Go to Dashboard to Publish
-                    </button>
+                    {form.exam_type === "ENTRANCE" && scheduleId ? (
+                      /* ── Entrance exam: show candidate manager inline ── */
+                      <div style={{ width: "100%", marginTop: 8 }}>
+                        <div style={{
+                          background: "#ECFDF5", border: "1px solid #6EE7B7",
+                          borderRadius: 10, padding: "14px 18px", marginBottom: 24,
+                          display: "flex", alignItems: "center", gap: 10,
+                          fontSize: 14, color: "#047857", fontWeight: 600,
+                        }}>
+                          <i className="ti ti-circle-check" style={{ fontSize: 18 }} />
+                          Entrance exam created! Now assign candidates below, then go to Dashboard to publish.
+                        </div>
+                        <CandidateManager examScheduleId={scheduleId} examTitle={form.title} />
+                        <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+                          <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
+                            <i className="ti ti-home" /> Go to Dashboard to Publish
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
+                        <i className="ti ti-home" /> Go to Dashboard to Publish
+                      </button>
+                    )}
                   </div>
                 )}
               </>

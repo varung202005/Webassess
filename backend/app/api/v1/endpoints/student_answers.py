@@ -16,7 +16,7 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 
-from app.core.security import require_student, require_faculty, get_current_user_with_roles
+from app.core.security import require_faculty, get_current_user_with_roles, require_exam_taker
 from app.db.supabase import get_supabase_admin
 
 router = APIRouter()
@@ -41,7 +41,7 @@ class NavigationLog(BaseModel):
 @router.post("/save")
 async def save_answer(
     body: AnswerUpsert,
-    current_user: dict = Depends(require_student),
+    current_user: dict = Depends(require_exam_taker),
 ):
     """
     UPSERT an answer. Called by frontend auto-save and on every answer change.
@@ -51,7 +51,7 @@ async def save_answer(
     """
     supabase = get_supabase_admin()
 
-    # Verify attempt belongs to student
+    # Verify attempt belongs to this exam taker.
     attempt = (
         supabase.table("exam_attempts")
         .select("status,started_at,exam_schedule_id")
@@ -135,8 +135,8 @@ async def get_answers_for_attempt(
     supabase = get_supabase_admin()
     query = supabase.table("student_answers").select("*").eq("attempt_id", str(attempt_id))
 
-    # Students can only fetch their own attempt's answers
-    if "Student" in current_user["roles"]:
+    # Exam takers can only fetch their own attempt's answers.
+    if "Student" in current_user["roles"] or "Candidate" in current_user["roles"]:
         attempt = (
             supabase.table("exam_attempts")
             .select("student_id")
@@ -153,7 +153,7 @@ async def get_answers_for_attempt(
 @router.post("/navigate")
 async def log_navigation(
     body: NavigationLog,
-    _: dict = Depends(require_student),
+    current_user: dict = Depends(require_exam_taker),
 ):
     """
     Log question navigation action (VISITED, ANSWERED, SKIPPED, FLAGGED etc.).
@@ -166,6 +166,16 @@ async def log_navigation(
         raise HTTPException(status_code=400, detail=f"Invalid action. Use: {valid_actions}")
 
     supabase = get_supabase_admin()
+    attempt = (
+        supabase.table("exam_attempts")
+        .select("student_id")
+        .eq("id", str(body.attempt_id))
+        .single()
+        .execute()
+    )
+    if not attempt.data or attempt.data["student_id"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Attempt not found or not yours")
+
     supabase.table("question_navigation_logs").insert({
         "attempt_id": str(body.attempt_id),
         "question_id": str(body.question_id),

@@ -23,6 +23,11 @@ import FacultyReevaluations from "./pages/faculty/Reevaluations";
 import FacultyNotificationsPage from "./pages/faculty/NotificationsPage";
 import FacultyProfile from "./pages/faculty/Profile";
 
+// Candidate
+import CandidateExamState from "./pages/candidate/ExamState";
+import CandidateInstructions from "./pages/candidate/Instructions";
+import CandidateThankYou from "./pages/candidate/ThankYou";
+
 // Other portals
 import ProctorDashboard from "./pages/proctor/Dashboard";
 import AdminDashboard from "./pages/admin/Dashboard";
@@ -58,14 +63,19 @@ export default function App() {
         <Route path="/faculty/notifications" element={<ProtectedRoute roles={["FACULTY"]}><FacultyNotificationsPage /></ProtectedRoute>} />
         <Route path="/faculty/profile"      element={<ProtectedRoute roles={["FACULTY"]}><FacultyProfile /></ProtectedRoute>} />
 
+        {/* ── Candidate ────────────────────────────────────────────────── */}
+        <Route path="/candidate/state"        element={<ProtectedRoute roles={["CANDIDATE"]}><CandidateExamState /></ProtectedRoute>} />
+        <Route path="/candidate/instructions" element={<ProtectedRoute roles={["CANDIDATE"]}><CandidateInstructions /></ProtectedRoute>} />
+        <Route path="/candidate/thank-you"    element={<ProtectedRoute roles={["CANDIDATE"]}><CandidateThankYou /></ProtectedRoute>} />
+
         {/* ── Proctor ──────────────────────────────────────────────────── */}
         <Route path="/proctor/dashboard"    element={<ProtectedRoute roles={["PROCTOR"]}><ProctorDashboard /></ProtectedRoute>} />
 
         {/* ── Admin ────────────────────────────────────────────────────── */}
         <Route path="/admin/dashboard"      element={<ProtectedRoute roles={["ADMIN"]}><AdminDashboard /></ProtectedRoute>} />
 
-        {/* ── Live Exam (full-screen) ───────────────────────────────────── */}
-        <Route path="/exam/live/:scheduleId" element={<ProtectedRoute roles={["STUDENT"]}><LiveExam /></ProtectedRoute>} />
+        {/* ── Live Exam (full-screen) — shared by Student and Candidate ── */}
+        <Route path="/exam/live/:scheduleId" element={<ProtectedRoute roles={["STUDENT", "CANDIDATE"]}><LiveExam /></ProtectedRoute>} />
 
         <Route path="*" element={<NotFound />} />
       </Routes>

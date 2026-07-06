@@ -1,4 +1,6 @@
 import logging
+import secrets
+import string
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Optional
@@ -838,3 +840,269 @@ async def get_exam_analytics(exam_id: UUID, _: dict = Depends(require_faculty)):
         "question_performance": question_performance,
         "topper_list": topper_list,
     }
+
+# ── Candidate Management (Entrance Exams) ─────────────────────────────────────
+
+class CandidateEntry(BaseModel):
+    full_name: str
+    email: str
+    phone: Optional[str] = None
+    temp_password: Optional[str] = None  # auto-generated if blank
+
+
+class AssignCandidatesRequest(BaseModel):
+    exam_schedule_id: UUID
+    candidates: list[CandidateEntry]
+
+
+def _generate_temp_password(length: int = 10) -> str:
+    """Generate a readable alphanumeric temporary password."""
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+@router.post("/candidates/assign")
+async def assign_candidates(
+    body: AssignCandidatesRequest,
+    current_user: dict = Depends(require_faculty),
+):
+    """
+    Assign candidates to an entrance exam schedule.
+
+    For each candidate entry:
+      1. Check if a user with that email already exists in public.users
+      2. If not, create the user (Supabase Auth + public.users row)
+      3. Assign CANDIDATE role via user_roles
+      4. Insert into candidate_exam_assignments
+      5. Return invitation payload (ready for email plug-in)
+
+    BACKEND responsibility.
+    """
+    supabase = get_supabase_admin()
+    faculty_id = current_user["user_id"]
+    schedule_id = str(body.exam_schedule_id)
+
+    # Validate schedule exists and faculty owns the exam
+    sched = (
+        supabase.table("exam_schedules")
+        .select("id,exam_id,exams(title,duration_minutes,created_by)")
+        .eq("id", schedule_id)
+        .single()
+        .execute()
+        .data
+    )
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if sched["exams"]["created_by"] != faculty_id:
+        raise HTTPException(status_code=403, detail="You do not own this exam")
+
+    # Fetch CANDIDATE role id
+    role_row = (
+        supabase.table("roles")
+        .select("id")
+        .eq("name", "Candidate")
+        .single()
+        .execute()
+        .data
+    )
+    if not role_row:
+        raise HTTPException(
+            status_code=500,
+            detail="Candidate role not found. Ensure Phase 1 migration was run."
+        )
+    candidate_role_id = role_row["id"]
+
+    results = []
+    for entry in body.candidates:
+        temp_password = entry.temp_password or _generate_temp_password()
+
+        # 1. Check if user exists
+        existing = (
+            supabase.table("users")
+            .select("id,full_name,email")
+            .eq("email", entry.email)
+            .execute()
+            .data
+        )
+
+        if existing:
+            user_id = existing[0]["id"]
+        else:
+            # 2. Create Supabase Auth user (admin API — no email confirmation needed)
+            try:
+                auth_resp = supabase.auth.admin.create_user({
+                    "email": entry.email,
+                    "password": temp_password,
+                    "email_confirm": True,
+                    "user_metadata": {"full_name": entry.full_name, "role": "candidate"},
+                })
+                user_id = auth_resp.user.id
+            except Exception as e:
+                logger.warning("Auth user creation failed for %s: %s", entry.email, e)
+                results.append({
+                    "email": entry.email,
+                    "status": "error",
+                    "error": str(e),
+                })
+                continue
+
+            # Insert into public.users
+            supabase.table("users").insert({
+                "id": user_id,
+                "full_name": entry.full_name,
+                "email": entry.email,
+                "phone": entry.phone,
+                "password_hash": "managed_by_supabase_auth",
+                "is_active": True,
+                "is_verified": True,
+            }).execute()
+
+        # 3. Assign CANDIDATE role (idempotent)
+        supabase.table("user_roles").upsert(
+            {"user_id": user_id, "role_id": candidate_role_id},
+            on_conflict="user_id,role_id",
+        ).execute()
+
+        # 4. Insert into candidate_exam_assignments (idempotent via UNIQUE constraint)
+        existing_assignment = (
+            supabase.table("candidate_exam_assignments")
+            .select("id,invitation_token")
+            .eq("exam_schedule_id", schedule_id)
+            .eq("candidate_id", user_id)
+            .execute()
+            .data
+        )
+        if existing_assignment:
+            token = existing_assignment[0]["invitation_token"]
+            assignment_id = existing_assignment[0]["id"]
+        else:
+            assignment_row = (
+                supabase.table("candidate_exam_assignments")
+                .insert({
+                    "exam_schedule_id": schedule_id,
+                    "candidate_id": user_id,
+                    "invited_by": faculty_id,
+                    "status": "INVITED",
+                })
+                .execute()
+                .data[0]
+            )
+            token = assignment_row["invitation_token"]
+            assignment_id = assignment_row["id"]
+
+        # 5. Build invitation payload (email plug-in point)
+        login_url = f"/login?token={token}"
+        payload = {
+            "candidate_name": entry.full_name,
+            "candidate_email": entry.email,
+            "exam_name": sched["exams"]["title"],
+            "exam_duration_minutes": sched["exams"]["duration_minutes"],
+            "login_url": login_url,
+            "temp_password": temp_password if not entry.temp_password else None,
+            "invitation_token": token,
+        }
+        # TODO: await email_service.send_invitation(payload) when SMTP is configured
+
+        results.append({
+            "email": entry.email,
+            "user_id": user_id,
+            "assignment_id": assignment_id,
+            "status": "assigned",
+            "invitation_payload": payload,
+        })
+
+    return {"assigned": len([r for r in results if r["status"] == "assigned"]), "results": results}
+
+
+@router.get("/candidates/{exam_schedule_id}")
+async def list_exam_candidates(
+    exam_schedule_id: UUID,
+    current_user: dict = Depends(require_faculty),
+):
+    """
+    Returns all candidates assigned to an exam schedule,
+    with their invitation status and attempt status.
+    """
+    supabase = get_supabase_admin()
+    faculty_id = current_user["user_id"]
+    schedule_id = str(exam_schedule_id)
+
+    # Verify faculty owns the exam
+    sched = (
+        supabase.table("exam_schedules")
+        .select("id,exam_id,exams(title,created_by)")
+        .eq("id", schedule_id)
+        .single()
+        .execute()
+        .data
+    )
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if sched["exams"]["created_by"] != faculty_id:
+        raise HTTPException(status_code=403, detail="You do not own this exam")
+
+    assignments = (
+        supabase.table("candidate_exam_assignments")
+        .select("id,candidate_id,status,created_at,invitation_token,"
+                "users(full_name,email,phone)")
+        .eq("exam_schedule_id", schedule_id)
+        .order("created_at")
+        .execute()
+        .data
+    ) or []
+
+    # Enrich with attempt data
+    candidate_ids = [a["candidate_id"] for a in assignments]
+    attempts_map: dict = {}
+    if candidate_ids:
+        attempts = (
+            supabase.table("exam_attempts")
+            .select("id,student_id,status,started_at,submitted_at,total_score")
+            .eq("exam_schedule_id", schedule_id)
+            .in_("student_id", candidate_ids)
+            .execute()
+            .data
+        ) or []
+        attempts_map = {a["student_id"]: a for a in attempts}
+
+    # Enrich with result scores
+    result_map: dict = {}
+    attempt_ids = [a["id"] for a in attempts_map.values()]  # type: ignore[attr-defined]
+    if attempt_ids:
+        results = (
+            supabase.table("results")
+            .select("attempt_id,total_score,max_score,percentage,is_published")
+            .in_("attempt_id", attempt_ids)
+            .execute()
+            .data
+        ) or []
+        # key by student_id via join
+        for r in results:
+            # find candidate for this attempt
+            for cid, att in attempts_map.items():
+                if att["id"] == r["attempt_id"]:
+                    result_map[cid] = r
+
+    enriched = []
+    for a in assignments:
+        cid = a["candidate_id"]
+        attempt = attempts_map.get(cid)
+        result = result_map.get(cid)
+        enriched.append({
+            "assignment_id": a["id"],
+            "candidate_id": cid,
+            "full_name": (a.get("users") or {}).get("full_name", ""),
+            "email": (a.get("users") or {}).get("email", ""),
+            "phone": (a.get("users") or {}).get("phone"),
+            "invitation_status": a["status"],
+            "invitation_token": a["invitation_token"],
+            "login_url": f"/login?token={a['invitation_token']}",
+            "assigned_at": a["created_at"],
+            "attempt_status": attempt["status"] if attempt else None,
+            "started_at": attempt["started_at"] if attempt else None,
+            "submitted_at": attempt["submitted_at"] if attempt else None,
+            "score": result["total_score"] if result and result.get("is_published") else None,
+            "percentage": result["percentage"] if result and result.get("is_published") else None,
+        })
+
+    return enriched

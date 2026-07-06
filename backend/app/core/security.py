@@ -80,8 +80,10 @@ def require_roles(*required: str):
 
 
 # Shorthand guards used across routers
-require_admin   = require_roles("Admin")
-require_faculty = require_roles("Admin", "Faculty")
-require_proctor = require_roles("Admin", "Proctor")
-require_student = require_roles("Student")
-require_any     = require_roles("Admin", "Faculty", "Proctor", "Student")
+require_admin       = require_roles("Admin")
+require_faculty     = require_roles("Admin", "Faculty")
+require_proctor     = require_roles("Admin", "Proctor")
+require_student     = require_roles("Student")
+require_candidate   = require_roles("Candidate")
+require_exam_taker  = require_roles("Student", "Candidate")   # live-exam endpoints shared by both
+require_any         = require_roles("Admin", "Faculty", "Proctor", "Student", "Candidate")

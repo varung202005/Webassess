@@ -14,7 +14,6 @@ export default function AvailableExams() {
   const [selected, setSelected] = useState<StudentSchedule | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [registeringById, setRegisteringById] = useState<Record<string, boolean>>({});
   const exams = useMemo(() => (portal.data?.schedules ?? []).filter((item) => {
     const haystack = `${item.exam.title} ${item.course.name} ${item.course.code}`.toLowerCase();
     const matchesSearch = haystack.includes(search.toLowerCase());
@@ -22,16 +21,16 @@ export default function AvailableExams() {
     return matchesSearch && (status === "ALL" || status === currentStatus);
   }), [portal.data?.schedules, search, status]);
 
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
   const handleRegister = async (schedule: StudentSchedule) => {
     setError(null); setFeedback(null);
-    setRegisteringById((state) => ({ ...state, [schedule.id]: true }));
+    setLoadingId(schedule.id);
     try {
       await register.mutateAsync(schedule.id);
       setFeedback(`Registration confirmed for ${schedule.exam.title}.`);
     } catch (cause) { setError(apiMessage(cause)); }
-    finally {
-      setRegisteringById((state) => ({ ...state, [schedule.id]: false }));
-    }
+    finally { setLoadingId(null); }
   };
 
   return (
@@ -47,7 +46,7 @@ export default function AvailableExams() {
         </div>
         {!exams.length ? <EmptyState icon="ti-file-search" title="No matching exams" body="Published exams for your department will appear here." /> :
           <div className="exam-grid">{exams.map((schedule) => (
-            <ExamCard key={schedule.id} schedule={schedule} busy={Boolean(registeringById[schedule.id])} onDetails={() => setSelected(schedule)} onRegister={() => handleRegister(schedule)} />
+            <ExamCard key={schedule.id} schedule={schedule} busy={loadingId === schedule.id} onDetails={() => setSelected(schedule)} onRegister={() => handleRegister(schedule)} />
           ))}</div>}
         {selected && <ExamDetailsModal schedule={selected} onClose={() => setSelected(null)} />}
       </PageState>

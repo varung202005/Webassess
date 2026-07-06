@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     admin,
     student,
     faculty,
+    candidate,
 )
 
 api_router = APIRouter()
@@ -73,4 +74,5 @@ api_router.include_router(faculty.router,               prefix="/faculty",      
 api_router.include_router(audit_logs.router,            prefix="/audit-logs",           tags=["Audit Logs"])
 api_router.include_router(admin.router,                 prefix="/admin",               tags=["Admin"])
 
-
+# ── Candidate Portal ──────────────────────────────────────────────────────────
+api_router.include_router(candidate.router,             prefix="/candidate",            tags=["Candidate Portal"])

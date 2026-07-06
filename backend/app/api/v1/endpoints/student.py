@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.security import require_student
+from app.core.security import require_student, require_exam_taker
 from app.db.supabase import get_supabase_admin
 
 router = APIRouter()
@@ -280,7 +280,7 @@ async def update_student_profile(
 @router.get("/exam-session/{schedule_id}")
 async def get_exam_session(
     schedule_id: UUID,
-    current_user: dict = Depends(require_student),
+    current_user: dict = Depends(require_exam_taker),
 ):
     supabase = get_supabase_admin()
     user_id = current_user["user_id"]

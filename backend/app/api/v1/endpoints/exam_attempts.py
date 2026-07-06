@@ -17,7 +17,7 @@ from typing import Optional, Literal
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 
-from app.core.security import require_student, require_faculty, get_current_user_with_roles
+from app.core.security import require_student, require_faculty, get_current_user_with_roles, require_exam_taker
 from app.db.supabase import get_supabase_admin
 
 router = APIRouter()
@@ -264,7 +264,7 @@ async def get_attempt(attempt_id: UUID, current_user: dict = Depends(get_current
     supabase = get_supabase_admin()
     query = supabase.table("exam_attempts").select("*").eq("id", str(attempt_id))
 
-    if "Student" in current_user["roles"]:
+    if "Student" in current_user["roles"] or "Candidate" in current_user["roles"]:
         query = query.eq("student_id", current_user["user_id"])
 
     result = query.single().execute()
@@ -281,13 +281,15 @@ async def log_submission_event(
     attempt_id: UUID,
     event_type: str,
     metadata: Optional[str] = None,
-    current_user: dict = Depends(require_student),
+    current_user: dict = Depends(require_exam_taker),
 ):
     """
     Log tab switches, fullscreen exits, connection lost/restored, etc.
     Frontend calls this on every detectable event.
     BACKEND writes to submission_logs (append-only).
-    
+
+    Accessible by both Students and Candidates (require_exam_taker).
+
     Valid event_type values:
       TAB_SWITCH_WARNING, FULLSCREEN_EXIT, CONNECTION_LOST,
       CONNECTION_RESTORED, TIME_WARNING, ANSWER_SAVED
@@ -300,6 +302,16 @@ async def log_submission_event(
         raise HTTPException(status_code=400, detail=f"Invalid event_type. Use one of: {valid_events}")
 
     supabase = get_supabase_admin()
+    attempt = (
+        supabase.table("exam_attempts")
+        .select("student_id")
+        .eq("id", str(attempt_id))
+        .single()
+        .execute()
+    )
+    if not attempt.data or attempt.data["student_id"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Attempt not found or not yours")
+
     supabase.table("submission_logs").insert({
         "attempt_id": str(attempt_id),
         "event_type": event_type,
