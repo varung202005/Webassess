@@ -166,7 +166,7 @@ function ExamsTable({
     setPublishError(null);
     setPublishing(exam.id);
     try {
-      await facultyApi.changeExamStatus(exam.id, "DRAFT");
+      await facultyApi.updateExam(exam.id, { status: "DRAFT" });
       onPublished();
     } catch (err) {
       setPublishError(apiMsg(err));
