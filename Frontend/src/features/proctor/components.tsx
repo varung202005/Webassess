@@ -383,64 +383,59 @@ export function StudentsPanel({
 
 /* ── Audio Monitor Panel ───────────────────────────────────────────────────── */
 export function AudioMonitorPanel({
-  flagged,
-  activeAttempts,
+  scheduleId,
 }: {
-  flagged?: FlaggedAttempt[];
-  activeAttempts?: { id: string; users?: { full_name: string } | null }[];
+  scheduleId?: string;
 }) {
-  const attemptIds = (activeAttempts ?? []).map((a) => a.id);
-
   const { data: audioRows, isLoading } = useQuery({
-    queryKey: ["audio-monitor-panel", ...attemptIds],
+    queryKey: ["audio-monitor-panel", scheduleId],
     queryFn: async () => {
-      let q = supabase
+      if (!scheduleId) return [];
+
+      // Join through to the attempt's schedule + student name, so we can
+      // (a) filter strictly to the selected exam at the DB level instead
+      //     of relying on a client-side "active attempts" list that may
+      //     be empty or incomplete, and
+      // (b) always have a real name available, even for students who've
+      //     already submitted and are no longer "active" or flagged.
+      const { data, error } = await supabase
         .from("audio_monitoring_logs")
-        .select("attempt_id,exam_relevant")
+        .select(
+          "attempt_id,exam_relevant,exam_attempts!inner(exam_schedule_id,users(full_name))"
+        )
         .eq("noise_detected", true)
+        .eq("exam_attempts.exam_schedule_id", scheduleId)
         .limit(500);
 
-      // Only scope to specific attempts if we have IDs (exam tab filter)
-      if (attemptIds.length > 0) {
-        q = q.in("attempt_id", attemptIds);
-      }
-
-      const { data, error } = await q;
       if (error) {
         console.error("[AudioMonitorPanel] query error:", error.message);
         return [];
       }
-      console.log("[AudioMonitorPanel] rows fetched:", data?.length, "attemptIds filter:", attemptIds);
+      console.log("[AudioMonitorPanel] rows fetched:", data?.length, "scheduleId:", scheduleId);
       return data ?? [];
     },
-    // ALWAYS enabled — no longer gated on attemptIds
-    enabled: true,
+    enabled: !!scheduleId,
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
 
-  // Count noise events per attempt, and separately flag any exam-relevant speech
+  // Count noise events per attempt, and separately flag any exam-relevant speech.
+  // Resolve the name straight from the joined row — no more falling back to a
+  // partial activeAttempts/flagged list.
   const counts: Record<string, number> = {};
   const relevantCounts: Record<string, number> = {};
+  const nameMap: Record<string, string> = {};
+
   for (const row of audioRows ?? []) {
     counts[row.attempt_id] = (counts[row.attempt_id] ?? 0) + 1;
     if (row.exam_relevant) relevantCounts[row.attempt_id] = (relevantCounts[row.attempt_id] ?? 0) + 1;
-  }
 
-  // Build name map from BOTH active attempts and flagged attempts — audio
-  // events can reference attempts that have since been flagged / completed
-  // and dropped out of the "active" set, so activeAttempts alone isn't
-  // enough to resolve every name (this was the bug: flagged was accepted
-  // as a prop but never used, so those attempts fell back to a raw
-  // truncated attempt_id like "97F522F9").
-  const nameMap: Record<string, string> = {};
-  for (const a of activeAttempts ?? []) {
-    nameMap[a.id] = a.users?.full_name ?? "Student";
-  }
-  for (const f of flagged ?? []) {
-    if (f.exam_attempts?.users?.full_name) {
-      nameMap[f.attempt_id] = f.exam_attempts.users.full_name;
-    }
+    const attempt = row.exam_attempts as
+      | { users?: { full_name: string } | { full_name: string }[] | null }
+      | null;
+    const usersField = attempt?.users;
+    const resolved = Array.isArray(usersField) ? usersField[0]?.full_name : usersField?.full_name;
+    if (resolved) nameMap[row.attempt_id] = resolved;
   }
 
   const entries = Object.entries(counts)
@@ -501,7 +496,6 @@ export function AudioMonitorPanel({
     </div>
   );
 }
-
 /* ── Realtime Alert Feed ───────────────────────────────────────────────────── */
 export interface AlertItem {
   id: string;

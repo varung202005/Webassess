@@ -357,8 +357,8 @@ export default function ProctorDashboard() {
               )}
             </div>
             <div className="pcard-body">
-              <AudioMonitorPanel flagged={visibleFlagged} activeAttempts={visibleAttempts} />
-            </div>
+            <AudioMonitorPanel scheduleId={selectedExam} />       
+                 </div>
           </div>
 
           <div className="pcard">
