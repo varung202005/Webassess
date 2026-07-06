@@ -50,6 +50,29 @@ type DetectionResult = {
   flagReasons: string[];
 };
 
+type DetectedObject = {
+  class: string;
+  score: number;
+};
+
+type FaceApiModule = {
+  nets: { tinyFaceDetector: { loadFromUri: (url: string) => Promise<void> } };
+  TinyFaceDetectorOptions: new (options?: { scoreThreshold?: number }) => unknown;
+  detectAllFaces: (video: HTMLVideoElement, options?: unknown) => Promise<unknown[]>;
+};
+
+type CocoSsdModule = {
+  load: (options?: { base?: string }) => Promise<{ detect: (video: HTMLVideoElement) => Promise<DetectedObject[]> }>;
+};
+
+type TensorflowModule = {
+  ready: () => Promise<void>;
+};
+
+function optionalImport<T>(moduleName: string): Promise<T> {
+  return import(/* @vite-ignore */ moduleName) as Promise<T>;
+}
+
 export default function WebcamCapture({
   attemptId,
   studentId,
@@ -61,8 +84,8 @@ export default function WebcamCapture({
   const streamRef      = useRef<MediaStream | null>(null);
   const activeRef      = useRef(true);
   const modelsReadyRef = useRef(false);
-  const faceapiRef     = useRef<typeof import("face-api.js") | null>(null);
-  const cocoModelRef   = useRef<import("@tensorflow-models/coco-ssd").ObjectDetection | null>(null);
+  const faceapiRef     = useRef<FaceApiModule | null>(null);
+  const cocoModelRef   = useRef<{ detect: (video: HTMLVideoElement) => Promise<DetectedObject[]> } | null>(null);
   const [modelsLoading, setModelsLoading] = useState(true);
 
   // ── Load AI models once (free, client-side, cached by browser) ────────────
@@ -73,9 +96,9 @@ export default function WebcamCapture({
       try {
         console.log("[WebcamCapture] Loading AI models (face-api.js + coco-ssd)...");
         const [faceapi, cocoSsd, tf] = await Promise.all([
-          import("face-api.js"),
-          import("@tensorflow-models/coco-ssd"),
-          import("@tensorflow/tfjs"),
+          optionalImport<FaceApiModule>("face-api.js"),
+          optionalImport<CocoSsdModule>("@tensorflow-models/coco-ssd"),
+          optionalImport<TensorflowModule>("@tensorflow/tfjs"),
         ]);
         await tf.ready();
         await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL);
@@ -174,7 +197,7 @@ export default function WebcamCapture({
 
     const faceCount = faceResults.length;
     const personObjectCount = objectPredictions.filter(
-      (p) => p.class === "person" && p.score >= 0.5
+      (p: DetectedObject) => p.class === "person" && p.score >= 0.5
     ).length;
     // Take the stronger signal — a turned-away face might miss face-api but
     // still show up as a "person" object, and vice versa.
@@ -182,7 +205,7 @@ export default function WebcamCapture({
 
     const faceDetected = personCount > 0;
     const phoneDetected = objectPredictions.some(
-      (p) => (p.class === "cell phone" || p.class === "remote") && p.score >= PHONE_CONFIDENCE
+      (p: DetectedObject) => (p.class === "cell phone" || p.class === "remote") && p.score >= PHONE_CONFIDENCE
     );
 
     if (!faceDetected)   flagReasons.push("No face visible");
@@ -191,7 +214,7 @@ export default function WebcamCapture({
 
     console.log(
       "[WebcamCapture] Raw object predictions:",
-      objectPredictions.map((p) => `${p.class} (${p.score.toFixed(2)})`).join(", ") || "none"
+      objectPredictions.map((p: DetectedObject) => `${p.class} (${p.score.toFixed(2)})`).join(", ") || "none"
     );
 
     return { faceDetected, personCount, phoneDetected, flagReasons };

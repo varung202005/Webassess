@@ -21,7 +21,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { PageState } from "../../features/faculty/components";
@@ -1062,6 +1062,7 @@ function StepPreview({ form, schedule, selectedQuestions, examId }: {
 
 export default function CreateExam() {
   const navigate    = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
   const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
@@ -1073,7 +1074,10 @@ export default function CreateExam() {
   const [examId,       setExamId]       = useState<string | null>(null);
   const [scheduleId,   setScheduleId]   = useState<string | null>(null);
 
-  const [form,     setForm]     = useState<ExamForm>(defaultForm);
+  const [form,     setForm]     = useState<ExamForm>(() => ({
+    ...defaultForm(),
+    exam_type: searchParams.get("type") === "ENTRANCE" ? "ENTRANCE" : defaultForm().exam_type,
+  }));
   const [rules,    setRules]    = useState(defaultRules);
   const [schedule, setSchedule] = useState<ScheduleForm>(defaultSchedule);
 

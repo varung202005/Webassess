@@ -950,6 +950,59 @@ select:focus, input:focus {
   gap: 4px;
 }
 
+/* ── Candidate assessments ───────────────────────────── */
+.candidate-assessment-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.candidate-assessment-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 17px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.candidate-assessment-item:last-child { border-bottom: 0; }
+.candidate-assessment-item:hover { background: #fafbfc; }
+.candidate-assessment-main { min-width: 0; }
+.candidate-assessment-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #222536;
+}
+
+.candidate-assessment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: #777b8a;
+  font-size: 11px;
+}
+
+.candidate-assessment-meta span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+  color: #b7bac5;
+}
+
+.candidate-manager-modal {
+  width: min(980px, 100%);
+}
+
+@media (max-width: 720px) {
+  .candidate-assessment-item {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .candidate-assessment-item .btn {
+    width: 100%;
+  }
+}
+
 /* ── Activity list ───────────────────────────────────── */
 .activity-list { padding: 4px 0; }
 

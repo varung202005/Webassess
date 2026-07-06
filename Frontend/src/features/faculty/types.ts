@@ -44,6 +44,7 @@ export interface Exam {
   id: string;
   title: string;
   course_id: string;
+  exam_type?: string;
   status: "DRAFT" | "REVIEW" | "PUBLISHED" | "ARCHIVED";
   total_marks: number;
   pass_marks: number;
@@ -93,9 +94,18 @@ export interface ExamSchedule {
   registration_deadline?: string | null;
   is_published: boolean;
   published_at?: string | null;
-  exams?: { title: string; duration_minutes: number } | null;
+  exams?: {
+    title: string;
+    duration_minutes: number;
+    exam_type?: string;
+    status?: string;
+    courses?: { name?: string; code?: string } | null;
+  } | null;
   departments?: { name: string } | null;
   registration_count?: number;
+  candidate_count?: number;
+  candidate_started_count?: number;
+  candidate_completed_count?: number;
 }
 
 export interface ExamRegistration {
