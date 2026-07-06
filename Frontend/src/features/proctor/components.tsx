@@ -1,45 +1,90 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "../../lib/supabase";
-import type { FlaggedAttempt, IntegrityBand, ProctoringStats } from "./types";
+import type { ActiveSession, FlaggedAttempt, ProctoringStats, StudentBrowserStat } from "./types";
 import {
-  buildIntegrityBands,
   formatCountdown,
-  integrityBarColor,
-  integrityColor,
   issueList,
   relativeTime,
-  scoreDisplay,
   studentName,
   verdictBadgeClass,
   verdictLabel,
 } from "./format";
 import type { ProctoringVerdict } from "./types";
-import { useState } from "react";
 
-/* ── Session Banner ────────────────────────────────────────────────────────── */
+function examLabel(s: ActiveSession): string {
+  const code = s.course_code && s.course_code !== "—" ? s.course_code : "";
+  return code ? `${s.exam_title} — ${code}` : s.exam_title;
+}
+
+/* ── Session Banner (with built-in exam filter dropdown) ─────────────────────
+ * One bar instead of two: the "which running test" selector lives right
+ * inside the red live banner, next to the countdown/LIVE pill.
+ */
 interface SessionBannerProps {
-  title: string;
-  courseCode: string;
-  activeStudents: number;
+  sessions: ActiveSession[];
+  selectedExam: string;
+  onSelectExam: (scheduleId: string) => void;
   endsAt: string;
 }
-export function SessionBanner({ title, courseCode, activeStudents, endsAt }: SessionBannerProps) {
+export function SessionBanner({ sessions, selectedExam, onSelectExam, endsAt }: SessionBannerProps) {
   const [countdown, setCountdown] = useState(() => formatCountdown(endsAt));
   useEffect(() => {
     const id = setInterval(() => setCountdown(formatCountdown(endsAt)), 1000);
     return () => clearInterval(id);
   }, [endsAt]);
 
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const selected = sessions.find((s) => s.schedule_id === selectedExam) ?? null;
+
   return (
     <div className="session-banner">
       <i className="ti ti-device-desktop-analytics session-banner-icon" />
-      <div className="session-banner-info">
-        <div className="session-banner-title">{title} — {courseCode}</div>
-        <div className="session-banner-sub">
-          {activeStudents} student{activeStudents !== 1 ? "s" : ""} in progress
-        </div>
+
+      <div className="exam-dropdown" ref={wrapRef}>
+        <button
+          type="button"
+          className="exam-dropdown-trigger"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className={selected ? "" : "exam-dropdown-placeholder"}>
+            {selected ? examLabel(selected) : "Select a running test…"}
+          </span>
+          <i className={`ti ti-chevron-down exam-dropdown-chevron ${open ? "open" : ""}`} />
+        </button>
+
+        {open && (
+          <div className="exam-dropdown-menu">
+            {sessions.map((s) => (
+              <button
+                type="button"
+                key={s.schedule_id}
+                className={`exam-dropdown-option ${s.schedule_id === selectedExam ? "active" : ""}`}
+                onClick={() => { onSelectExam(s.schedule_id); setOpen(false); }}
+              >
+                <i className="ti ti-file-text" />
+                <span className="exam-dropdown-option-label">{examLabel(s)}</span>
+                {s.schedule_id === selectedExam && <i className="ti ti-check exam-dropdown-check" />}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      <span className="session-banner-count">
+        {sessions.length} test{sessions.length !== 1 ? "s" : ""} running
+      </span>
       <div className="session-timer">{countdown}</div>
       <div className="live-pill">
         <div className="live-dot" />
@@ -49,11 +94,16 @@ export function SessionBanner({ title, courseCode, activeStudents, endsAt }: Ses
   );
 }
 
-/* ── Stats Row (5 cards — now includes Audio) ──────────────────────────────── */
-export function StatsRow({ stats }: { stats: ProctoringStats }) {
-  const avgPct = Math.round(stats.avg_integrity * 100);
+/* ── Stats Row (Active / Registered / Completed for the selected exam) ──────── */
+export function StatsRow({
+  stats, registered, completed,
+}: {
+  stats: ProctoringStats;
+  registered?: number;
+  completed?: number;
+}) {
   return (
-    <div className="stats-row">
+    <div className="stats-row stats-row-triple">
       <StatCard
         icon="ti-users"
         iconColor="red"
@@ -62,32 +112,18 @@ export function StatsRow({ stats }: { stats: ProctoringStats }) {
         meta="Currently in exam"
       />
       <StatCard
-        icon="ti-alert-triangle"
-        iconColor="danger"
-        value={stats.total_flagged}
-        label="Flagged Attempts"
-        meta="Require review"
+        icon="ti-user-check"
+        iconColor="success"
+        value={registered ?? 0}
+        label="Registered"
+        meta="Signed up for this exam"
       />
       <StatCard
-        icon="ti-arrows-left-right"
+        icon="ti-clipboard-check"
         iconColor="warning"
-        value={stats.tab_switches_last_30m}
-        label="Tab Switches (30m)"
-        meta={`${stats.total_tab_switches} total this session`}
-      />
-      <StatCard
-        icon="ti-microphone"
-        iconColor="audio"
-        value={stats.noise_events_last_30m}
-        label="Audio Events (30m)"
-        meta={`${stats.total_noise_events} total this session`}
-      />
-      <StatCard
-        icon="ti-shield-half"
-        iconColor={avgPct >= 75 ? "success" : avgPct >= 50 ? "warning" : "danger"}
-        value={`${avgPct}%`}
-        label="Avg Integrity Score"
-        meta={`${stats.face_absence_events} face-absent · ${stats.phone_events} phone`}
+        value={completed ?? 0}
+        label="Given the Test"
+        meta="Have submitted their attempt"
       />
     </div>
   );
@@ -144,7 +180,6 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
         <thead>
           <tr>
             <th>Student</th>
-            <th>Integrity</th>
             <th>Incidents</th>
             <th>Issues</th>
             <th>Verdict</th>
@@ -154,7 +189,6 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
         </thead>
         <tbody>
           {attempts.map((a) => {
-            const score  = scoreDisplay(a.integrity_score);
             const issues = issueList(a);
             const isBusy = pendingId === a.attempt_id;
 
@@ -170,21 +204,6 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
                       <div className="student-name">{studentName(a)}</div>
                       <div className="student-id">{a.attempt_id.slice(0,8).toUpperCase()}</div>
                     </div>
-                  </div>
-                </td>
-
-                {/* Integrity bar */}
-                <td>
-                  <div className="int-wrap">
-                    <div className="int-bar-bg">
-                      <div
-                        className="int-bar-fill"
-                        style={{ width: `${score}%`, background: integrityBarColor(score) }}
-                      />
-                    </div>
-                    <span className="int-score" style={{ color: integrityColor(score) }}>
-                      {score}%
-                    </span>
                   </div>
                 </td>
 
@@ -262,24 +281,102 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
   );
 }
 
-/* ── Integrity Distribution ────────────────────────────────────────────────── */
-export function IntegrityDistribution({
-  flagged, totalLive,
-}: { flagged: FlaggedAttempt[]; totalLive: number }) {
-  const bands: IntegrityBand[] = buildIntegrityBands(flagged, totalLive);
+/* ── Students Panel — per-student browser monitoring ─────────────────────────
+ * Shows every active student with their live tab-switch and fullscreen-exit
+ * counts, pulled straight from browser_activity_logs via the dashboard API.
+ */
+export function StudentsPanel({
+  students, loading, onRecompute, recomputingId,
+}: {
+  students: StudentBrowserStat[];
+  loading?: boolean;
+  onRecompute?: (attemptId: string) => void;
+  recomputingId?: string | null;
+}) {
+  if (loading) {
+    return (
+      <div style={{ padding: "16px 0" }}>
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="skeleton" style={{ height: 40, marginBottom: 8, borderRadius: 6 }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (!students.length) {
+    return (
+      <div className="empty-state" style={{ padding: "16px 0" }}>
+        <i className="ti ti-device-desktop" style={{ fontSize: 28, marginBottom: 6 }} />
+        No browser activity recorded yet
+      </div>
+    );
+  }
+
   return (
-    <div className="dist-list">
-      {bands.map((b) => (
-        <div className="dist-row" key={b.label}>
-          <div className="dist-meta">
-            <span className="dist-label">{b.label}</span>
-            <span className="dist-count">{b.count} students</span>
-          </div>
-          <div className="dist-bar-bg">
-            <div className="dist-bar-fill" style={{ width: `${b.pct}%`, background: b.color }} />
-          </div>
-        </div>
-      ))}
+    <div style={{ overflowX: "auto" }}>
+      <table className="flag-table">
+        <thead>
+          <tr>
+            <th>Student</th>
+            <th>Tab Switches</th>
+            <th>Fullscreen Exits</th>
+            {onRecompute && <th>Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {students.map((s) => {
+            const isBusy = recomputingId === s.attempt_id;
+            return (
+            <tr key={s.attempt_id}>
+              <td>
+                <div className="student-cell">
+                  <div className="student-avatar">
+                    {s.name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)}
+                  </div>
+                  <div>
+                    <div className="student-name">{s.name}</div>
+                    <div className="student-id">{s.attempt_id.slice(0, 8).toUpperCase()}</div>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <span
+                  className={`issue-chip${s.tab_switch_count >= 3 ? " audio" : ""}`}
+                  style={s.tab_switch_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
+                >
+                  <i className="ti ti-arrows-left-right" style={{ fontSize: 9, marginRight: 3 }} />
+                  {s.tab_switch_count}
+                </span>
+              </td>
+              <td>
+                <span
+                  className={`issue-chip${s.fullscreen_exit_count > 0 ? " audio" : ""}`}
+                  style={s.fullscreen_exit_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
+                >
+                  <i className="ti ti-arrows-diagonal-minimize" style={{ fontSize: 9, marginRight: 3 }} />
+                  {s.fullscreen_exit_count}
+                </span>
+              </td>
+              {onRecompute && (
+                <td>
+                  <button
+                    className="btn-xs btn-xs-clear"
+                    disabled={isBusy}
+                    title="Re-run the flagging check for this attempt using its current logs"
+                    onClick={() => onRecompute(s.attempt_id)}
+                  >
+                    {isBusy
+                      ? <i className="ti ti-loader-2" style={{ animation: "spin .8s linear infinite" }} />
+                      : <i className="ti ti-refresh" />}
+                    Recheck
+                  </button>
+                </td>
+              )}
+            </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -298,7 +395,7 @@ export function AudioMonitorPanel({
     queryFn: async () => {
       let q = supabase
         .from("audio_monitoring_logs")
-        .select("attempt_id")
+        .select("attempt_id,exam_relevant")
         .eq("noise_detected", true)
         .limit(500);
 
@@ -321,10 +418,12 @@ export function AudioMonitorPanel({
     refetchInterval: 15_000,
   });
 
-  // Count noise events per attempt
+  // Count noise events per attempt, and separately flag any exam-relevant speech
   const counts: Record<string, number> = {};
+  const relevantCounts: Record<string, number> = {};
   for (const row of audioRows ?? []) {
     counts[row.attempt_id] = (counts[row.attempt_id] ?? 0) + 1;
+    if (row.exam_relevant) relevantCounts[row.attempt_id] = (relevantCounts[row.attempt_id] ?? 0) + 1;
   }
 
   // Build name map from activeAttempts (best-effort — falls back to ID)
@@ -338,6 +437,7 @@ export function AudioMonitorPanel({
       id,
       name: nameMap[id] ?? id.slice(0, 8).toUpperCase(),
       count,
+      relevantCount: relevantCounts[id] ?? 0,
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
@@ -374,6 +474,16 @@ export function AudioMonitorPanel({
               <div className="audio-bar-fill" style={{ width: `${pct}%` }} />
             </div>
             <span className="audio-count">{a.count}×</span>
+            {a.relevantCount > 0 && (
+              <span
+                className="issue-chip"
+                style={{ background: "#fef2f2", color: "var(--c-danger-700, #b31234)", marginLeft: 6 }}
+                title="Speech matched exam question/answer content"
+              >
+                <i className="ti ti-alert-triangle" style={{ fontSize: 9, marginRight: 3 }} />
+                exam-relevant ×{a.relevantCount}
+              </span>
+            )}
           </div>
         );
       })}

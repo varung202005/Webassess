@@ -1,3 +1,19 @@
+/**
+ * LiveExam.tsx — Final
+ *
+ * Connected to exam_rules set by faculty in Step 3 of CreateExam:
+ *   fullscreen_required     → enforces fullscreen, nag bar on exit
+ *   max_tab_switches        → warns per switch, force-submits on limit
+ *   proctoring_enabled      → gates camera / audio / browser monitors
+ *   camera_required         → gates CameraPermission screen + WebcamCapture
+ *   microphone_required     → gates AudioMonitor
+ *   auto_save_interval_sec  → drives auto-save timer
+ *
+ * On every submit (manual, auto, or force):
+ *   1. Flush pending answers
+ *   2. POST /proctoring/summary/:id  ← computes integrity score, flags if < 0.7
+ *   3. POST /exam-attempts/submit
+ */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
@@ -7,10 +23,13 @@ import { apiMessage } from "../../features/student/format";
 import type { ExamQuestion } from "../../features/student/types";
 import { useAuthStore } from "../../store/authStore";
 import "./liveExam.css";
+import "./liveExam.proctor.css";
 import WebcamCapture from "../../features/proctor/WebcamCapture";
 import AudioMonitor from "../../features/proctor/AudioMonitor";
 import BrowserMonitor from "../../features/proctor/BrowserMonitor";
 import CameraPermission from "../../features/proctor/CameraPermission";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface AnswerState {
   selected_option_id?: string | null;
@@ -20,14 +39,40 @@ interface AnswerState {
   time_spent_sec: number;
 }
 
-// ── Violation warning banner ──────────────────────────────────────────────────
-interface ViolationBanner {
+type ViolationType = "tab" | "fullscreen" | "conflict";
+
+interface ViolationWarning {
   id: number;
+  type: ViolationType;
   message: string;
-  type: "tab" | "fullscreen" | "conflict";
 }
 
-let bannerCounter = 0;
+interface ExamRule {
+  fullscreen_required: boolean;
+  proctoring_enabled: boolean;
+  camera_required: boolean;
+  microphone_required: boolean;
+  max_tab_switches: number;
+  auto_save_interval_sec: number;
+}
+
+let warnCounter = 0;
+
+function getRule(session: any): ExamRule {
+  const raw = Array.isArray(session?.exam?.exam_rules)
+    ? session.exam.exam_rules[0]
+    : session?.exam?.exam_rules;
+  return {
+    fullscreen_required:    raw?.fullscreen_required    ?? false,
+    proctoring_enabled:     raw?.proctoring_enabled     ?? false,
+    camera_required:        raw?.camera_required        ?? false,
+    microphone_required:    raw?.microphone_required    ?? false,
+    max_tab_switches:       raw?.max_tab_switches       ?? 3,
+    auto_save_interval_sec: raw?.auto_save_interval_sec ?? 30,
+  };
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function LiveExam() {
   const { scheduleId } = useParams();
@@ -35,96 +80,103 @@ export default function LiveExam() {
   const activeRole = useAuthStore((s) => s.activeRole);
   const sessionQuery = useQuery({
     queryKey: ["exam-session", scheduleId],
-    queryFn: () => studentApi.examSession(scheduleId!),
-    enabled: Boolean(scheduleId),
-    retry: false,
+    queryFn:  () => studentApi.examSession(scheduleId!),
+    enabled:  Boolean(scheduleId),
+    retry:    false,
   });
   const answersQuery = useQuery({
     queryKey: ["exam-answers", sessionQuery.data?.attempt.id],
-    queryFn: () => studentApi.savedAnswers(sessionQuery.data!.attempt.id),
-    enabled: Boolean(sessionQuery.data?.attempt.id),
+    queryFn:  () => studentApi.savedAnswers(sessionQuery.data!.attempt.id),
+    enabled:  Boolean(sessionQuery.data?.attempt.id),
   });
 
   const [index,         setIndex]         = useState(0);
-  const [answers,       setAnswers]        = useState<Record<string, AnswerState>>({});
-  const [visited,       setVisited]        = useState<Set<string>>(new Set());
-  const [remaining,     setRemaining]      = useState(0);
-  const [saving,        setSaving]         = useState(false);
-  const [lastSaved,     setLastSaved]      = useState<Date | null>(null);
-  const [submitOpen,    setSubmitOpen]     = useState(false);
-  const [submitting,    setSubmitting]     = useState(false);
-  const [error,         setError]          = useState<string | null>(null);
-  const [cameraCleared, setCameraCleared]  = useState(false);
-  // Violation banners — shown as dismissible warnings inside the exam UI
-  const [banners,       setBanners]        = useState<ViolationBanner[]>([]);
-  // Whether a duplicate session was detected
-  const [conflictMode,  setConflictMode]   = useState(false);
-  // Whether we're in fullscreen (so we can show a persistent nag if not)
-  const [isFullscreen,  setIsFullscreen]   = useState(() => Boolean(document.fullscreenElement));
+  const [answers,       setAnswers]       = useState<Record<string, AnswerState>>({});
+  const [visited,       setVisited]       = useState<Set<string>>(new Set());
+  const [remaining,     setRemaining]     = useState(0);
+  const [saving,        setSaving]        = useState(false);
+  const [lastSaved,     setLastSaved]     = useState<Date | null>(null);
+  const [submitOpen,    setSubmitOpen]    = useState(false);
+  const [submitting,    setSubmitting]    = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const [cameraCleared, setCameraCleared] = useState(false);
+  const [isFullscreen,  setIsFullscreen]  = useState(() => Boolean(document.fullscreenElement));
 
-  const dirty          = useRef(new Set<string>());
-  const submitted      = useRef(false);
-  const enteredQuestionAt = useRef(Date.now());
+  // Violation state
+  const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
+  const [tabCount,        setTabCount]        = useState(0);
+  const [forceSubmitting, setForceSubmitting] = useState(false);
+  const [forceReason,     setForceReason]     = useState("");
+
+  const dirty       = useRef(new Set<string>());
+  const submitted   = useRef(false);
+  const enteredAt   = useRef(Date.now());
+  const tabCountRef = useRef(0);
 
   const session     = sessionQuery.data;
   const currentUser = useAuthStore((s) => s.user);
+  const rule        = getRule(session);
 
-  // ── Restore saved answers ──────────────────────────────────────────────────
+  // ── Restore saved answers ────────────────────────────────────────────────────
   useEffect(() => {
     if (!answersQuery.data) return;
-    setAnswers(Object.fromEntries(answersQuery.data.map((answer) => [
-      answer.question_id,
+    setAnswers(Object.fromEntries(answersQuery.data.map((a) => [
+      a.question_id,
       {
-        selected_option_id:  answer.selected_option_id,
-        selected_option_ids: answer.selected_option_ids ?? [],
-        answer_text:         answer.answer_text ?? "",
-        is_marked_for_review: answer.is_marked_for_review,
-        time_spent_sec:      answer.time_spent_sec,
+        selected_option_id:  a.selected_option_id,
+        selected_option_ids: a.selected_option_ids ?? [],
+        answer_text:         a.answer_text ?? "",
+        is_marked_for_review: a.is_marked_for_review,
+        time_spent_sec:      a.time_spent_sec,
       },
     ])));
   }, [answersQuery.data]);
 
-  // ── Countdown timer ────────────────────────────────────────────────────────
+  // ── Countdown ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) return;
     const update = () =>
       setRemaining(Math.max(0, Math.floor((new Date(session.effective_deadline).getTime() - Date.now()) / 1000)));
     update();
-    const timer = window.setInterval(update, 1000);
-    return () => window.clearInterval(timer);
+    const t = window.setInterval(update, 1000);
+    return () => window.clearInterval(t);
   }, [session]);
 
-  // ── Track fullscreen state for the nag banner ──────────────────────────────
+  // ── Track fullscreen ─────────────────────────────────────────────────────────
   useEffect(() => {
     const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
-  // ── Violation warning handler (from BrowserMonitor) ───────────────────────
-  const handleViolationWarning = useCallback(
-    (message: string, type: "tab" | "fullscreen" | "conflict") => {
-      const id = ++bannerCounter;
-      setBanners((prev) => [{ id, message, type }, ...prev].slice(0, 5));
-      // Auto-dismiss non-conflict banners after 8 seconds
-      if (type !== "conflict") {
-        setTimeout(() => setBanners((prev) => prev.filter((b) => b.id !== id)), 8000);
-      }
-    },
-    []
-  );
+  // ── Flush answers to backend ─────────────────────────────────────────────────
+  const flushAnswers = useCallback(async () => {
+    if (!session || !dirty.current.size) return;
+    const ids = [...dirty.current];
+    setSaving(true);
+    try {
+      await Promise.all(ids.map((qid) => studentApi.saveAnswer({
+        attempt_id:  session.attempt.id,
+        question_id: qid,
+        ...answers[qid],
+      })));
+      ids.forEach((id) => dirty.current.delete(id));
+      setLastSaved(new Date());
+    } catch (cause) {
+      setError(`Auto-save failed: ${apiMessage(cause)}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [session, answers]);
 
-  const handleConflict = useCallback(() => {
-    setConflictMode(true);
-  }, []);
-
-  // ── Submit ────────────────────────────────────────────────────────────────
-  const submit = async (type: "MANUAL" | "AUTO") => {
+  // ── Core submit — called for manual, auto-deadline, and force-submit ─────────
+  const submit = useCallback(async (type: "MANUAL" | "AUTO") => {
     if (!session || submitted.current) return;
     submitted.current = true;
     setSubmitting(true);
     setError(null);
     try {
+      // 1. Save any pending answers
       await flushAnswers();
       if (activeRole === "CANDIDATE") {
         await candidateApi.submitAttempt(session.attempt.id, type);
@@ -138,108 +190,172 @@ export default function LiveExam() {
       setError(apiMessage(cause));
       setSubmitting(false);
     }
-  };
+  }, [session, navigate, flushAnswers]);
 
-  // Auto-submit on deadline
+  // ── Auto-submit on deadline ──────────────────────────────────────────────────
   useEffect(() => {
-    if (
-      session &&
-      remaining === 0 &&
-      Date.now() >= new Date(session.effective_deadline).getTime() &&
-      !submitted.current
-    ) void submit("AUTO");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remaining, session]);
+    if (session && remaining === 0 &&
+        Date.now() >= new Date(session.effective_deadline).getTime() &&
+        !submitted.current)
+      void submit("AUTO");
+  }, [remaining, session, submit]);
 
-  // ── Auto-save ─────────────────────────────────────────────────────────────
+  // ── Auto-save (interval from exam_rules) ────────────────────────────────────
   useEffect(() => {
     if (!session) return;
-    const rule = Array.isArray(session.exam.exam_rules) ? session.exam.exam_rules[0] : session.exam.exam_rules;
-    const interval = Math.max(5, rule?.auto_save_interval_sec ?? 30) * 1000;
-    const timer = window.setInterval(() => void flushAnswers().catch(() => undefined), interval);
-    return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, answers]);
+    const interval = Math.max(5, rule.auto_save_interval_sec) * 1000;
+    const t = window.setInterval(() => void flushAnswers(), interval);
+    return () => window.clearInterval(t);
+  }, [session, flushAnswers, rule.auto_save_interval_sec]);
 
+  // ── Connection events ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
+    const online  = () => void studentApi.logEvent(session.attempt.id, "CONNECTION_RESTORED").catch(() => undefined);
+    const offline = () => void studentApi.logEvent(session.attempt.id, "CONNECTION_LOST").catch(() => undefined);
+    window.addEventListener("online",  online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online",  online);
+      window.removeEventListener("offline", offline);
+    };
+  }, [session]);
+
+  // ── Violation handler — driven by exam_rules ─────────────────────────────────
+  const handleViolation = useCallback((
+    _message: string,
+    type: ViolationType,
+  ) => {
+    if (type === "tab") {
+      tabCountRef.current += 1;
+      const newCount = tabCountRef.current;
+      setTabCount(newCount);
+      const max = rule.max_tab_switches;
+
+      // Log to backend submission_logs
+      void studentApi.logEvent(session?.attempt.id ?? "", "TAB_SWITCH_WARNING").catch(() => undefined);
+
+      // Limit reached → force-submit
+      if (max > 0 && newCount >= max) {
+        const reason = `You switched tabs ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
+        setForceReason(reason);
+        setForceSubmitting(true);
+        // 4s grace so student sees the reason, then submit
+        setTimeout(async () => {
+          await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
+          void submit("AUTO");
+        }, 4000);
+        return;
+      }
+
+      // Under limit → warn with remaining count
+      const remaining_switches = max - newCount;
+      const id = ++warnCounter;
+      setWarnings((prev) => [{
+        id,
+        type: "tab" as ViolationType,
+        message: max <= 0
+          ? `⚠ Tab switch detected (${newCount} total). This has been logged.`
+          : remaining_switches === 1
+          ? `⚠ Tab switch ${newCount}/${max} — ONE MORE switch will automatically submit your exam.`
+          : `⚠ Tab switch ${newCount}/${max} — ${remaining_switches} more allowed before your exam is auto-submitted.`,
+      }, ...prev].slice(0, 5));
+      setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 10_000);
+
+    } else if (type === "fullscreen") {
+      void studentApi.logEvent(session?.attempt.id ?? "", "FULLSCREEN_EXIT").catch(() => undefined);
+      const id = ++warnCounter;
+      setWarnings((prev) => [{
+        id, 
+        type: "fullscreen" as ViolationType, 
+        message: "⚠ You exited fullscreen. This has been logged. Return to fullscreen immediately.",
+      }, ...prev].slice(0, 5));
+      setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 12_000);
+
+    } else if (type === "conflict") {
+      const id = ++warnCounter;
+      setWarnings((prev) => [{
+        id,
+        type: "conflict" as ViolationType,
+        message: "🚨 Another tab with this exam was detected. Close it immediately — this is a violation.",
+      }, ...prev].slice(0, 5));
+    }
+  }, [rule.max_tab_switches, session, submit]);
+
+  const handleConflict = useCallback(() => handleViolation("", "conflict"), [handleViolation]);
+
+  // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions     = session?.questions ?? [];
   const row           = questions[index];
   const question      = row?.questions;
   const currentAnswer = question ? answers[question.id] ?? emptyAnswer() : emptyAnswer();
 
-  const flushAnswers = async () => {
-    if (!session || !dirty.current.size) return;
-    const ids = [...dirty.current];
-    setSaving(true);
-    try {
-      await Promise.all(ids.map((questionId) => studentApi.saveAnswer({
-        attempt_id:  session.attempt.id,
-        question_id: questionId,
-        ...answers[questionId],
-      })));
-      ids.forEach((id) => dirty.current.delete(id));
-      setLastSaved(new Date());
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const changeAnswer = (next: Partial<AnswerState>) => {
     if (!question) return;
-    const elapsed = Math.floor((Date.now() - enteredQuestionAt.current) / 1000);
+    const elapsed = Math.floor((Date.now() - enteredAt.current) / 1000);
     const value = { ...currentAnswer, ...next, time_spent_sec: currentAnswer.time_spent_sec + elapsed };
-    enteredQuestionAt.current = Date.now();
-    setAnswers((state) => ({ ...state, [question.id]: value }));
+    enteredAt.current = Date.now();
+    setAnswers((s) => ({ ...s, [question.id]: value }));
     dirty.current.add(question.id);
   };
 
-  const goTo = (nextIndex: number) => {
-    if (!session || !question || nextIndex < 0 || nextIndex >= questions.length) return;
+  const goTo = (next: number) => {
+    if (!session || !question || next < 0 || next >= questions.length) return;
     const action = hasAnswer(currentAnswer) ? "ANSWERED" : "SKIPPED";
     void studentApi.navigate({ attempt_id: session.attempt.id, question_id: question.id, action }).catch(() => undefined);
-    void flushAnswers().catch(() => undefined);
-    setVisited((state) => new Set(state).add(question.id));
-    setIndex(nextIndex);
-    enteredQuestionAt.current = Date.now();
+    void flushAnswers();
+    setVisited((s) => new Set(s).add(question.id));
+    setIndex(next);
+    enteredAt.current = Date.now();
   };
 
   const summary = useMemo(() => {
     const values = questions.map((item) => answers[item.questions.id] ?? emptyAnswer());
     return {
       answered:   values.filter(hasAnswer).length,
-      flagged:    values.filter((item) => item.is_marked_for_review).length,
-      unanswered: values.filter((item) => !hasAnswer(item)).length,
+      flagged:    values.filter((v) => v.is_marked_for_review).length,
+      unanswered: values.filter((v) => !hasAnswer(v)).length,
     };
   }, [answers, questions]);
 
-  // Derive exam rule once
-  const rule = session
-    ? (Array.isArray(session.exam.exam_rules) ? session.exam.exam_rules[0] : session.exam.exam_rules)
-    : null;
-  const fullscreenRequired = rule?.fullscreen_required ?? true;
-
-  // ── Camera gate — show before exam renders ─────────────────────────────────
+  // ── Camera gate ──────────────────────────────────────────────────────────────
   if (session && !cameraCleared) {
-    const courseCode = session.exam.courses?.code ?? "";
-    return (
-      <CameraPermission
-        examTitle={session.exam.title}
-        courseCode={courseCode}
-        cameraRequired={fullscreenRequired}
-        onProceed={() => setCameraCleared(true)}
-        onSkip={() => setCameraCleared(true)}
-      />
-    );
+    if (rule.camera_required || rule.proctoring_enabled || rule.fullscreen_required) {
+      return (
+        <CameraPermission
+          examTitle={session.exam.title}
+          courseCode={session.exam.courses?.code ?? ""}
+          cameraRequired={rule.camera_required}
+          onProceed={() => {
+            // Fullscreen MUST be requested synchronously inside a real user
+            // gesture (this click) — browsers silently reject
+            // requestFullscreen() calls made later from a useEffect after
+            // the state update below, which is why it was never actually
+            // prompting before.
+            if (rule.fullscreen_required && document.fullscreenElement === null) {
+              document.documentElement.requestFullscreen().catch((err) =>
+                console.warn("[LiveExam] Could not enter fullscreen on Start Exam click:", err)
+              );
+            }
+            setCameraCleared(true);
+          }}
+          onSkip={() => setCameraCleared(true)}
+        />
+      );
+    }
+    // No camera needed — skip gate immediately
+    setCameraCleared(true);
   }
 
-  if (sessionQuery.isLoading || answersQuery.isLoading) {
+  // ── Loading / error states ────────────────────────────────────────────────────
+  if (sessionQuery.isLoading || answersQuery.isLoading)
     return (
       <div className="exam-state">
         <span className="spinner" />
         Preparing your secure exam session...
       </div>
     );
-  }
-  if (sessionQuery.error || !session) {
+  if (sessionQuery.error || !session)
     return (
       <div className="exam-state error">
         <i className="ti ti-alert-triangle" />
@@ -250,8 +366,7 @@ export default function LiveExam() {
         </button>
       </div>
     );
-  }
-  if (!question) {
+  if (!question)
     return (
       <div className="exam-state error">
         <h2>No questions configured</h2>
@@ -259,15 +374,37 @@ export default function LiveExam() {
         <button className="btn btn-primary" onClick={() => navigate("/student/registered")}>Go Back</button>
       </div>
     );
-  }
 
   const danger = remaining <= 300;
 
+  // ── Force-submit overlay ─────────────────────────────────────────────────────
+  if (forceSubmitting) {
+    return (
+      <div className="force-submit-overlay">
+        <div className="force-submit-card">
+          <div className="force-submit-icon">
+            <i className="ti ti-ban" />
+          </div>
+          <h2>Exam Terminated</h2>
+          <p>{forceReason}</p>
+          <div className="force-submit-note">
+            Your answers have been saved and the exam is being submitted automatically. Please wait...
+          </div>
+          <div className="force-submit-spinner">
+            <span className="spinner" />
+            Submitting...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main exam UI ─────────────────────────────────────────────────────────────
   return (
     <div className="live-exam">
 
-      {/* ── Fullscreen nag bar (shown when not in fullscreen during a required exam) ── */}
-      {fullscreenRequired && !isFullscreen && (
+      {/* Fullscreen nag bar */}
+      {rule.fullscreen_required && !isFullscreen && (
         <div className="proctor-nag-bar">
           <i className="ti ti-maximize" />
           <span>This exam requires <strong>fullscreen mode</strong>. Your exit has been logged.</span>
@@ -280,27 +417,43 @@ export default function LiveExam() {
         </div>
       )}
 
-      {/* ── Duplicate session warning (sticky, non-dismissible) ── */}
-      {conflictMode && (
-        <div className="proctor-conflict-bar">
-          <i className="ti ti-alert-octagon" />
-          <span>
-            <strong>Duplicate session detected.</strong> Another tab or window has this exam open.
-            Close all other tabs immediately. This violation has been logged.
-          </span>
+      {/* Tab switch progress bar */}
+      {rule.max_tab_switches > 0 && tabCount > 0 && (
+        <div className="tab-switch-bar">
+          <i className="ti ti-eye-off" />
+          <span>Tab switches: <strong>{tabCount} / {rule.max_tab_switches}</strong></span>
+          <div className="tab-switch-track">
+            <div
+              className="tab-switch-fill"
+              style={{
+                width: `${Math.min(100, (tabCount / rule.max_tab_switches) * 100)}%`,
+                background:
+                  tabCount >= rule.max_tab_switches - 1 ? "#dc2626" :
+                  tabCount >= Math.floor(rule.max_tab_switches / 2) ? "#d97706" :
+                  "#4ade80",
+              }}
+            />
+          </div>
+          {tabCount >= rule.max_tab_switches - 1 && (
+            <span className="tab-switch-danger">Next switch = auto-submit</span>
+          )}
         </div>
       )}
 
-      {/* ── Violation banners (dismissible, stacked) ── */}
-      {banners.length > 0 && (
-        <div className="proctor-banners">
-          {banners.map((b) => (
-            <div key={b.id} className={`proctor-banner proctor-banner--${b.type}`}>
-              <i className={`ti ${b.type === "tab" ? "ti-eye-off" : b.type === "fullscreen" ? "ti-maximize-off" : "ti-alert-octagon"}`} />
-              <span>{b.message}</span>
+      {/* Violation warning banners */}
+      {warnings.length > 0 && (
+        <div className="violation-warnings">
+          {warnings.map((w) => (
+            <div key={w.id} className={`violation-warn violation-warn--${w.type}`}>
+              <i className={`ti ${
+                w.type === "tab"        ? "ti-eye-off" :
+                w.type === "fullscreen" ? "ti-maximize-off" :
+                "ti-alert-octagon"
+              }`} />
+              <span>{w.message}</span>
               <button
-                className="banner-dismiss"
-                onClick={() => setBanners((prev) => prev.filter((x) => x.id !== b.id))}
+                className="warn-dismiss"
+                onClick={() => setWarnings((prev) => prev.filter((x) => x.id !== w.id))}
                 aria-label="Dismiss"
               >
                 <i className="ti ti-x" />
@@ -310,7 +463,7 @@ export default function LiveExam() {
         </div>
       )}
 
-      {/* ── Main header ── */}
+      {/* Header */}
       <header className="live-header">
         <div className="live-title">
           <strong>EXAM.TIET</strong>
@@ -331,8 +484,7 @@ export default function LiveExam() {
               : "Progress restored"}
           </span>
         </div>
-        {/* Proctor monitoring indicator */}
-        <div className="proctor-indicator" title="Proctoring active">
+        <div className="proctor-indicator">
           <div className="proctor-dot" />
           <span>Monitored</span>
         </div>
@@ -347,13 +499,16 @@ export default function LiveExam() {
       )}
 
       <div className="live-body">
+        {/* Question pane */}
         <main className="question-pane">
           <div className="question-scroll">
             <div className="question-meta">
               <span>Question {index + 1} of {questions.length}</span>
               <div>
                 <b>{row.marks_override ?? question.marks} marks</b>
-                {question.negative_marks > 0 && <b className="negative">-{question.negative_marks} negative</b>}
+                {question.negative_marks > 0 && (
+                  <b className="negative">-{question.negative_marks} negative</b>
+                )}
                 <b>{question.question_type.replace("_", " ")}</b>
               </div>
             </div>
@@ -367,9 +522,7 @@ export default function LiveExam() {
                 <i className="ti ti-flag" />
                 {currentAnswer.is_marked_for_review ? "Marked for review" : "Mark for review"}
               </button>
-              <button
-                onClick={() => changeAnswer({ selected_option_id: null, selected_option_ids: [], answer_text: "" })}
-              >
+              <button onClick={() => changeAnswer({ selected_option_id: null, selected_option_ids: [], answer_text: "" })}>
                 <i className="ti ti-eraser" />Clear response
               </button>
             </div>
@@ -391,20 +544,24 @@ export default function LiveExam() {
           </footer>
         </main>
 
+        {/* Palette */}
         <aside className="question-palette">
           <div className="palette-head">
             <strong>Question Palette</strong>
             <span>{summary.answered}/{questions.length} answered</span>
           </div>
           <div className="palette-grid">
-            {questions.map((item, questionIndex) => {
-              const answer = answers[item.questions.id] ?? emptyAnswer();
-              const className = `${questionIndex === index ? "current" : ""} ${
-                answer.is_marked_for_review ? "flagged" : hasAnswer(answer) ? "answered" : visited.has(item.questions.id) ? "visited" : ""
-              }`;
+            {questions.map((item, qi) => {
+              const ans = answers[item.questions.id] ?? emptyAnswer();
+              const cls = [
+                qi === index ? "current" : "",
+                ans.is_marked_for_review        ? "flagged"  :
+                hasAnswer(ans)                  ? "answered" :
+                visited.has(item.questions.id)  ? "visited"  : "",
+              ].join(" ");
               return (
-                <button className={className} key={item.questions.id} onClick={() => goTo(questionIndex)}>
-                  {questionIndex + 1}
+                <button className={cls} key={item.questions.id} onClick={() => goTo(qi)}>
+                  {qi + 1}
                 </button>
               );
             })}
@@ -415,10 +572,10 @@ export default function LiveExam() {
             <span><i />Unanswered: {summary.unanswered}</span>
           </div>
 
-          {/* Fullscreen button — always available in palette */}
-          {fullscreenRequired && (
+          {/* Fullscreen button */}
+          {rule.fullscreen_required && (
             <button
-              className={`btn btn-secondary fullscreen ${!isFullscreen ? "fullscreen-urgent" : ""}`}
+              className={`btn btn-secondary fullscreen${!isFullscreen ? " fullscreen-urgent" : ""}`}
               onClick={() => document.documentElement.requestFullscreen().catch(() => undefined)}
             >
               <i className="ti ti-maximize" />
@@ -426,37 +583,66 @@ export default function LiveExam() {
             </button>
           )}
 
-          <div className="timer-policy">
-            Timer policy: your attempt closes at the earlier of the full duration or the published exam closing time.
-          </div>
+          {/* Tab switch counter in palette */}
+          {rule.max_tab_switches > 0 && (
+            <div className={`palette-integrity${tabCount >= rule.max_tab_switches - 1 && tabCount > 0 ? " danger" : ""}`}>
+              <i className="ti ti-eye" />
+              <span>Tab switches: {tabCount}/{rule.max_tab_switches}</span>
+            </div>
+          )}
 
-          {/* Proctoring status chip */}
+          {/* Proctoring status */}
           <div className="proctor-status-chip">
             <div className="proctor-dot" />
-            <span>Camera · Audio · Browser monitoring active</span>
+            <span>
+              {[
+                rule.camera_required     && "Camera",
+                rule.microphone_required && "Audio",
+                "Browser",
+              ].filter(Boolean).join(" · ")} monitoring active
+            </span>
+          </div>
+
+          <div className="timer-policy">
+            Timer policy: your attempt closes at the earlier of the full duration or the published exam closing time.
           </div>
         </aside>
       </div>
 
-      {/* ── Invisible proctoring components ── */}
-      <WebcamCapture
-        attemptId={session.attempt.id}
-        studentId={currentUser?.id ?? ""}
-        intervalMs={30_000}
-      />
-      <AudioMonitor
-        attemptId={session.attempt.id}
-        noiseTreshold={60}
-        checkIntervalMs={10_000}
-      />
-      <BrowserMonitor
-        attemptId={session.attempt.id}
-        fullscreenRequired={fullscreenRequired}
-        onWarning={handleViolationWarning}
-        onConflict={handleConflict}
-      />
+      {/* Invisible proctoring components.
+          Camera/mic each mount purely off their own "required" flag — NOT
+          gated behind proctoring_enabled, otherwise a faculty member can set
+          microphone_required=true without also flipping proctoring_enabled
+          and the mic permission prompt / recording never happens.
+          BrowserMonitor (tab-switch + fullscreen tracking) always runs once
+          the session is live, since a configured tab-switch limit needs to
+          be enforced regardless of the camera/mic proctoring toggle. */}
+      {session && (
+        <>
+          {rule.camera_required && (
+            <WebcamCapture
+              attemptId={session.attempt.id}
+              studentId={currentUser?.id ?? ""}
+              intervalMs={30_000}
+            />
+          )}
+          {rule.microphone_required && (
+            <AudioMonitor
+              attemptId={session.attempt.id}
+              noiseTreshold={60}
+              checkIntervalMs={10_000}
+            />
+          )}
+          <BrowserMonitor
+            attemptId={session.attempt.id}
+            fullscreenRequired={rule.fullscreen_required}
+            onWarning={handleViolation}
+            onConflict={handleConflict}
+          />
+        </>
+      )}
 
-      {/* ── Submit confirmation modal ── */}
+      {/* Submit confirmation modal */}
       {submitOpen && (
         <div className="modal-backdrop">
           <section className="modal">
@@ -475,7 +661,9 @@ export default function LiveExam() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setSubmitOpen(false)}>Continue Exam</button>
+              <button className="btn btn-secondary" onClick={() => setSubmitOpen(false)}>
+                Continue Exam
+              </button>
               <button
                 className="btn btn-primary"
                 disabled={submitting}
@@ -493,12 +681,10 @@ export default function LiveExam() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function AnswerInput({
-  question: row, answer, onChange,
-}: {
+function AnswerInput({ question: row, answer, onChange }: {
   question: ExamQuestion;
   answer: AnswerState;
-  onChange: (value: Partial<AnswerState>) => void;
+  onChange: (v: Partial<AnswerState>) => void;
 }) {
   const question = row.questions;
   if (question.question_type === "SHORT_ANSWER" || question.question_type === "LONG_ANSWER") {
@@ -507,7 +693,7 @@ function AnswerInput({
         className="answer-text"
         rows={question.question_type === "LONG_ANSWER" ? 10 : 4}
         value={answer.answer_text ?? ""}
-        onChange={(event) => onChange({ answer_text: event.target.value })}
+        onChange={(e) => onChange({ answer_text: e.target.value })}
         placeholder="Type your answer here..."
       />
     );
@@ -530,7 +716,10 @@ function AnswerInput({
           return (
             <button className={selected ? "selected" : ""} onClick={choose} key={option.id}>
               <span>{String.fromCharCode(65 + idx)}</span>
-              <i className={`ti ti-${multiple ? selected ? "square-check-filled" : "square" : selected ? "circle-dot-filled" : "circle"}`} />
+              <i className={`ti ti-${multiple
+                ? selected ? "square-check-filled" : "square"
+                : selected ? "circle-dot-filled"  : "circle"
+              }`} />
               <p>{option.option_text}</p>
             </button>
           );
@@ -540,11 +729,23 @@ function AnswerInput({
 }
 
 function emptyAnswer(): AnswerState {
-  return { selected_option_id: null, selected_option_ids: [], answer_text: "", is_marked_for_review: false, time_spent_sec: 0 };
+  return {
+    selected_option_id:  null,
+    selected_option_ids: [],
+    answer_text:         "",
+    is_marked_for_review: false,
+    time_spent_sec:      0,
+  };
 }
-function hasAnswer(answer: AnswerState) {
-  return Boolean(answer.selected_option_id || answer.selected_option_ids?.length || answer.answer_text?.trim());
+
+function hasAnswer(a: AnswerState) {
+  return Boolean(
+    a.selected_option_id ||
+    a.selected_option_ids?.length ||
+    a.answer_text?.trim()
+  );
 }
+
 function formatRemaining(seconds: number) {
   const hours   = Math.floor(seconds / 3600);
   const minutes = Math.floor(seconds / 60) % 60;

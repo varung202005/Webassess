@@ -4,7 +4,7 @@
  * All API calls for the proctor feature.
  * Uses the shared lib/api.ts fetch wrapper (attaches Bearer token automatically).
  */
-import { get, patch } from "../../lib/api";
+import { get, patch, post } from "../../lib/api";
 import type { FlaggedAttempt, ProctoringDashboard, ProctoringVerdict } from "./types";
 
 // ── Response shapes for endpoints not already covered by types.ts ─────────────
@@ -21,6 +21,14 @@ export interface ActiveSchedule {
 
 export interface ProctoringVerdictResponse {
   message: string;
+}
+
+export interface RecomputeSummaryResponse {
+  integrity_score: number;
+  flagged: boolean;
+  noise_events: number;
+  tab_switches: number;
+  hard_violation: boolean;
 }
 
 // ── API object ────────────────────────────────────────────────────────────────
@@ -78,4 +86,14 @@ export const proctorApi = {
    */
   activeSessions: () =>
     get<ActiveSchedule[]>("/api/v1/exam-schedules/?is_published=true"),
+
+  /**
+   * POST /api/v1/proctoring/summary/:attemptId/recompute
+   * Proctor-only manual re-check. Re-runs the flagging computation for an
+   * attempt using whatever logs currently exist — useful when an attempt's
+   * flagged status was computed under an older rule (e.g. a tab-switch
+   * shutdown that predates the hard-violation flagging fix).
+   */
+  recompute: (attemptId: string) =>
+    post<RecomputeSummaryResponse>(`/api/v1/proctoring/summary/${attemptId}/recompute`, {}),
 };

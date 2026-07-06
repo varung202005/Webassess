@@ -63,7 +63,10 @@ export function relativeTime(iso: string): string {
 }
 
 export function formatCountdown(endIso: string): string {
-  const diff = new Date(endIso).getTime() - Date.now();
+  if (!endIso) return "--:--:--";
+  const end = new Date(endIso).getTime();
+  if (Number.isNaN(end)) return "--:--:--";
+  const diff = end - Date.now();
   if (diff <= 0) return "Ended";
   const h = Math.floor(diff / 3_600_000);
   const m = Math.floor((diff % 3_600_000) / 60_000);

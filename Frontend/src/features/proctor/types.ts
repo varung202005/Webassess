@@ -48,8 +48,18 @@ export interface ActiveSession {
   exam_title: string;
   course_code: string;
   active_students: number;
+  registered_count: number;
+  completed_count: number;
   ends_at: string;
   active_attempts: ActiveAttempt[];
+}
+
+export interface StudentBrowserStat {
+  attempt_id: string;
+  exam_schedule_id: string;
+  name: string;
+  tab_switch_count: number;
+  fullscreen_exit_count: number;
 }
 
 export interface ProctoringDashboard {
@@ -58,6 +68,7 @@ export interface ProctoringDashboard {
   flagged: FlaggedAttempt[];
   activeSession: ActiveSession | null;      // first session (backward compat)
   activeSessions: ActiveSession[];          // ALL running exams
+  studentBrowserStats: StudentBrowserStat[];
 }
 
 export interface ProctorProfile {

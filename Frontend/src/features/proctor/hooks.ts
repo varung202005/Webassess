@@ -81,3 +81,15 @@ export function useSetVerdict() {
     },
   });
 }
+
+// ── Manually re-check an attempt's proctoring summary (proctor action) ───────
+export function useRecomputeSummary() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (attemptId: string) => proctorApi.recompute(attemptId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: FLAGGED_KEY });
+      void queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY });
+    },
+  });
+}
