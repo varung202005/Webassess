@@ -383,6 +383,7 @@ export function StudentsPanel({
 
 /* ── Audio Monitor Panel ───────────────────────────────────────────────────── */
 export function AudioMonitorPanel({
+  flagged,
   activeAttempts,
 }: {
   flagged?: FlaggedAttempt[];
@@ -426,10 +427,20 @@ export function AudioMonitorPanel({
     if (row.exam_relevant) relevantCounts[row.attempt_id] = (relevantCounts[row.attempt_id] ?? 0) + 1;
   }
 
-  // Build name map from activeAttempts (best-effort — falls back to ID)
+  // Build name map from BOTH active attempts and flagged attempts — audio
+  // events can reference attempts that have since been flagged / completed
+  // and dropped out of the "active" set, so activeAttempts alone isn't
+  // enough to resolve every name (this was the bug: flagged was accepted
+  // as a prop but never used, so those attempts fell back to a raw
+  // truncated attempt_id like "97F522F9").
   const nameMap: Record<string, string> = {};
   for (const a of activeAttempts ?? []) {
     nameMap[a.id] = a.users?.full_name ?? "Student";
+  }
+  for (const f of flagged ?? []) {
+    if (f.exam_attempts?.users?.full_name) {
+      nameMap[f.attempt_id] = f.exam_attempts.users.full_name;
+    }
   }
 
   const entries = Object.entries(counts)
