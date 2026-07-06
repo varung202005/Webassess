@@ -28,7 +28,6 @@ import { PageState } from "../../features/faculty/components";
 import { useFacultyDashboard, useQuestions, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import type { Question } from "../../features/faculty/types";
-import CandidateManager from "./CandidateManager";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -1072,7 +1071,6 @@ export default function CreateExam() {
   const [saving,       setSaving]       = useState(false);
   const [saveError,    setSaveError]    = useState("");
   const [examId,       setExamId]       = useState<string | null>(null);
-  const [scheduleId,   setScheduleId]   = useState<string | null>(null);
 
   const [form,     setForm]     = useState<ExamForm>(() => ({
     ...defaultForm(),
@@ -1200,7 +1198,7 @@ export default function CreateExam() {
       // Step 4 — create schedule
       // toUTCString converts the datetime-local value (IST) to UTC ISO string
       // so the backend stores the correct UTC time.
-      const scheduleResult = await facultyApi.createExamSchedule({
+      await facultyApi.createExamSchedule({
         exam_id:               newExamId,
         start_time:            schedule.start_time ? toUTCString(schedule.start_time) : null,
         end_time:              schedule.end_time ? toUTCString(schedule.end_time) : null,
@@ -1209,7 +1207,6 @@ export default function CreateExam() {
       });
 
       setExamId(newExamId);
-      setScheduleId(scheduleResult?.id ?? null);
       deleteDraft(draftId);
 
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
@@ -1356,30 +1353,9 @@ export default function CreateExam() {
 
                 {examId && (
                   <div className="workspace-footer">
-                    {form.exam_type === "ENTRANCE" && scheduleId ? (
-                      /* ── Entrance exam: show candidate manager inline ── */
-                      <div style={{ width: "100%", marginTop: 8 }}>
-                        <div style={{
-                          background: "#ECFDF5", border: "1px solid #6EE7B7",
-                          borderRadius: 10, padding: "14px 18px", marginBottom: 24,
-                          display: "flex", alignItems: "center", gap: 10,
-                          fontSize: 14, color: "#047857", fontWeight: 600,
-                        }}>
-                          <i className="ti ti-circle-check" style={{ fontSize: 18 }} />
-                          Entrance exam created! Now assign candidates below, then go to Dashboard to publish.
-                        </div>
-                        <CandidateManager examScheduleId={scheduleId} examTitle={form.title} />
-                        <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-                          <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
-                            <i className="ti ti-home" /> Go to Dashboard to Publish
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
-                        <i className="ti ti-home" /> Go to Dashboard to Publish
-                      </button>
-                    )}
+                    <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
+                      <i className="ti ti-home" /> Go to Dashboard to Publish
+                    </button>
                   </div>
                 )}
               </>

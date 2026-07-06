@@ -199,20 +199,6 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
                 .execute().data
             ) or []
             for s in scheds:
-                try:
-                    assignments = (
-                        supabase.table("candidate_exam_assignments")
-                        .select("status")
-                        .eq("exam_schedule_id", s["id"])
-                        .execute().data
-                    ) or []
-                    s["candidate_count"] = len(assignments)
-                    s["candidate_started_count"] = len([a for a in assignments if a.get("status") == "STARTED"])
-                    s["candidate_completed_count"] = len([a for a in assignments if a.get("status") == "COMPLETED"])
-                except Exception:
-                    s["candidate_count"] = 0
-                    s["candidate_started_count"] = 0
-                    s["candidate_completed_count"] = 0
                 end_dt = safe_dt(s.get("end_time"))
                 if end_dt and end_dt >= now:
                     upcoming.append(s)

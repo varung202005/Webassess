@@ -70,7 +70,9 @@ def require_roles(*required: str):
         async def admin(user=Depends(require_roles("Admin"))):
     """
     async def _guard(user: dict = Depends(get_current_user_with_roles)):
-        if not any(r in user["roles"] for r in required):
+        user_roles = {str(role).lower() for role in user["roles"]}
+        required_roles = {role.lower() for role in required}
+        if not user_roles.intersection(required_roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Required role(s): {', '.join(required)}",
