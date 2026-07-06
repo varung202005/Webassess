@@ -7,6 +7,22 @@
  *     (with is_published: false) when the faculty completed the Create Exam
  *     wizard. Visibility to students is controlled purely by exam.status.
  *
+ * Unpublish button behaviour:
+ *   • Calls ONLY: PATCH /api/v1/exams/{id}/status  →  { status: "DRAFT" }
+ *   • Hides the exam from students again without touching schedules/data.
+ *
+ * "Remove from list" (✕) behaviour:
+ *   • CLIENT-SIDE ONLY. Stores the exam id in localStorage under
+ *     "faculty-hidden-exams" and filters it out of THIS dashboard widget.
+ *   • Does NOT call any delete endpoint. The exam, its questions, schedules,
+ *     attempts, results, and analytics are completely untouched and remain
+ *     fully visible/functional in Evaluation, Analytics, Results, etc.
+ *   • Restorable any time via the "Show N removed" toggle at the bottom of
+ *     the My Exams panel.
+ *   • Scoped per-browser (localStorage) — if cross-device persistence is
+ *     ever needed, replace with a `hidden_from_dashboard` field on the exam
+ *     and a small PATCH call instead of localStorage.
+ *
  * Drop this file at:  src/pages/faculty/Dashboard.tsx
  */
 
@@ -27,6 +43,28 @@ function initials(name: string) {
 function apiMsg(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err ?? "Unknown error");
+}
+
+/* ── Hidden exams (dashboard-only, client-side) ─────────────
+ * Purely cosmetic list-declutter. Never sent to the backend and never
+ * affects Evaluation / Analytics / Results, which all fetch by examId. */
+const HIDDEN_EXAMS_KEY = "faculty-hidden-exams";
+
+function getHiddenExamIds(): string[] {
+  try {
+    const raw = localStorage.getItem(HIDDEN_EXAMS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setHiddenExamIds(ids: string[]) {
+  try {
+    localStorage.setItem(HIDDEN_EXAMS_KEY, JSON.stringify(ids));
+  } catch {
+    // localStorage unavailable — fail silently, hiding just won't persist
+  }
 }
 
 /* ── Session Banner ────────────────────────────────────── */
@@ -82,9 +120,15 @@ function DashboardStats({ portal }: { portal: FacultyDashboard }) {
  * Publish flow — single API call:
  *   PATCH /api/v1/exams/{examId}  →  { status: "PUBLISHED" }
  *
+ * Unpublish flow — single API call:
+ *   PATCH /api/v1/exams/{examId}/status  →  { status: "DRAFT" }
+ *
  * The schedule already exists (created during wizard Step 4).
  * We do NOT touch exam-schedules here — student visibility is
  * driven entirely by exam.status === "PUBLISHED".
+ *
+ * "Remove from list" is client-side only (see HIDDEN_EXAMS_KEY above) —
+ * it never calls the backend and never affects any other page.
  */
 function ExamsTable({
   exams,
@@ -95,8 +139,12 @@ function ExamsTable({
   onView: (id: string) => void;
   onPublished: () => void;
 }) {
+  const navigate = useNavigate();
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [hiddenIds, setHiddenIdsState] = useState<string[]>(() => getHiddenExamIds());
+  const [showHidden, setShowHidden] = useState(false);
 
   const handlePublish = async (exam: any, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -112,6 +160,40 @@ function ExamsTable({
     }
   };
 
+  const handleUnpublish = async (exam: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Unpublish "${exam.title}"? Students will no longer be able to see or attempt it.`)) return;
+    setPublishError(null);
+    setPublishing(exam.id);
+    try {
+      await facultyApi.changeExamStatus(exam.id, "DRAFT");
+      onPublished();
+    } catch (err) {
+      setPublishError(apiMsg(err));
+    } finally {
+      setPublishing(null);
+    }
+  };
+
+  const handleEdit = (exam: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate(`/faculty/create-exam?examId=${exam.id}&edit=true`);
+  };
+
+  const handleHide = (exam: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = [...hiddenIds, exam.id];
+    setHiddenExamIds(next);
+    setHiddenIdsState(next);
+  };
+
+  const handleUnhide = (examId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = hiddenIds.filter((id) => id !== examId);
+    setHiddenExamIds(next);
+    setHiddenIdsState(next);
+  };
+
   if (!exams || exams.length === 0) {
     return (
       <div className="panel-body">
@@ -123,6 +205,10 @@ function ExamsTable({
       </div>
     );
   }
+
+  const visibleExamsAll = exams.filter((e) => !hiddenIds.includes(e.id));
+  const hiddenExams = exams.filter((e) => hiddenIds.includes(e.id));
+  const displayedExams = showAll ? visibleExamsAll : visibleExamsAll.slice(0, 5);
 
   return (
     <>
@@ -143,84 +229,155 @@ function ExamsTable({
           <i className="ti ti-alert-circle" /> {publishError}
         </div>
       )}
-      <div className="data-table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Exam</th>
-              <th>Status</th>
-              <th>Questions</th>
-              <th>Duration</th>
-              <th>Updated</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {exams.map((exam) => {
-              const isDraft = exam.status === "DRAFT" || !exam.status;
-              const isPublishing = publishing === exam.id;
-              return (
-                <tr key={exam.id}>
-                  <td>
-                    <div className="table-exam-name">{exam.title}</div>
-                    <div className="table-exam-meta">{exam.courses?.code} · {exam.courses?.name}</div>
-                  </td>
-                  <td>
-                    <span className={`badge ${statusBadgeClass(exam.status)}`}>
-                      {statusLabel(exam.status)}
-                    </span>
-                  </td>
-                  <td>{exam.questions_count ?? "-"}</td>
-                  <td>{exam.duration_minutes ? `${exam.duration_minutes} min` : "-"}</td>
-                  <td style={{ fontSize: "12.5px" }}>
-                    {exam.updated_at ? formatDate(exam.updated_at) : "-"}
-                  </td>
-                  <td>
-                    <div className="table-actions" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      {isDraft ? (
+
+      {visibleExamsAll.length === 0 ? (
+        <div className="panel-body">
+          <div className="empty-state" style={{ padding: "30px 20px" }}>
+            <i className="ti ti-eye-off" />
+            <div className="empty-state-title">All exams removed from this list</div>
+            <div className="empty-state-text">They're still fully active everywhere else.</div>
+            {hiddenExams.length > 0 && (
+              <button className="btn btn-sm btn-secondary" style={{ marginTop: 12 }} onClick={() => setShowHidden(true)}>
+                <i className="ti ti-eye" /> Show {hiddenExams.length} removed
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="data-table-wrap" style={{ maxHeight: showAll ? 480 : "none", overflowY: showAll ? "auto" : "visible" }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Exam</th>
+                <th>Status</th>
+                <th>Questions</th>
+                <th>Duration</th>
+                <th>Updated</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {displayedExams.map((exam) => {
+                const isDraft = exam.status === "DRAFT" || !exam.status;
+                const isPublished = exam.status === "PUBLISHED";
+                const isBusy = publishing === exam.id;
+                return (
+                  <tr key={exam.id}>
+                    <td>
+                      <div className="table-exam-name">{exam.title}</div>
+                      <div className="table-exam-meta">{exam.courses?.code} · {exam.courses?.name}</div>
+                    </td>
+                    <td>
+                      <span className={`badge ${statusBadgeClass(exam.status)}`}>
+                        {statusLabel(exam.status)}
+                      </span>
+                    </td>
+                    <td>{exam.questions_count ?? "-"}</td>
+                    <td>{exam.duration_minutes ? `${exam.duration_minutes} min` : "-"}</td>
+                    <td style={{ fontSize: "12.5px" }}>
+                      {exam.updated_at ? formatDate(exam.updated_at) : "-"}
+                    </td>
+                    <td>
+                      <div className="table-actions" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {isDraft && (
+                          <button
+                            className="btn btn-sm btn-primary"
+                            disabled={isBusy}
+                            onClick={(e) => handlePublish(exam, e)}
+                            title="Publish exam — makes it visible to students"
+                            style={{ whiteSpace: "nowrap" }}
+                          >
+                            {publishing === exam.id ? (
+                              <><span className="spinner-sm" /> Publishing…</>
+                            ) : (
+                              <><i className="ti ti-send" /> Publish</>
+                            )}
+                          </button>
+                        )}
+                        {isPublished && (
+                          <button
+                            className="btn btn-sm btn-secondary"
+                            disabled={isBusy}
+                            onClick={(e) => handleUnpublish(exam, e)}
+                            title="Unpublish — hide from students, keeps all data intact"
+                            style={{ whiteSpace: "nowrap" }}
+                          >
+                            {publishing === exam.id ? (
+                              <><span className="spinner-sm" /> …</>
+                            ) : (
+                              <><i className="ti ti-eye-off" /> Unpublish</>
+                            )}
+                          </button>
+                        )}
                         <button
-                          className="btn btn-sm btn-primary"
-                          disabled={isPublishing}
-                          onClick={(e) => handlePublish(exam, e)}
-                          title="Publish exam — makes it visible to students"
-                          style={{ whiteSpace: "nowrap" }}
+                          className="action-btn"
+                          data-tip="Edit"
+                          onClick={(e) => handleEdit(exam, e)}
+                          title="Edit exam"
+                          disabled={isBusy}
                         >
-                          {isPublishing ? (
-                            <><span className="spinner-sm" /> Publishing…</>
-                          ) : (
-                            <><i className="ti ti-send" /> Publish</>
-                          )}
+                          <i className="ti ti-pencil" />
                         </button>
-                      ) : (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: "#08775b",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
+                        <button
+                          className="action-btn primary"
+                          data-tip="View"
+                          onClick={() => onView(exam.id)}
+                          title="View / Grade"
                         >
-                          <i className="ti ti-circle-check" /> Live
-                        </span>
-                      )}
-                      <button
-                        className="action-btn primary"
-                        data-tip="View"
-                        onClick={() => onView(exam.id)}
-                        title="View / Grade"
-                      >
-                        <i className="ti ti-eye" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                          <i className="ti ti-eye" />
+                        </button>
+                        <button
+                          className="action-btn"
+                          data-tip="Remove from list"
+                          onClick={(e) => handleHide(exam, e)}
+                          title="Remove from this list only — exam, results, and analytics stay fully intact"
+                          style={{ color: "#a30f2e" }}
+                        >
+                          <i className="ti ti-x" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(visibleExamsAll.length > 5 || hiddenExams.length > 0) && (
+        <div style={{ padding: "10px 17px", borderTop: "1px solid #eceef2", display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+          {visibleExamsAll.length > 5 && (
+            <button className="btn btn-sm btn-secondary" style={{ flex: 1, minWidth: 160 }} onClick={() => setShowAll((p) => !p)}>
+              {showAll ? (
+                <><i className="ti ti-chevron-up" /> Show less</>
+              ) : (
+                <><i className="ti ti-chevron-down" /> Show all {visibleExamsAll.length} exams</>
+              )}
+            </button>
+          )}
+          {hiddenExams.length > 0 && (
+            <button className="btn btn-sm btn-secondary" style={{ flex: 1, minWidth: 160 }} onClick={() => setShowHidden((p) => !p)}>
+              <i className="ti ti-eye" /> {showHidden ? "Hide" : "Show"} {hiddenExams.length} removed
+            </button>
+          )}
+        </div>
+      )}
+
+      {showHidden && hiddenExams.length > 0 && (
+        <div style={{ padding: "10px 17px", borderTop: "1px solid #eceef2" }}>
+          {hiddenExams.map((exam) => (
+            <div key={exam.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", fontSize: 13 }}>
+              <span style={{ color: "#6e7280" }}>
+                {exam.title} <span className={`badge ${statusBadgeClass(exam.status)}`} style={{ marginLeft: 6, fontSize: 10 }}>{statusLabel(exam.status)}</span>
+              </span>
+              <button className="btn btn-sm btn-secondary" onClick={(e) => handleUnhide(exam.id, e)}>
+                <i className="ti ti-arrow-back-up" /> Restore
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
