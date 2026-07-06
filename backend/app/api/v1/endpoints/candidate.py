@@ -39,8 +39,9 @@ def _published_entrance_schedules(supabase) -> list[dict]:
 
     return [
         schedule for schedule in schedules
-        if (schedule.get("exams") or {}).get("exam_type") == "ENTRANCE"
-        and (schedule.get("exams") or {}).get("status") == "PUBLISHED"
+        if str((schedule.get("exams") or {}).get("exam_type", "")).upper() == "ENTRANCE"
+        and str((schedule.get("exams") or {}).get("status", "")).upper() == "PUBLISHED"
+        and schedule.get("is_published") is True
     ]
 
 

@@ -122,8 +122,8 @@ export default function CandidateExamState() {
           <div className="cs-icon">📋</div>
           <div className="cs-title">No Assessment Assigned</div>
           <div className="cs-sub">
-            There is no active assessment linked to your account. If you received an
-            invitation email, ensure you are signed in with the correct email address.
+            There are no published entrance assessments available for candidate accounts
+            right now. Please check again after the assessment is published.
           </div>
         </div>
       )}

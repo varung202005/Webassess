@@ -26,6 +26,7 @@ router = APIRouter()
 class ExamCreate(BaseModel):
     title: str
     course_id: Optional[str] = None
+    exam_type: str = "MID_SEMESTER"
     total_marks: int
     pass_marks: int
     duration_minutes: int
@@ -43,6 +44,7 @@ class ExamCreate(BaseModel):
 class ExamUpdate(BaseModel):
     title: Optional[str] = None
     course_id: Optional[str] = None
+    exam_type: Optional[str] = None
     total_marks: Optional[int] = None
     pass_marks: Optional[int] = None
     duration_minutes: Optional[int] = None
@@ -87,7 +89,7 @@ async def list_exams(current_user: dict = Depends(require_faculty)):
         supabase.table("exams")
         .select(
             "id,title,status,course_id,duration_minutes,total_marks,pass_marks,"
-            "created_by,created_at,updated_at,instructions,"
+            "exam_type,created_by,created_at,updated_at,instructions,"
             "shuffle_questions,shuffle_options,courses(name,code)"
         )
         .eq("created_by", current_user["user_id"])
@@ -131,6 +133,7 @@ async def create_exam(
         "created_by":        current_user["user_id"],
         "title":             body.title,
         "course_id":         body.course_id,
+        "exam_type":         body.exam_type,
         "total_marks":       body.total_marks,
         "pass_marks":        body.pass_marks,
         "duration_minutes":  body.duration_minutes,
@@ -283,4 +286,3 @@ async def get_exam_schedules(exam_id: UUID, _: dict = Depends(require_faculty)):
         .execute()
     )
     return result.data or []
-
