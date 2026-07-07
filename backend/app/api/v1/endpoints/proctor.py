@@ -181,44 +181,31 @@ async def get_proctor_dashboard(current_user: dict = Depends(require_proctor)):
     student_browser_stats: list = []
 
     if session_attempt_ids:
-        try:
-            # Cumulative rows: event_type IS NULL (one row per attempt, always current)
-            browser_rows = (
-                supabase.table("browser_activity_logs")
-                .select("attempt_id,tab_switch_count,fullscreen_exit_count,updated_at")
-                .in_("attempt_id", session_attempt_ids)
-                .is_("event_type", "null")
-                .execute()
-                .data
-            ) or []
-        except Exception:
-            # event_type column not yet added (migration pending) — read all rows
-            browser_rows = (
-                supabase.table("browser_activity_logs")
-                .select("attempt_id,tab_switch_count,fullscreen_exit_count,updated_at")
-                .in_("attempt_id", session_attempt_ids)
-                .execute()
-                .data
-            ) or []
+        # Cumulative counts now live in their own table (browser_activity_summary),
+        # separate from browser_activity_logs (which is pure per-event rows used
+        # only to drive Supabase Realtime Live Alerts).
+        browser_rows = (
+            supabase.table("browser_activity_summary")
+            .select("attempt_id,tab_switch_count,fullscreen_exit_count,updated_at")
+            .in_("attempt_id", session_attempt_ids)
+            .execute()
+            .data
+        ) or []
 
         total_tab_switches    = sum(r.get("tab_switch_count", 0) for r in browser_rows)
         tab_switches_last_30m = total_tab_switches
 
         # Narrow to 30-min window if updated_at exists
-        try:
-            recent_rows = (
-                supabase.table("browser_activity_logs")
-                .select("tab_switch_count")
-                .in_("attempt_id", session_attempt_ids)
-                .is_("event_type", "null")
-                .gte("updated_at", thirty_min_ago)
-                .execute()
-                .data
-            ) or []
-            if recent_rows:
-                tab_switches_last_30m = sum(r.get("tab_switch_count", 0) for r in recent_rows)
-        except Exception:
-            tab_switches_last_30m = total_tab_switches
+        recent_rows = (
+            supabase.table("browser_activity_summary")
+            .select("tab_switch_count")
+            .in_("attempt_id", session_attempt_ids)
+            .gte("updated_at", thirty_min_ago)
+            .execute()
+            .data
+        ) or []
+        if recent_rows:
+            tab_switches_last_30m = sum(r.get("tab_switch_count", 0) for r in recent_rows)
 
         # Build attempt_id -> {student_id, exam_schedule_id, name} lookup from
         # EVERY attempt in the running exam schedules — not just live ones —

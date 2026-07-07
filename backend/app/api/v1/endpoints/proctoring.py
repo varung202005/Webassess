@@ -391,7 +391,12 @@ async def log_browser_activity(
     p   = settings.INTEGRITY_SCORE_PENALTIES
 
     # ── 1. Upsert the cumulative activity row (unchanged behaviour) ───────────
-    supabase.table("browser_activity_logs").upsert(
+    #    Moved to its own table (browser_activity_summary) so this upsert's
+    #    ON CONFLICT (attempt_id) always has a matching unique constraint to
+    #    target, independent of whatever's happening in browser_activity_logs
+    #    (which is now pure per-event rows, no unique constraint, so
+    #    Realtime INSERTs below never collide with this row).
+    supabase.table("browser_activity_summary").upsert(
         {
             "attempt_id":                aid,
             "tab_switch_count":          body.tab_switch_count,
