@@ -12,6 +12,7 @@ import StudentResults from "./pages/student/Results";
 import StudentReEvaluation from "./pages/student/ReEvaluation";
 import StudentNotifications from "./pages/student/Notifications";
 import StudentProfile from "./pages/student/Profile";
+import StudentThankYou from "./pages/student/ThankYou";
 
 // Faculty — QuestionBank REMOVED; merged into CreateExam workspace
 import FacultyDashboard from "./pages/faculty/Dashboard";
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/student/re-evaluation" element={<ProtectedRoute roles={["STUDENT"]}><StudentReEvaluation /></ProtectedRoute>} />
         <Route path="/student/notifications" element={<ProtectedRoute roles={["STUDENT"]}><StudentNotifications /></ProtectedRoute>} />
         <Route path="/student/profile"      element={<ProtectedRoute roles={["STUDENT"]}><StudentProfile /></ProtectedRoute>} />
+        <Route path="/student/thank-you"    element={<ProtectedRoute roles={["STUDENT"]}><StudentThankYou /></ProtectedRoute>} />
 
         {/* ── Faculty ─────────────────────────────────────────────────── */}
         <Route path="/faculty/dashboard"    element={<ProtectedRoute roles={["FACULTY"]}><FacultyDashboard /></ProtectedRoute>} />

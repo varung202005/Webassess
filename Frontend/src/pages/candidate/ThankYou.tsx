@@ -49,11 +49,11 @@ export default function CandidateThankYou() {
         <div className="ty-icon">✅</div>
         <div className="ty-title">Assessment Completed</div>
         <div className="ty-sub">
-          Your responses have been submitted successfully and are now under review.
-          You may close this window.
+          Thank you. Your test has been submitted successfully.
+          Results will be published soon.
         </div>
         <div className="ty-note">
-          You will be notified by the organizer when your results are available.
+          You may close this window or sign out below.
         </div>
         <hr className="ty-divider" />
         <button className="btn-signout" onClick={handleSignOut}>

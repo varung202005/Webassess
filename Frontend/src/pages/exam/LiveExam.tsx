@@ -114,6 +114,7 @@ export default function LiveExam() {
 
   const session     = sessionQuery.data;
   const currentUser = useAuthStore((s) => s.user);
+  const activeRole  = useAuthStore((s) => s.activeRole);
   const rule        = getRule(session);
 
   // ── Restore saved answers ────────────────────────────────────────────────────
@@ -186,13 +187,16 @@ export default function LiveExam() {
       // 3. Submit the exam attempt
       await studentApi.submitAttempt(session.attempt.id, type);
 
-      navigate("/student/history", { replace: true, state: { submitted: true } });
+      navigate(
+        activeRole === "CANDIDATE" ? "/candidate/thank-you" : "/student/thank-you",
+        { replace: true, state: { submitted: true } }
+      );
     } catch (cause) {
       submitted.current = false;
       setError(apiMessage(cause));
       setSubmitting(false);
     }
-  }, [session, navigate, flushAnswers]);
+  }, [session, activeRole, navigate, flushAnswers]);
 
   // ── Auto-submit on deadline ──────────────────────────────────────────────────
   useEffect(() => {
