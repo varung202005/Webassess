@@ -198,7 +198,7 @@ async def start_attempt(
 @router.post("/submit")
 async def submit_attempt(
     body: SubmitAttemptRequest,
-    current_user: dict = Depends(require_student),
+    current_user: dict = Depends(require_exam_taker),
 ):
     """
     Submits the exam attempt. Runs auto-grading for MCQ and TRUE_FALSE.
@@ -224,6 +224,10 @@ async def submit_attempt(
     result = await _finalize_attempt(supabase, attempt.data, body.submission_type)
     if result is None:
         raise HTTPException(status_code=409, detail="Attempt was already submitted")
+    if "Candidate" in current_user.get("roles", []):
+        supabase.table("candidate_exam_assignments").update({
+            "status": "COMPLETED",
+        }).eq("exam_schedule_id", attempt.data["exam_schedule_id"]).eq("candidate_id", current_user["user_id"]).execute()
     return result
 
 
