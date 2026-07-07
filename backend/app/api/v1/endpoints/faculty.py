@@ -964,8 +964,9 @@ async def assign_candidates(
                 })
                 continue
 
-            # Insert into public.users
-            supabase.table("users").insert({
+            # Some Supabase projects mirror auth.users into public.users via a
+            # trigger. Upsert keeps candidate creation idempotent in both cases.
+            supabase.table("users").upsert({
                 "id": user_id,
                 "full_name": full_name,
                 "email": email,
@@ -973,7 +974,7 @@ async def assign_candidates(
                 "password_hash": "managed_by_supabase_auth",
                 "is_active": True,
                 "is_verified": True,
-            }).execute()
+            }, on_conflict="id").execute()
 
         # 3. Assign CANDIDATE role (idempotent)
         supabase.table("user_roles").upsert(
