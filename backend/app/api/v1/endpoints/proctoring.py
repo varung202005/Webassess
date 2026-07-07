@@ -343,7 +343,16 @@ async def log_face_verification(
     # A phone in frame or multiple people detected is serious enough to flag
     # immediately, regardless of what the blended score works out to — same
     # "hard violation" treatment already applied to tab-switch-limit breaches.
-    hard_violation = bool(body.phone_detected) or (body.person_count or 0) > 1
+    #
+    # FIX: this must look at the CUMULATIVE counts (phone_detect, multi_person
+    # — already computed above from all_face_logs), not just the current
+    # frame's body. Using body.phone_detected/body.person_count meant a
+    # single later "clean" frame (phone put down, back to 1 person) would
+    # upsert hard_violation=False and silently un-flag a student who was
+    # genuinely caught with a phone moments earlier — this row's upsert
+    # replaces the whole flagged_for_review value, so the earlier true
+    # violation was being erased instead of staying flagged.
+    hard_violation = phone_detect > 0 or multi_person > 0
     flagged = integrity_score < 0.5 or hard_violation
 
     supabase.table("proctoring_summary").upsert(
@@ -391,12 +400,7 @@ async def log_browser_activity(
     p   = settings.INTEGRITY_SCORE_PENALTIES
 
     # ── 1. Upsert the cumulative activity row (unchanged behaviour) ───────────
-    #    Moved to its own table (browser_activity_summary) so this upsert's
-    #    ON CONFLICT (attempt_id) always has a matching unique constraint to
-    #    target, independent of whatever's happening in browser_activity_logs
-    #    (which is now pure per-event rows, no unique constraint, so
-    #    Realtime INSERTs below never collide with this row).
-    supabase.table("browser_activity_summary").upsert(
+    supabase.table("browser_activity_logs").upsert(
         {
             "attempt_id":                aid,
             "tab_switch_count":          body.tab_switch_count,
