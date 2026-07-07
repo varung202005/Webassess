@@ -34,7 +34,8 @@ import { PageState, StatsRow } from "../../features/faculty/components";
 import { useFacultyDashboard, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import { formatDate, formatTime, relativeTime, statusBadgeClass, statusLabel } from "../../features/faculty/format";
-import type { FacultyDashboard } from "../../features/faculty/types";
+import type { ExamSchedule, FacultyDashboard } from "../../features/faculty/types";
+import CandidateManager from "./CandidateManager";
 
 function initials(name: string) {
   return name?.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 2) ?? "F";
@@ -439,6 +440,61 @@ function UpcomingSchedules({ schedules }: { schedules: FacultyDashboard["upcomin
   );
 }
 
+/* ── Candidate Assessments ────────────────────────────── */
+function CandidateAssessments({
+  schedules,
+  onManage,
+}: {
+  schedules: FacultyDashboard["upcomingSchedules"];
+  onManage: (schedule: ExamSchedule) => void;
+}) {
+  const entranceSchedules = (schedules ?? []).filter((schedule) => {
+    const exam = schedule.exams;
+    return exam?.exam_type === "ENTRANCE" && exam?.status === "PUBLISHED";
+  });
+
+  return (
+    <div className="panel" style={{ margin: 0 }}>
+      <div className="panel-header">
+        <div className="card-title"><i className="ti ti-users-plus" /> Candidate Assessments</div>
+      </div>
+
+      {entranceSchedules.length === 0 ? (
+        <div className="panel-body">
+          <div className="empty-state" style={{ padding: "30px 20px" }}>
+            <i className="ti ti-user-plus" />
+            <div className="empty-state-title">No entrance assessment ready</div>
+            <div className="empty-state-text">Create and publish an entrance exam schedule to upload candidate CSVs.</div>
+          </div>
+        </div>
+      ) : (
+        <div className="candidate-assessment-list">
+          {entranceSchedules.map((schedule) => {
+            const start = schedule.start_time ? new Date(schedule.start_time) : null;
+            const end = schedule.end_time ? new Date(schedule.end_time) : null;
+            return (
+              <div className="candidate-assessment-item" key={schedule.id}>
+                <div className="candidate-assessment-main">
+                  <div className="candidate-assessment-title">{schedule.exams?.title ?? "Entrance Assessment"}</div>
+                  <div className="candidate-assessment-meta">
+                    {start && <span>{formatDate(start.toISOString())} at {formatTime(start.toISOString())}</span>}
+                    {end && <span>Ends {formatTime(end.toISOString())}</span>}
+                    <span>{schedule.candidate_count ?? 0} candidates</span>
+                  </div>
+                </div>
+                <span className="badge badge-published">Entrance</span>
+                <button className="btn btn-sm btn-primary" onClick={() => onManage(schedule)}>
+                  <i className="ti ti-upload" /> Manage Candidates
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Grading Queue ─────────────────────────────────────── */
 function GradingQueue({ queue, onNavigate }: { queue: FacultyDashboard["gradingQueue"]; onNavigate: (examId: string) => void }) {
   if (!queue || queue.length === 0) {
@@ -601,6 +657,7 @@ export default function Dashboard() {
   const { data: portal, isLoading, isError, error, refetch } = useFacultyDashboard();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [candidateSchedule, setCandidateSchedule] = useState<ExamSchedule | null>(null);
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
@@ -671,6 +728,7 @@ export default function Dashboard() {
 
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 <UpcomingSchedules schedules={portal.upcomingSchedules} />
+                <CandidateAssessments schedules={portal.upcomingSchedules} onManage={setCandidateSchedule} />
                 <GradingQueue queue={portal.gradingQueue} onNavigate={(examId) => navigate(`/faculty/evaluation?examId=${examId}`)} />
               </div>
             </div>
@@ -680,6 +738,25 @@ export default function Dashboard() {
               <ReevalSection requests={portal.reevaluationRequests} />
               <RecentActivity notifications={portal.notifications} />
             </div>
+
+            {candidateSchedule && (
+              <div className="modal-backdrop" role="presentation" onClick={() => setCandidateSchedule(null)}>
+                <div className="modal candidate-manager-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h2>Manage Candidates</h2>
+                    <button className="modal-close" onClick={() => setCandidateSchedule(null)} aria-label="Close">
+                      <i className="ti ti-x" />
+                    </button>
+                  </div>
+                  <div className="modal-body">
+                    <CandidateManager
+                      examScheduleId={candidateSchedule.id}
+                      examTitle={candidateSchedule.exams?.title ?? "Entrance Assessment"}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </PageState>
