@@ -1,355 +1,436 @@
-import LegacyPage from "../../components/LegacyPage";
+import { useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { get, patch, post } from "../../lib/api";
+import { useAuthStore, type Role } from "../../store/authStore";
+import ProctorDashboard from "../proctor/Dashboard";
 
-const css = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;font-family:var(--font);font-size:14px;color:var(--c-gray-800);background:var(--c-bg);-webkit-font-smoothing:antialiased;}
-button{font-family:var(--font);cursor:pointer;border:none;background:none;}
-.app-shell{display:flex;height:100vh;overflow:hidden;}
-.sidebar{width:var(--sidebar-w);background:var(--c-sidebar);display:flex;flex-direction:column;flex-shrink:0;height:100vh;overflow-y:auto;}
-.sidebar-logo{padding:0 20px;height:var(--header-h);display:flex;align-items:center;border-bottom:1px solid rgba(0,0,0,.12);}
-.logo-text{font-size:18px;font-weight:700;color:#fff;letter-spacing:-0.3px;}
-.logo-sub{font-size:10px;color:rgba(255,255,255,.5);font-weight:500;letter-spacing:.8px;text-transform:uppercase;margin-top:1px;}
-.sidebar-section{padding:20px 12px 8px;}
-.sidebar-label{font-size:10px;font-weight:600;color:rgba(255,255,255,.4);letter-spacing:.8px;text-transform:uppercase;padding:0 8px;margin-bottom:4px;}
-.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-lg);color:rgba(255,255,255,.75);font-size:13.5px;font-weight:500;cursor:pointer;position:relative;margin-bottom:2px;transition:background .12s;width:100%;text-align:left;}
-.nav-item:hover{background:rgba(0,0,0,.12);color:#fff;}
-.nav-item.active{background:rgba(0,0,0,.2);color:#fff;}
-.nav-item.active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;background:#fff;border-radius:0 2px 2px 0;}
-.nav-item i{font-size:16px;flex-shrink:0;}
-.nav-badge{margin-left:auto;background:rgba(0,0,0,.25);color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;}
-.sidebar-bottom{margin-top:auto;padding:12px;border-top:1px solid rgba(0,0,0,.12);}
-.sidebar-user{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-lg);}
-.user-avatar{width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.2);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,.3);}
-.user-name{font-size:13px;font-weight:600;color:#fff;}
-.user-role{font-size:11px;color:rgba(255,255,255,.5);}
-.main-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;}
-.header{height:var(--header-h);background:var(--c-card);border-bottom:1px solid var(--c-border);display:flex;align-items:center;padding:0 24px;gap:16px;flex-shrink:0;box-shadow:var(--shadow-sm);}
-.breadcrumbs{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--c-gray-600);flex:1;}
-.breadcrumbs .sep{color:var(--c-gray-300);}
-.breadcrumbs .current{color:var(--c-gray-900);font-weight:500;}
-.header-actions{display:flex;align-items:center;gap:4px;}
-.icon-btn{width:36px;height:36px;border-radius:var(--radius-lg);color:var(--c-gray-600);display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;}
-.icon-btn:hover{background:var(--c-gray-100);}
-.header-divider{width:1px;height:24px;background:var(--c-border);margin:0 4px;}
-.header-user{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:var(--radius-lg);cursor:pointer;}
-.header-user:hover{background:var(--c-gray-100);}
-.header-avatar{width:30px;height:30px;border-radius:50%;background:var(--c-primary-700);color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;}
-.header-user-name{font-size:13px;font-weight:500;color:var(--c-gray-800);}
-.page-content{flex:1;overflow-y:auto;padding:28px 28px 40px;}
-.page-header{margin-bottom:24px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
-.page-title{font-size:22px;font-weight:700;color:var(--c-primary-800);letter-spacing:-0.3px;}
-.page-subtitle{font-size:13px;color:var(--c-gray-600);margin-top:3px;}
-.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;font-size:13.5px;font-weight:500;border-radius:var(--radius-md);border:1px solid transparent;cursor:pointer;transition:all .12s;font-family:var(--font);}
-.btn i{font-size:15px;}
-.btn-primary{background:var(--c-primary-700);color:#fff;border-color:var(--c-primary-700);}
-.btn-primary:hover{background:var(--c-primary-800);}
-.btn-secondary{background:#fff;color:var(--c-gray-800);border-color:var(--c-border);}
-.btn-secondary:hover{background:var(--c-gray-50);}
-.btn-sm{padding:6px 12px;font-size:12.5px;}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;}
-.stat-card{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius-xl);padding:20px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;}
-.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
-.stat-card.red::before{background:var(--c-primary-600);}
-.stat-card.green::before{background:var(--c-success-500);}
-.stat-card.amber::before{background:var(--c-warning-500);}
-.stat-card.navy::before{background:#0E3A63;}
-.stat-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
-.stat-label{font-size:12px;font-weight:600;color:var(--c-gray-600);text-transform:uppercase;letter-spacing:.5px;}
-.stat-icon{width:34px;height:34px;border-radius:var(--radius-lg);display:flex;align-items:center;justify-content:center;font-size:17px;}
-.stat-icon.red{background:var(--c-primary-100);color:var(--c-primary-700);}
-.stat-icon.green{background:var(--c-success-100);color:var(--c-success-700);}
-.stat-icon.amber{background:var(--c-warning-100);color:var(--c-warning-700);}
-.stat-icon.navy{background:#E6EEF7;color:#0E3A63;}
-.stat-value{font-size:30px;font-weight:700;color:var(--c-gray-900);line-height:1;margin-bottom:6px;}
-.stat-meta{font-size:12px;color:var(--c-gray-600);}
-.stat-trend{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:600;}
-.stat-trend.up{color:var(--c-success-700);}
-.card{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius-xl);box-shadow:var(--shadow-sm);}
-.card-header{padding:16px 20px;border-bottom:1px solid var(--c-border);display:flex;align-items:center;justify-content:space-between;}
-.card-title{font-size:14px;font-weight:600;color:var(--c-gray-900);display:flex;align-items:center;gap:8px;}
-.card-title i{color:var(--c-gray-500);font-size:16px;}
-.card-action{font-size:12.5px;color:var(--c-primary-700);font-weight:500;cursor:pointer;}
-.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:11px;font-weight:600;border-radius:var(--radius-sm);border:1px solid;text-transform:uppercase;letter-spacing:.3px;line-height:18px;}
-.badge-dot{width:5px;height:5px;border-radius:50%;}
-.badge-active{background:var(--c-success-100);color:var(--c-success-700);border-color:var(--c-success-500);}
-.badge-active .badge-dot{background:var(--c-success-500);}
-.badge-student{background:var(--c-primary-100);color:var(--c-primary-700);border-color:var(--c-primary-400);}
-.badge-faculty{background:#EDE9FE;color:#4C1D95;border-color:#A78BFA;}
-.badge-proctor{background:var(--c-warning-100);color:var(--c-warning-700);border-color:var(--c-warning-500);}
-.badge-admin{background:#DBEAFE;color:#1E40AF;border-color:#93C5FD;}
-.data-table{width:100%;border-collapse:collapse;}
-.data-table th{font-size:11px;font-weight:600;color:var(--c-gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 16px;text-align:left;background:var(--c-gray-50);border-bottom:1px solid var(--c-border);}
-.data-table td{padding:12px 16px;font-size:13.5px;border-bottom:1px solid var(--c-border);vertical-align:middle;}
-.data-table tr:last-child td{border-bottom:none;}
-.data-table tbody tr:hover{background:var(--c-gray-50);}
-.user-cell{display:flex;align-items:center;gap:8px;}
-.user-initials{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;}
-.table-footer{padding:11px 20px;border-top:1px solid var(--c-border);display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:var(--c-gray-600);background:var(--c-gray-50);border-radius:0 0 var(--radius-xl) var(--radius-xl);}
-.pagination{display:flex;gap:4px;}
-.page-btn{width:28px;height:28px;border:1px solid var(--c-border);background:#fff;border-radius:var(--radius-md);font-size:12.5px;font-family:var(--font);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--c-gray-700);}
-.page-btn:hover{background:var(--c-gray-100);}
-.page-btn.active{background:var(--c-primary-700);color:#fff;border-color:var(--c-primary-700);}
-.content-row{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;}
-.filter-bar{padding:12px 20px;border-bottom:1px solid var(--c-border);display:flex;align-items:center;gap:10px;background:#fff;}
-.search-wrap{position:relative;flex:1;max-width:280px;}
-.search-wrap i{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--c-gray-400);pointer-events:none;}
-.search-input{width:100%;padding:7px 10px 7px 34px;border:1px solid var(--c-border);border-radius:var(--radius-md);font-size:13px;font-family:var(--font);outline:none;background:var(--c-gray-50);}
-.search-input:focus{border-color:var(--c-primary-600);background:#fff;}
-.select-filter{padding:7px 10px;border:1px solid var(--c-border);border-radius:var(--radius-md);font-size:13px;font-family:var(--font);color:var(--c-gray-700);outline:none;background:#fff;cursor:pointer;}
-/* Audit log */
-.audit-row{display:flex;align-items:flex-start;gap:12px;padding:11px 20px;border-bottom:1px solid var(--c-border);}
-.audit-row:last-child{border-bottom:none;}
-.audit-row:hover{background:var(--c-gray-50);cursor:pointer;}
-.audit-time{font-size:11px;color:var(--c-gray-500);font-family:monospace;width:100px;flex-shrink:0;padding-top:1px;}
-.audit-action{flex-shrink:0;}
-.audit-text{font-size:12.5px;color:var(--c-gray-700);}
-.audit-text strong{color:var(--c-gray-900);}
-.dept-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-.dept-label{font-size:12.5px;color:var(--c-gray-700);width:110px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.dept-bar-wrap{flex:1;height:7px;background:var(--c-gray-200);border-radius:4px;overflow:hidden;}
-.dept-bar{height:100%;border-radius:4px;background:var(--c-primary-600);}
-.dept-val{font-size:12px;font-weight:600;color:var(--c-gray-700);width:36px;text-align:right;flex-shrink:0;}
-::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--c-gray-300);border-radius:3px;}`;
+type AdminTab = "overview" | "users" | "candidates" | "proctor" | "audit";
+type ApiRole = "Admin" | "Faculty" | "Proctor" | "Student" | "Candidate";
 
-const html = `<div class="app-shell">
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <div><div class="logo-text">EXAM.TIET</div><div class="logo-sub">Admin Portal</div></div>
+interface AdminUser {
+  id: string;
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  is_active: boolean;
+  is_verified: boolean;
+  created_at: string;
+  roles: ApiRole[];
+}
+
+interface Schedule {
+  id: string;
+  start_time: string;
+  end_time: string;
+  is_published: boolean;
+  exams?: {
+    id: string;
+    title: string;
+    exam_type?: string;
+    status?: string;
+    duration_minutes?: number;
+    courses?: { code?: string; name?: string } | null;
+  } | null;
+}
+
+interface AuditLog {
+  id: string;
+  action: string;
+  table_name?: string;
+  created_at: string;
+  users?: { full_name?: string; email?: string } | null;
+}
+
+interface AdminDashboardData {
+  stats: {
+    total_users: number;
+    active_users: number;
+    total_exams: number;
+    active_exams: number;
+    total_attempts: number;
+    flagged_attempts: number;
+    pending_reeval: number;
+    departments: number;
+    courses: number;
+  };
+  users: AdminUser[];
+  roles: { id: string; name: ApiRole }[];
+  entranceSchedules: Schedule[];
+  auditLogs: AuditLog[];
+}
+
+interface CandidateRow {
+  assignment_id: string;
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  invitation_status: string;
+  login_url: string;
+  assigned_at: string;
+  attempt_status?: string | null;
+}
+
+interface CandidateEntry {
+  full_name: string;
+  email: string;
+  phone: string;
+  temp_password: string;
+}
+
+const roleOptions: ApiRole[] = ["Admin", "Faculty", "Proctor", "Student", "Candidate"];
+
+const css = `
+.admin-shell{display:flex;min-height:100vh;background:var(--c-bg);color:var(--c-gray-900);font-family:var(--font)}
+.admin-sidebar{width:250px;background:var(--c-sidebar);color:#fff;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.admin-brand{height:64px;display:flex;align-items:center;padding:0 20px;border-bottom:1px solid rgba(0,0,0,.14)}
+.admin-brand strong{display:block;font-size:18px;letter-spacing:-.3px}.admin-brand span{display:block;font-size:11px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.8px}
+.admin-nav{padding:18px 10px;display:flex;flex-direction:column;gap:4px}.admin-nav-label{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:rgba(255,255,255,.55);padding:10px 10px 5px}
+.admin-nav button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;color:rgba(255,255,255,.78);padding:10px;border-radius:6px;font:600 13.5px var(--font);cursor:pointer;text-align:left}
+.admin-nav button:hover,.admin-nav button.active{background:rgba(0,0,0,.18);color:#fff}.admin-nav button i{font-size:17px}
+.admin-side-bottom{margin-top:auto;padding:14px;border-top:1px solid rgba(0,0,0,.14);font-size:12px;color:rgba(255,255,255,.75)}
+.admin-main{flex:1;min-width:0;display:flex;flex-direction:column}.admin-topbar{height:64px;background:#fff;border-bottom:1px solid var(--c-border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:5}
+.admin-title{font-size:20px;font-weight:800;color:var(--c-primary-800);letter-spacing:-.35px}.admin-subtitle{font-size:12.5px;color:var(--c-gray-600);margin-top:2px}
+.admin-content{padding:24px;overflow:auto}.admin-grid{display:grid;gap:16px}.stats-grid{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}
+.stat-card,.admin-card{background:#fff;border:1px solid var(--c-border);border-radius:8px;box-shadow:var(--shadow-sm)}
+.stat-card{padding:17px}.stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--c-gray-600);font-weight:800}.stat-value{font-size:28px;line-height:1;font-weight:800;margin-top:9px;color:var(--c-gray-900)}.stat-meta{font-size:12px;color:var(--c-gray-500);margin-top:7px}
+.admin-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 16px;border-bottom:1px solid var(--c-border)}.admin-card-title{font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}.admin-card-body{padding:16px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.input,.select{height:36px;border:1px solid var(--c-border);border-radius:6px;background:#fff;padding:0 10px;font:13px var(--font);color:var(--c-gray-800);outline:none}.input:focus,.select:focus{border-color:var(--c-primary-600);box-shadow:0 0 0 3px rgba(196,30,58,.08)}.input{min-width:240px}
+.btn{height:36px;border:1px solid transparent;border-radius:6px;padding:0 13px;display:inline-flex;align-items:center;gap:7px;font:700 13px var(--font);cursor:pointer}.btn-primary{background:var(--c-primary-700);color:#fff}.btn-secondary{background:#fff;color:var(--c-gray-800);border-color:var(--c-border)}.btn-danger{background:var(--c-danger-100);color:var(--c-danger-700);border-color:#fecaca}.btn:disabled{opacity:.55;cursor:not-allowed}
+.data-table{width:100%;border-collapse:collapse}.data-table th{background:var(--c-gray-50);border-bottom:1px solid var(--c-border);padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.45px;color:var(--c-gray-600)}.data-table td{border-bottom:1px solid var(--c-border);padding:10px;font-size:13px;vertical-align:middle}.data-table tr:last-child td{border-bottom:0}.muted{color:var(--c-gray-500);font-size:12px}.name-cell{font-weight:800}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;border:1px solid transparent;text-transform:uppercase}.badge-admin{background:#dbeafe;color:#1e40af}.badge-faculty{background:#ede9fe;color:#5b21b6}.badge-proctor{background:#fef3c7;color:#92400e}.badge-student{background:#fde8ec;color:#9d102d}.badge-candidate{background:#d1fae5;color:#065f46}.badge-off{background:var(--c-gray-100);color:var(--c-gray-600)}
+.two-col{grid-template-columns:minmax(0,1.3fr) minmax(320px,.7fr)}.notice{margin-bottom:14px;border-radius:8px;padding:10px 12px;font-size:13px;border:1px solid}.notice.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}.notice.error{background:#fef2f2;color:#991b1b;border-color:#fecaca}
+.csv-zone{border:2px dashed var(--c-gray-300);border-radius:8px;padding:28px;text-align:center;cursor:pointer;background:var(--c-gray-50)}.csv-zone:hover{border-color:var(--c-primary-600);background:#fff}.csv-zone i{font-size:30px;color:var(--c-gray-500)}.csv-zone p{margin:8px 0 3px;color:var(--c-gray-700);font-weight:700}.csv-zone small{color:var(--c-gray-500)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}.proctor-embed{height:calc(100vh - 112px);overflow:auto;border:1px solid var(--c-border);border-radius:8px;background:#fff}.proctor-embed .proctor-shell{min-height:100%;height:auto}
+.empty{padding:28px;text-align:center;color:var(--c-gray-500);font-size:13px}.audit-row{display:grid;grid-template-columns:110px 120px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid var(--c-border);font-size:13px}.audit-row:last-child{border-bottom:0}
+@media(max-width:1000px){.admin-sidebar{display:none}.stats-grid,.two-col{grid-template-columns:1fr}.admin-content{padding:16px}.form-row{grid-template-columns:1fr}.input{min-width:0;width:100%}}
+`;
+
+function roleClass(role?: string) {
+  return `badge badge-${(role || "off").toLowerCase()}`;
+}
+
+function normalizeRole(role?: string): ApiRole {
+  const match = roleOptions.find((option) => option.toLowerCase() === String(role || "").toLowerCase());
+  return match ?? "Student";
+}
+
+function parseCSV(text: string): CandidateEntry[] {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((cell) => cell.trim().replace(/^"|"$/g, "").toLowerCase());
+  const find = (names: string[]) => names.map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const nameIndex = find(["name", "full_name", "full name", "candidate_name"]);
+  const emailIndex = find(["email", "email_id", "email id", "candidate_email"]);
+  const phoneIndex = find(["phone", "mobile", "contact"]);
+  const passwordIndex = find(["temp_password", "password", "temporary_password"]);
+  if (nameIndex < 0 || emailIndex < 0) return [];
+  return lines.slice(1).map((line) => {
+    const cols = line.split(",").map((cell) => cell.trim().replace(/^"|"$/g, ""));
+    return {
+      full_name: cols[nameIndex] || "",
+      email: cols[emailIndex] || "",
+      phone: phoneIndex >= 0 ? cols[phoneIndex] || "" : "",
+      temp_password: passwordIndex >= 0 ? cols[passwordIndex] || "" : "",
+    };
+  }).filter((row) => row.full_name && row.email.includes("@"));
+}
+
+function fmtDate(value?: string) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+export default function AdminDashboard() {
+  const qc = useQueryClient();
+  const currentUser = useAuthStore((state) => state.user);
+  const signOut = useAuthStore((state) => state.signOut);
+  const [activeTab, setActiveTab] = useState<AdminTab>("overview");
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("ALL");
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [selectedSchedule, setSelectedSchedule] = useState("");
+  const [candidateRows, setCandidateRows] = useState<CandidateEntry[]>([]);
+  const [manualCandidate, setManualCandidate] = useState<CandidateEntry>({ full_name: "", email: "", phone: "", temp_password: "" });
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const { data, isLoading, isError } = useQuery<AdminDashboardData>({
+    queryKey: ["admin-dashboard"],
+    queryFn: () => get<AdminDashboardData>("/api/v1/admin/dashboard"),
+    refetchInterval: 30_000,
+  });
+
+  const { data: assignments = [] } = useQuery<CandidateRow[]>({
+    queryKey: ["admin-candidates", selectedSchedule],
+    queryFn: () => get<CandidateRow[]>(`/api/v1/admin/candidates/${selectedSchedule}`),
+    enabled: Boolean(selectedSchedule),
+  });
+
+  const roleMutation = useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: ApiRole }) =>
+      patch(`/api/v1/admin/users/${userId}/role`, { role }),
+    onSuccess: () => {
+      setNotice({ type: "success", text: "User role updated." });
+      void qc.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (err: Error) => setNotice({ type: "error", text: err.message || "Could not update role." }),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: (rows: CandidateEntry[]) =>
+      post<{ assigned: number; emails_sent: number; emails_failed: number; emails_skipped: number }>("/api/v1/admin/candidates/assign", {
+        exam_schedule_id: selectedSchedule,
+        candidates: rows.map((row) => ({
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone || null,
+          temp_password: row.temp_password || null,
+        })),
+      }),
+    onSuccess: (result) => {
+      const mailText = result.emails_skipped
+        ? " SMTP is not configured, so credentials were created but email was skipped."
+        : ` ${result.emails_sent} email(s) sent, ${result.emails_failed} failed.`;
+      setNotice({ type: "success", text: `${result.assigned} candidate(s) assigned.${mailText}` });
+      setCandidateRows([]);
+      setManualCandidate({ full_name: "", email: "", phone: "", temp_password: "" });
+      void qc.invalidateQueries({ queryKey: ["admin-candidates", selectedSchedule] });
+      void qc.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (err: Error) => setNotice({ type: "error", text: err.message || "Could not assign candidates." }),
+  });
+
+  const users = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return (data?.users ?? []).filter((user) => {
+      const role = user.roles[0] ?? "";
+      const matchesRole = roleFilter === "ALL" || role.toLowerCase() === roleFilter.toLowerCase();
+      const matchesSearch = !needle || `${user.full_name} ${user.email}`.toLowerCase().includes(needle);
+      return matchesRole && matchesSearch;
+    });
+  }, [data?.users, roleFilter, search]);
+
+  const schedules = data?.entranceSchedules ?? [];
+  const selectedScheduleLabel = schedules.find((schedule) => schedule.id === selectedSchedule);
+
+  const uploadCSV = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rows = parseCSV(String(event.target?.result ?? ""));
+      setCandidateRows(rows);
+      setNotice(rows.length ? null : { type: "error", text: "No valid rows found. Use headers: name,email,phone,temp_password" });
+    };
+    reader.readAsText(file);
+  };
+
+  const addManualCandidate = () => {
+    if (!manualCandidate.full_name.trim() || !manualCandidate.email.includes("@")) {
+      setNotice({ type: "error", text: "Enter a valid candidate name and email." });
+      return;
+    }
+    setCandidateRows((rows) => [...rows, manualCandidate]);
+    setManualCandidate({ full_name: "", email: "", phone: "", temp_password: "" });
+  };
+
+  const renderOverview = () => (
+    <>
+      <div className="admin-grid stats-grid">
+        <div className="stat-card"><div className="stat-label">Users</div><div className="stat-value">{data?.stats.total_users ?? 0}</div><div className="stat-meta">{data?.stats.active_users ?? 0} active accounts</div></div>
+        <div className="stat-card"><div className="stat-label">Exams</div><div className="stat-value">{data?.stats.total_exams ?? 0}</div><div className="stat-meta">{data?.stats.active_exams ?? 0} live now</div></div>
+        <div className="stat-card"><div className="stat-label">Attempts</div><div className="stat-value">{data?.stats.total_attempts ?? 0}</div><div className="stat-meta">{data?.stats.flagged_attempts ?? 0} flagged for review</div></div>
+        <div className="stat-card"><div className="stat-label">Academics</div><div className="stat-value">{data?.stats.departments ?? 0}</div><div className="stat-meta">{data?.stats.courses ?? 0} courses, {data?.stats.pending_reeval ?? 0} re-evals</div></div>
+      </div>
+      <div className="admin-grid two-col">
+        <div className="admin-card">
+          <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-users" /> Recent Users</div><button className="btn btn-secondary" onClick={() => setActiveTab("users")}>Manage roles</button></div>
+          <div style={{ overflowX: "auto" }}>{renderUsersTable((data?.users ?? []).slice(0, 8), false)}</div>
+        </div>
+        <div className="admin-card">
+          <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-calendar" /> Entrance Schedules</div><button className="btn btn-primary" onClick={() => setActiveTab("candidates")}>Assign candidates</button></div>
+          <div className="admin-card-body">
+            {(schedules.slice(0, 6)).map((schedule) => (
+              <div key={schedule.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--c-border)" }}>
+                <div className="name-cell">{schedule.exams?.title ?? "Entrance exam"}</div>
+                <div className="muted">{schedule.exams?.courses?.code ?? "No course"} | {fmtDate(schedule.start_time)}</div>
+              </div>
+            ))}
+            {schedules.length === 0 && <div className="empty">No entrance schedules found.</div>}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderUsersTable = (rows: AdminUser[], editable = true) => (
+    <table className="data-table">
+      <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Joined</th>{editable && <th>Change Role</th>}</tr></thead>
+      <tbody>
+        {rows.map((user) => {
+          const currentRole = normalizeRole(user.roles[0]);
+          return (
+            <tr key={user.id}>
+              <td><div className="name-cell">{user.full_name || "Unnamed user"}</div><div className="muted">{user.email}</div></td>
+              <td><span className={roleClass(currentRole)}>{currentRole}</span></td>
+              <td><span className={user.is_active ? "badge badge-candidate" : "badge badge-off"}>{user.is_active ? "Active" : "Inactive"}</span></td>
+              <td className="muted">{fmtDate(user.created_at)}</td>
+              {editable && (
+                <td>
+                  <select
+                    className="select"
+                    value={currentRole}
+                    disabled={roleMutation.isPending}
+                    onChange={(event) => roleMutation.mutate({ userId: user.id, role: event.target.value as ApiRole })}
+                  >
+                    {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+                  </select>
+                </td>
+              )}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
+  const renderUsers = () => (
+    <div className="admin-card">
+      <div className="admin-card-head">
+        <div className="admin-card-title"><i className="ti ti-shield-lock" /> Users and Roles</div>
+        <div className="toolbar">
+          <input className="input" placeholder="Search users" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <option value="ALL">All roles</option>
+            {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>{renderUsersTable(users)}</div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Overview</div>
-      <button class="nav-item active"><i class="ti ti-layout-dashboard"></i>Dashboard</button>
+  );
+
+  const renderCandidates = () => (
+    <div className="admin-grid two-col">
+      <div className="admin-card">
+        <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-user-plus" /> Candidate Assignment</div></div>
+        <div className="admin-card-body">
+          <div className="toolbar" style={{ marginBottom: 14 }}>
+            <select className="select" style={{ minWidth: 320 }} value={selectedSchedule} onChange={(e) => setSelectedSchedule(e.target.value)}>
+              <option value="">Select entrance exam schedule</option>
+              {schedules.map((schedule) => (
+                <option key={schedule.id} value={schedule.id}>
+                  {schedule.exams?.title ?? "Entrance exam"} - {fmtDate(schedule.start_time)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-row">
+            <input className="input" placeholder="Full name" value={manualCandidate.full_name} onChange={(e) => setManualCandidate((row) => ({ ...row, full_name: e.target.value }))} />
+            <input className="input" placeholder="Email" value={manualCandidate.email} onChange={(e) => setManualCandidate((row) => ({ ...row, email: e.target.value }))} />
+            <input className="input" placeholder="Phone optional" value={manualCandidate.phone} onChange={(e) => setManualCandidate((row) => ({ ...row, phone: e.target.value }))} />
+            <input className="input" placeholder="Password optional" value={manualCandidate.temp_password} onChange={(e) => setManualCandidate((row) => ({ ...row, temp_password: e.target.value }))} />
+          </div>
+          <button className="btn btn-secondary" onClick={addManualCandidate}><i className="ti ti-plus" /> Add to batch</button>
+
+          <div className="csv-zone" style={{ marginTop: 16 }} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) uploadCSV(file); }}>
+            <i className="ti ti-upload" />
+            <p>Upload candidate CSV</p>
+            <small>Headers: name,email,phone,temp_password. Email is sent after import.</small>
+            <input ref={fileRef} type="file" accept=".csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadCSV(file); }} />
+          </div>
+
+          {candidateRows.length > 0 && (
+            <div style={{ marginTop: 16, overflowX: "auto" }}>
+              <div className="toolbar" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+                <strong>{candidateRows.length} candidate(s) ready</strong>
+                <div className="toolbar">
+                  <button className="btn btn-secondary" onClick={() => setCandidateRows([])}>Clear</button>
+                  <button className="btn btn-primary" disabled={!selectedSchedule || assignMutation.isPending} onClick={() => assignMutation.mutate(candidateRows)}>
+                    <i className="ti ti-mail" /> Send login email(s)
+                  </button>
+                </div>
+              </div>
+              <table className="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Password</th></tr></thead><tbody>
+                {candidateRows.slice(0, 12).map((row, index) => <tr key={`${row.email}-${index}`}><td>{row.full_name}</td><td>{row.email}</td><td>{row.phone || "-"}</td><td>{row.temp_password ? "Provided" : "Auto"}</td></tr>)}
+              </tbody></table>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="admin-card">
+        <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-list-check" /> Assigned Candidates</div></div>
+        <div className="admin-card-body">
+          <div className="muted" style={{ marginBottom: 10 }}>{selectedScheduleLabel?.exams?.title ?? "Select a schedule"}</div>
+          {assignments.length === 0 ? <div className="empty">No candidates loaded for this schedule.</div> : assignments.map((row) => (
+            <div key={row.assignment_id} style={{ padding: "10px 0", borderBottom: "1px solid var(--c-border)" }}>
+              <div className="name-cell">{row.full_name}</div>
+              <div className="muted">{row.email}</div>
+              <div style={{ marginTop: 5 }}><span className="badge badge-candidate">{row.invitation_status}</span> <span className="muted">{row.attempt_status ?? "Not started"}</span></div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Management</div>
-      <button class="nav-item"><i class="ti ti-users"></i>Users</button>
-      <button class="nav-item"><i class="ti ti-shield-lock"></i>Roles & Permissions</button>
-      <button class="nav-item"><i class="ti ti-building"></i>Departments</button>
-      <button class="nav-item"><i class="ti ti-books"></i>Courses</button>
-    </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">Examination</div>
-      <button class="nav-item"><i class="ti ti-file-description"></i>All Exams</button>
-      <button class="nav-item"><i class="ti ti-award"></i>Results</button>
-    </div>
-    <div class="sidebar-section">
-      <div class="sidebar-label">System</div>
-      <button class="nav-item"><i class="ti ti-list-details"></i>Audit Logs</button>
-      <button class="nav-item"><i class="ti ti-bell"></i>Notifications<span class="nav-badge">2</span></button>
-      <button class="nav-item"><i class="ti ti-settings"></i>System Settings</button>
-    </div>
-    <div class="sidebar-bottom">
-      <div class="sidebar-user">
-        <div class="user-avatar">AD</div>
-        <div style="flex:1;min-width:0;">
-          <div class="user-name">Admin User</div>
-          <div class="user-role">System Administrator</div>
-        </div>
+  );
+
+  const renderAudit = () => (
+    <div className="admin-card">
+      <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-list-details" /> Audit Logs</div></div>
+      <div className="admin-card-body">
+        {(data?.auditLogs ?? []).map((log) => (
+          <div className="audit-row" key={log.id}>
+            <span className="muted">{new Date(log.created_at).toLocaleTimeString()}</span>
+            <span className="badge badge-off">{log.action}</span>
+            <span>{log.users?.email ?? "System"} on {log.table_name ?? "record"}</span>
+          </div>
+        ))}
       </div>
     </div>
-  </aside>
+  );
 
-  <div class="main-wrap">
-    <header class="header">
-      <div class="breadcrumbs">
-        <span>Admin Portal</span><span class="sep">/</span>
-        <span class="current">Dashboard</span>
-      </div>
-      <div class="header-actions">
-        <button class="icon-btn"><i class="ti ti-bell"></i></button>
-        <div class="header-divider"></div>
-        <span style="font-size:11px;font-weight:600;color:#1E40AF;background:#DBEAFE;padding:4px 10px;border-radius:20px;">ADMIN</span>
-        <button class="header-user">
-          <div class="header-avatar" style="background:#1E40AF;">AD</div>
-          <span class="header-user-name">Admin User</span>
-          <i class="ti ti-chevron-down" style="font-size:13px;color:var(--c-gray-500);"></i>
-        </button>
-      </div>
-    </header>
+  const content = () => {
+    if (isLoading) return <div className="admin-card"><div className="empty">Loading admin control center...</div></div>;
+    if (isError) return <div className="admin-card"><div className="empty">Could not load admin dashboard. Check the backend connection.</div></div>;
+    if (activeTab === "users") return renderUsers();
+    if (activeTab === "candidates") return renderCandidates();
+    if (activeTab === "proctor") return <div className="proctor-embed"><ProctorDashboard /></div>;
+    if (activeTab === "audit") return renderAudit();
+    return renderOverview();
+  };
 
-    <main class="page-content">
-      <div class="page-header">
-        <div>
-          <div class="page-title">Admin Dashboard</div>
-          <div class="page-subtitle">Thursday, June 11, 2026 · System Overview</div>
+  return (
+    <div className="admin-shell">
+      <style dangerouslySetInnerHTML={{ __html: css }} />
+      <aside className="admin-sidebar">
+        <div className="admin-brand"><div><strong>EXAM.TIET</strong><span>Admin Control</span></div></div>
+        <nav className="admin-nav">
+          <div className="admin-nav-label">Control Center</div>
+          {[
+            ["overview", "Dashboard", "ti-layout-dashboard"],
+            ["users", "Users and Roles", "ti-shield-lock"],
+            ["candidates", "Candidate Assignment", "ti-user-plus"],
+            ["proctor", "Proctor Console", "ti-device-desktop"],
+            ["audit", "Audit Logs", "ti-list-details"],
+          ].map(([key, label, icon]) => (
+            <button key={key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key as AdminTab)}>
+              <i className={`ti ${icon}`} /><span>{label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="admin-side-bottom">
+          <strong>{currentUser?.fullName ?? "Admin"}</strong>
+          <div>{currentUser?.email ?? "System administrator"}</div>
         </div>
-        <div style="display:flex;gap:10px;">
-          <button class="btn btn-secondary"><i class="ti ti-user-plus"></i>Add User</button>
-          <button class="btn btn-primary"><i class="ti ti-settings"></i>Settings</button>
-        </div>
-      </div>
-
-      <!-- STATS -->
-      <div class="stats-grid">
-        <div class="stat-card navy">
-          <div class="stat-header"><div class="stat-label">Total Users</div><div class="stat-icon navy"><i class="ti ti-users"></i></div></div>
-          <div class="stat-value">51,204</div>
-          <div class="stat-meta"><span class="stat-trend up"><i class="ti ti-trending-up" style="font-size:12px;"></i> +342</span> this month</div>
-        </div>
-        <div class="stat-card red">
-          <div class="stat-header"><div class="stat-label">Active Exams</div><div class="stat-icon red"><i class="ti ti-file-description"></i></div></div>
-          <div class="stat-value" style="color:var(--c-primary-700);">12</div>
-          <div class="stat-meta">3 live right now</div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-header"><div class="stat-label">Departments</div><div class="stat-icon green"><i class="ti ti-building"></i></div></div>
-          <div class="stat-value" style="color:var(--c-success-700);">18</div>
-          <div class="stat-meta">94 active courses</div>
-        </div>
-        <div class="stat-card amber">
-          <div class="stat-header"><div class="stat-label">Audit Events (24h)</div><div class="stat-icon amber"><i class="ti ti-list-details"></i></div></div>
-          <div class="stat-value" style="color:var(--c-warning-700);">1,847</div>
-          <div class="stat-meta">3 anomalies flagged</div>
-        </div>
-      </div>
-
-      <!-- USERS TABLE -->
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-          <div class="card-title"><i class="ti ti-users"></i> User Management</div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <span class="card-action">View all</span>
-            <button class="btn btn-sm btn-primary"><i class="ti ti-user-plus"></i>Add User</button>
-          </div>
-        </div>
-        <div class="filter-bar">
-          <div class="search-wrap">
-            <i class="ti ti-search"></i>
-            <input class="search-input" placeholder="Search by name, email, roll number…">
-          </div>
-          <select class="select-filter"><option>All Roles</option><option>Student</option><option>Faculty</option><option>Proctor</option><option>Admin</option></select>
-          <select class="select-filter"><option>All Departments</option><option>CSE</option><option>ECE</option><option>Mechanical</option></select>
-          <select class="select-filter"><option>All Status</option><option>Active</option><option>Inactive</option></select>
-          <button class="btn btn-secondary btn-sm" style="margin-left:auto;"><i class="ti ti-download"></i>Export</button>
-        </div>
-        <div style="overflow-x:auto;">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th><input type="checkbox"></th>
-                <th>Name</th><th>Email</th><th>Role</th><th>Department</th><th>Status</th><th>Joined</th><th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><input type="checkbox"></td>
-                <td><div class="user-cell"><div class="user-initials" style="background:var(--c-primary-100);color:var(--c-primary-700);">KS</div><span style="font-weight:500;">Kamal Singh</span></div></td>
-                <td style="font-size:12.5px;color:var(--c-gray-600);">102417042@tiet.ac.in</td>
-                <td><span class="badge badge-student">Student</span></td>
-                <td style="font-size:13px;">Computer Science</td>
-                <td><span class="badge badge-active"><span class="badge-dot"></span>Active</span></td>
-                <td style="font-size:12px;color:var(--c-gray-500);">Aug 2022</td>
-                <td><div style="display:flex;gap:4px;"><button class="btn btn-sm btn-secondary">Edit</button><button class="btn btn-sm" style="color:var(--c-danger-500);border:1px solid var(--c-danger-500);padding:6px;"><i class="ti ti-trash" style="font-size:13px;"></i></button></div></td>
-              </tr>
-              <tr>
-                <td><input type="checkbox"></td>
-                <td><div class="user-cell"><div class="user-initials" style="background:#EDE9FE;color:#4C1D95;">DR</div><span style="font-weight:500;">Dr. Rajesh Kumar</span></div></td>
-                <td style="font-size:12.5px;color:var(--c-gray-600);">rajesh.kumar@tiet.ac.in</td>
-                <td><span class="badge badge-faculty">Faculty</span></td>
-                <td style="font-size:13px;">Computer Science</td>
-                <td><span class="badge badge-active"><span class="badge-dot"></span>Active</span></td>
-                <td style="font-size:12px;color:var(--c-gray-500);">Jan 2018</td>
-                <td><div style="display:flex;gap:4px;"><button class="btn btn-sm btn-secondary">Edit</button><button class="btn btn-sm" style="color:var(--c-danger-500);border:1px solid var(--c-danger-500);padding:6px;"><i class="ti ti-trash" style="font-size:13px;"></i></button></div></td>
-              </tr>
-              <tr>
-                <td><input type="checkbox"></td>
-                <td><div class="user-cell"><div class="user-initials" style="background:var(--c-warning-100);color:var(--c-warning-700);">PM</div><span style="font-weight:500;">Priya Malhotra</span></div></td>
-                <td style="font-size:12.5px;color:var(--c-gray-600);">priya.malhotra@tiet.ac.in</td>
-                <td><span class="badge badge-proctor">Proctor</span></td>
-                <td style="font-size:13px;">Examination Cell</td>
-                <td><span class="badge badge-active"><span class="badge-dot"></span>Active</span></td>
-                <td style="font-size:12px;color:var(--c-gray-500);">Mar 2020</td>
-                <td><div style="display:flex;gap:4px;"><button class="btn btn-sm btn-secondary">Edit</button><button class="btn btn-sm" style="color:var(--c-danger-500);border:1px solid var(--c-danger-500);padding:6px;"><i class="ti ti-trash" style="font-size:13px;"></i></button></div></td>
-              </tr>
-              <tr>
-                <td><input type="checkbox"></td>
-                <td><div class="user-cell"><div class="user-initials" style="background:#DBEAFE;color:#1E40AF;">AC</div><span style="font-weight:500;">Admin Controller</span></div></td>
-                <td style="font-size:12.5px;color:var(--c-gray-600);">admin@tiet.ac.in</td>
-                <td><span class="badge badge-admin">Admin</span></td>
-                <td style="font-size:13px;">IT Services</td>
-                <td><span class="badge badge-active"><span class="badge-dot"></span>Active</span></td>
-                <td style="font-size:12px;color:var(--c-gray-500);">Jun 2015</td>
-                <td><div style="display:flex;gap:4px;"><button class="btn btn-sm btn-secondary">Edit</button></div></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="table-footer">
-          <span>Showing 1–4 of 51,204 users</span>
-          <div class="pagination">
-            <button class="page-btn" disabled><i class="ti ti-chevron-left" style="font-size:12px;"></i></button>
-            <button class="page-btn active">1</button>
-            <button class="page-btn">2</button>
-            <button class="page-btn">3</button>
-            <span style="align-self:center;color:var(--c-gray-400);font-size:12px;padding:0 4px;">…</span>
-            <button class="page-btn">512</button>
-            <button class="page-btn"><i class="ti ti-chevron-right" style="font-size:12px;"></i></button>
-          </div>
-        </div>
-      </div>
-
-      <!-- DEPT STATS + AUDIT -->
-      <div class="content-row">
-        <!-- Dept enrolment -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title"><i class="ti ti-building"></i> Students by Department</div>
-            <span class="card-action">View all</span>
-          </div>
-          <div style="padding:16px 20px;">
-            <div class="dept-bar-row"><div class="dept-label">Computer Science</div><div class="dept-bar-wrap"><div class="dept-bar" style="width:88%;"></div></div><div class="dept-val">12,840</div></div>
-            <div class="dept-bar-row"><div class="dept-label">Electronics</div><div class="dept-bar-wrap"><div class="dept-bar" style="width:72%;"></div></div><div class="dept-val">10,500</div></div>
-            <div class="dept-bar-row"><div class="dept-label">Mechanical</div><div class="dept-bar-wrap"><div class="dept-bar" style="width:60%;"></div></div><div class="dept-val">8,750</div></div>
-            <div class="dept-bar-row"><div class="dept-label">Civil</div><div class="dept-bar-wrap"><div class="dept-bar" style="width:45%;"></div></div><div class="dept-val">6,560</div></div>
-            <div class="dept-bar-row"><div class="dept-label">Chemical</div><div class="dept-bar-wrap"><div class="dept-bar" style="width:28%;"></div></div><div class="dept-val">4,100</div></div>
-            <div class="dept-bar-row"><div class="dept-label">Others</div><div class="dept-bar-wrap"><div class="dept-bar" style="width:19%;"></div></div><div class="dept-val">8,454</div></div>
-          </div>
-        </div>
-
-        <!-- Audit Log Preview -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title"><i class="ti ti-list-details"></i> Recent Audit Log</div>
-            <span class="card-action">View all logs</span>
-          </div>
-          <div>
-            <div class="audit-row">
-              <div class="audit-time">10:04:23</div>
-              <div class="audit-action"><span class="badge badge-active" style="font-size:10px;">CREATE</span></div>
-              <div class="audit-text"><strong>admin@tiet.ac.in</strong> created exam <strong>UCS301 Mid-Sem</strong></div>
-            </div>
-            <div class="audit-row">
-              <div class="audit-time">10:03:58</div>
-              <div class="audit-action"><span class="badge" style="background:var(--c-warning-100);color:var(--c-warning-700);border-color:var(--c-warning-500);font-size:10px;">UPDATE</span></div>
-              <div class="audit-text"><strong>rajesh.kumar</strong> updated question <strong>#7b2e…f910</strong></div>
-            </div>
-            <div class="audit-row">
-              <div class="audit-time">09:58:11</div>
-              <div class="audit-action"><span class="badge" style="background:#DBEAFE;color:#1E40AF;border-color:#93C5FD;font-size:10px;">LOGIN</span></div>
-              <div class="audit-text"><strong>102417042@tiet.ac.in</strong> logged in from 10.0.0.81</div>
-            </div>
-            <div class="audit-row">
-              <div class="audit-time">09:45:30</div>
-              <div class="audit-action"><span class="badge badge-active" style="font-size:10px;">PUBLISH</span></div>
-              <div class="audit-text"><strong>rajesh.kumar</strong> published exam schedule for <strong>UCS415</strong></div>
-            </div>
-            <div class="audit-row">
-              <div class="audit-time">09:30:02</div>
-              <div class="audit-action"><span class="badge" style="background:var(--c-danger-100);color:var(--c-danger-700);border-color:var(--c-danger-500);font-size:10px;">DELETE</span></div>
-              <div class="audit-text"><strong>admin@tiet.ac.in</strong> deactivated question <strong>#3d1a…9220</strong></div>
-            </div>
-            <div class="audit-row">
-              <div class="audit-time">09:15:47</div>
-              <div class="audit-action"><span class="badge badge-active" style="font-size:10px;">CREATE</span></div>
-              <div class="audit-text"><strong>admin@tiet.ac.in</strong> created user <strong>priya.malhotra</strong> (Proctor)</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </main>
-  </div>
-</div>`;
-
-export default function Dashboard() {
-  return <LegacyPage css={css} html={html} />;
+      </aside>
+      <section className="admin-main">
+        <header className="admin-topbar">
+          <div><div className="admin-title">Admin Dashboard</div><div className="admin-subtitle">Full project control, user roles, candidate assignment, and live proctoring</div></div>
+          <div className="toolbar"><span className="badge badge-admin">ADMIN</span><button className="btn btn-secondary" onClick={signOut}>Sign out</button></div>
+        </header>
+        <main className="admin-content">
+          {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
+          {content()}
+        </main>
+      </section>
+    </div>
+  );
 }
