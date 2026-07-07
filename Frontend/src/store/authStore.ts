@@ -10,6 +10,11 @@ export interface AuthUser {
   roles: Role[];
 }
 
+export function preferredRole(roles: Role[]): Role | null {
+  const priority: Role[] = ["CANDIDATE", "STUDENT", "FACULTY", "PROCTOR", "ADMIN"];
+  return priority.find((role) => roles.includes(role)) ?? roles[0] ?? null;
+}
+
 interface AuthState {
   user: AuthUser | null;
   activeRole: Role | null;
@@ -39,7 +44,7 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       authReady: false,
       setSession: (user, token) =>
-        set({ user, token, activeRole: user.roles[0] ?? null, authReady: true }),
+        set({ user, token, activeRole: preferredRole(user.roles), authReady: true }),
       setAuthReady: (authReady) => set({ authReady }),
       setActiveRole: (role) => set({ activeRole: role }),
       signOut: () => set({ user: null, token: null, activeRole: null, authReady: true }),

@@ -68,7 +68,7 @@ async def register_for_exam(
     # Check schedule exists and is published
     sched = (
         supabase.table("exam_schedules")
-        .select("*, exams(status, title)")
+        .select("*, exams(status, title, exam_type)")
         .eq("id", schedule_id)
         .single()
         .execute()
@@ -79,6 +79,8 @@ async def register_for_exam(
         raise HTTPException(status_code=400, detail="Exam schedule is not published yet")
     if sched.data.get("exams", {}).get("status") != "PUBLISHED":
         raise HTTPException(status_code=400, detail="Exam is not active")
+    if str(sched.data.get("exams", {}).get("exam_type", "")).upper() == "ENTRANCE":
+        raise HTTPException(status_code=403, detail="Entrance tests are assigned through the candidate portal")
 
     deadline_value = sched.data.get("registration_deadline") or sched.data["start_time"]
     registration_deadline = datetime.fromisoformat(deadline_value)
@@ -204,7 +206,7 @@ async def check_eligibility(
 
     result = (
         supabase.table("exam_registrations")
-        .select("status, exam_schedules(is_published, start_time, end_time)")
+        .select("status, exam_schedules(is_published, start_time, end_time, exams(exam_type))")
         .eq("exam_schedule_id", str(schedule_id))
         .eq("student_id", student_id)
         .execute()
@@ -218,6 +220,8 @@ async def check_eligibility(
         return {"eligible": False, "reason": f"Registration status is {reg['status']}"}
 
     sched = reg["exam_schedules"]
+    if str((sched.get("exams") or {}).get("exam_type", "")).upper() == "ENTRANCE":
+        return {"eligible": False, "reason": "Entrance tests are assigned through the candidate portal"}
     if not sched["is_published"]:
         return {"eligible": False, "reason": "Exam not yet published"}
 

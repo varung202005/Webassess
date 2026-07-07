@@ -1,7 +1,7 @@
 import { useState, FormEvent, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
-import { useAuthStore, type Role } from "../../store/authStore";
+import { preferredRole, useAuthStore, type Role } from "../../store/authStore";
 
 const css = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 .auth-page{display:flex;min-height:100vh;width:100%;font-family:var(--font);background:#F7F8FA;}
@@ -144,7 +144,8 @@ export default function Login() {
       .map((role) => role.toUpperCase())
       .filter((role): role is Role => ["STUDENT", "FACULTY", "PROCTOR", "ADMIN", "CANDIDATE"].includes(role));
     if (!roles.length) throw new Error("No portal role is assigned to this account.");
-    const role = roles[0];
+    const role = preferredRole(roles);
+    if (!role) throw new Error("No portal role is assigned to this account.");
     setSession({
       id: payload.user.id,
       fullName: payload.user.full_name ?? "",

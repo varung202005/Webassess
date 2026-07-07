@@ -902,7 +902,8 @@ async def assign_candidates(
     if sched["exams"]["created_by"] != faculty_id:
         raise HTTPException(status_code=403, detail="You do not own this exam")
 
-    # Fetch CANDIDATE role id
+    # Fetch role ids. Candidate imports should land in the Candidate portal,
+    # not the Student dashboard, even if the email existed as a student before.
     role_row = (
         supabase.table("roles")
         .select("id")
@@ -917,6 +918,12 @@ async def assign_candidates(
             detail="Candidate role not found. Ensure Phase 1 migration was run."
         )
     candidate_role_id = role_row["id"]
+    student_role_row = _single_or_none(
+        supabase.table("roles")
+        .select("id")
+        .eq("name", "Student")
+    )
+    student_role_id = student_role_row["id"] if student_role_row else None
 
     results = []
     for entry in body.candidates:
@@ -981,6 +988,11 @@ async def assign_candidates(
             {"user_id": user_id, "role_id": candidate_role_id},
             on_conflict="user_id,role_id",
         ).execute()
+        if student_role_id:
+            supabase.table("user_roles").delete() \
+                .eq("user_id", user_id) \
+                .eq("role_id", student_role_id) \
+                .execute()
 
         # 4. Insert into candidate_exam_assignments (idempotent via UNIQUE constraint)
         existing_assignment = (

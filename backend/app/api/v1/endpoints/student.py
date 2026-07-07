@@ -65,7 +65,15 @@ def _portal_data(supabase, user_id: str) -> dict:
     exams = []
     if exam_ids:
         exams = supabase.table("exams").select("*").in_("id", exam_ids).execute().data
-    exam_map = {row["id"]: row for row in exams}
+    exam_map = {
+        row["id"]: row for row in exams
+        if str(row.get("exam_type", "")).upper() != "ENTRANCE"
+    }
+    schedules = [
+        schedule for schedule in schedules
+        if schedule.get("exam_id") in exam_map
+    ]
+    exams = list(exam_map.values())
 
     course_ids = list({row["course_id"] for row in exams if row.get("course_id")})
     courses = []
@@ -163,6 +171,9 @@ def _portal_data(supabase, user_id: str) -> dict:
 
     enriched_results = []
     for result in results:
+        exam = exam_map.get(result["exam_id"], {})
+        if str(exam.get("exam_type", "")).upper() == "ENTRANCE":
+            continue
         peers = (
             supabase.table("results")
             .select("student_id,percentage")
@@ -178,7 +189,6 @@ def _portal_data(supabase, user_id: str) -> dict:
         )
         below = sum(1 for peer in peers if peer["percentage"] < result["percentage"])
         percentile = round((below / len(peers)) * 100, 2) if peers else None
-        exam = exam_map.get(result["exam_id"], {})
         enriched_results.append({
             **result,
             "rank": rank,
@@ -199,10 +209,14 @@ def _portal_data(supabase, user_id: str) -> dict:
                 exam = _single_or_none(
                     supabase.table("exams").select("*").eq("id", raw_schedule["exam_id"])
                 ) or {}
+                if str(exam.get("exam_type", "")).upper() == "ENTRANCE":
+                    continue
                 course = _single_or_none(
                     supabase.table("courses").select("id,name,code").eq("id", exam.get("course_id"))
                 ) if exam.get("course_id") else {}
                 schedule = {**raw_schedule, "exam": exam, "course": course or {}}
+        elif str((schedule.get("exam") or {}).get("exam_type", "")).upper() == "ENTRANCE":
+            continue
         result = next((row for row in enriched_results if row["attempt_id"] == attempt["id"]), None)
         history.append({**attempt, "schedule": schedule, "result": result})
 
