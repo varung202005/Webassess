@@ -3,10 +3,10 @@
  *
  * Embedded as a tab inside CreateExam (or accessible standalone) when
  * exam_type === 'ENTRANCE'. Faculty can:
- *   - Add candidates manually (name + email + optional phone + optional temp password)
- *   - Upload a CSV
+ *   - Add candidates manually (name + email + optional phone/password)
+ *   - Upload a candidate CSV
  *   - View all assigned candidates with their status
- *   - Copy invitation links
+ *   - Send candidate login credentials by email
  *
  * Props:
  *   examScheduleId  — UUID of the schedule to assign candidates to
@@ -127,18 +127,33 @@ function statusBadge(status: string) {
 }
 
 function parseCSV(text: string): ManualEntry[] {
-  const lines = text.trim().split("\n");
+  const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
-  // Skip header row, parse: name,email,phone,temp_password (phone & pw optional)
+  const headers = lines[0].split(",").map((c) => c.trim().replace(/^"|"$/g, "").toLowerCase());
+  const find = (names: string[]) => names.map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const nameIndex = find(["name", "full_name", "full name", "candidate_name"]);
+  const emailIndex = find(["email", "email_id", "email id", "candidate_email"]);
+  const phoneIndex = find(["phone", "mobile", "contact"]);
+  const passwordIndex = find(["temp_password", "password", "temporary_password"]);
+  if (nameIndex < 0 || emailIndex < 0) return [];
+
   return lines.slice(1).map((line) => {
     const cols = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
     return {
-      full_name: cols[0] ?? "",
-      email: cols[1] ?? "",
-      phone: cols[2] ?? "",
-      temp_password: cols[3] ?? "",
+      full_name: cols[nameIndex] ?? "",
+      email: cols[emailIndex] ?? "",
+      phone: phoneIndex >= 0 ? cols[phoneIndex] ?? "" : "",
+      temp_password: passwordIndex >= 0 ? cols[passwordIndex] ?? "" : "",
     };
   }).filter((e) => e.full_name && e.email);
+}
+
+interface AssignCandidatesResponse {
+  assigned: number;
+  emails_sent: number;
+  emails_failed: number;
+  emails_skipped: number;
+  results: unknown[];
 }
 
 export default function FacultyCandidateManager({ examScheduleId, examTitle }: Props) {
@@ -159,7 +174,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
 
   const assignMutation = useMutation({
     mutationFn: (entries: ManualEntry[]) =>
-      post<{ assigned: number; results: unknown[] }>("/api/v1/faculty/candidates/assign", {
+      post<AssignCandidatesResponse>("/api/v1/faculty/candidates/assign", {
         exam_schedule_id: examScheduleId,
         candidates: entries.map((e) => ({
           full_name: e.full_name,
@@ -170,7 +185,15 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       }),
     onSuccess: (data: any) => {
       const assigned = data?.assigned ?? 0;
-      setNotice({ type: "success", msg: `${assigned} candidate(s) assigned successfully.` });
+      const sent = data?.emails_sent ?? 0;
+      const failed = data?.emails_failed ?? 0;
+      const skipped = data?.emails_skipped ?? 0;
+      const mailSummary = skipped
+        ? " Email sending is not configured, so credentials were generated but not mailed."
+        : failed
+          ? ` ${sent} email(s) sent, ${failed} failed.`
+          : ` ${sent} email(s) sent.`;
+      setNotice({ type: "success", msg: `${assigned} candidate login(s) prepared.${mailSummary}` });
       setEntry(emptyEntry());
       setCSVRows([]);
       qc.invalidateQueries({ queryKey: ["faculty", "candidates", examScheduleId] });
@@ -192,7 +215,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
   };
 
   const copyLink = async (url: string) => {
-    const full = `${window.location.origin}${url}`;
+    const full = url.startsWith("http") ? url : `${window.location.origin}${url}`;
     await navigator.clipboard.writeText(full);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -239,7 +262,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
           ) : candidates.length === 0 ? (
             <div className="cm-empty">
               <i className="ti ti-user-off" />
-              No candidates assigned yet. Use "Add Manually" or "Upload CSV" to get started.
+              No candidates assigned yet. Use "Add Manually" or "Upload CSV" to send login credentials.
             </div>
           ) : (
             <div className="cm-table-wrap">
@@ -250,7 +273,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
                     <th>Status</th>
                     <th>Attempt</th>
                     <th>Score</th>
-                    <th>Invitation Link</th>
+                    <th>Login Page</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -278,7 +301,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
                       </td>
                       <td>
                         <button className="btn btn-ghost" onClick={() => copyLink(c.login_url)}>
-                          <i className="ti ti-copy" /> Copy Link
+                          <i className="ti ti-copy" /> Copy Login
                         </button>
                       </td>
                     </tr>
@@ -309,9 +332,9 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
               <input className="cm-input" placeholder="+91 98765 43210" value={entry.phone} onChange={(e) => setEntry((v) => ({ ...v, phone: e.target.value }))} />
             </div>
             <div className="cm-form-group">
-              <label className="cm-label">Temp Password <span style={{ fontWeight: 400, textTransform: "none" }}>(auto-generated if blank)</span></label>
+              <label className="cm-label">Password <span style={{ fontWeight: 400, textTransform: "none" }}>(auto-generated if blank)</span></label>
               <input className="cm-input" placeholder="Leave blank to auto-generate" value={entry.temp_password} onChange={(e) => setEntry((v) => ({ ...v, temp_password: e.target.value }))} />
-              <span className="cm-hint">Share this password with the candidate along with the invitation link.</span>
+              <span className="cm-hint">The candidate will receive this password and login page by email.</span>
             </div>
           </div>
           <div className="cm-form-actions">
@@ -321,7 +344,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
               disabled={!canSubmitManual || assignMutation.isPending}
               onClick={() => assignMutation.mutate([entry])}
             >
-              {assignMutation.isPending ? <><i className="ti ti-loader-2" /> Assigning…</> : <><i className="ti ti-user-plus" /> Assign Candidate</>}
+              {assignMutation.isPending ? <><i className="ti ti-loader-2" /> Sending…</> : <><i className="ti ti-mail" /> Send Login Email</>}
             </button>
           </div>
         </div>
@@ -338,7 +361,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
             onClick={() => fileRef.current?.click()}
           >
             <i className="ti ti-upload" />
-            <p>Drag & drop a CSV file, or click to browse</p>
+            <p>Drag & drop a candidate CSV file, or click to browse</p>
             <small>Format: <code>name,email,phone,temp_password</code> — phone and temp_password are optional</small>
             <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCSVFile(f); }} />
           </div>
@@ -371,7 +394,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
                   disabled={assignMutation.isPending}
                   onClick={() => assignMutation.mutate(csvRows)}
                 >
-                  {assignMutation.isPending ? <><i className="ti ti-loader-2" /> Importing…</> : <><i className="ti ti-upload" /> Import {csvRows.length} Candidate(s)</>}
+                  {assignMutation.isPending ? <><i className="ti ti-loader-2" /> Sending…</> : <><i className="ti ti-mail" /> Send {csvRows.length} Login Email(s)</>}
                 </button>
               </div>
             </div>
@@ -379,7 +402,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
         </>
       )}
 
-      {copied && <div className="cm-copied"><i className="ti ti-check" /> Link copied to clipboard</div>}
+      {copied && <div className="cm-copied"><i className="ti ti-check" /> Login page copied to clipboard</div>}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -14,6 +14,19 @@ class Settings(BaseSettings):
 
     # JWT — Supabase signs JWTs with this secret
     SUPABASE_JWT_SECRET: str
+
+    # Frontend / invitation links
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    # SMTP invitation delivery. If SMTP_HOST is unset, invitation assignment
+    # still works and reports email as skipped.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM_EMAIL: Optional[str] = None
+    SMTP_FROM_NAME: str = "Online Exam Portal"
+    SMTP_USE_TLS: bool = True
 
     # CORS
     ALLOWED_ORIGINS: list[str] = [

@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 from app.core.security import require_faculty
 from app.db.supabase import get_supabase_admin
+from app.core.config import settings
+from app.services.email_service import send_candidate_invitation
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -861,6 +863,10 @@ def _generate_temp_password(length: int = 10) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def _absolute_login_url(token: str) -> str:
+    return f"{settings.FRONTEND_URL.rstrip('/')}/login?token={token}"
+
+
 @router.post("/candidates/assign")
 async def assign_candidates(
     body: AssignCandidatesRequest,
@@ -914,33 +920,45 @@ async def assign_candidates(
 
     results = []
     for entry in body.candidates:
+        email = entry.email.strip().lower()
+        full_name = entry.full_name.strip()
         temp_password = entry.temp_password or _generate_temp_password()
 
         # 1. Check if user exists
         existing = (
             supabase.table("users")
             .select("id,full_name,email")
-            .eq("email", entry.email)
+            .eq("email", email)
             .execute()
             .data
         )
 
         if existing:
             user_id = existing[0]["id"]
+            try:
+                supabase.auth.admin.update_user_by_id(user_id, {"password": temp_password})
+            except Exception as e:
+                logger.warning("Auth password update failed for %s: %s", email, e)
+                results.append({
+                    "email": email,
+                    "status": "error",
+                    "error": f"Could not set candidate password: {e}",
+                })
+                continue
         else:
             # 2. Create Supabase Auth user (admin API — no email confirmation needed)
             try:
                 auth_resp = supabase.auth.admin.create_user({
-                    "email": entry.email,
+                    "email": email,
                     "password": temp_password,
                     "email_confirm": True,
-                    "user_metadata": {"full_name": entry.full_name, "role": "candidate"},
+                    "user_metadata": {"full_name": full_name, "role": "candidate"},
                 })
                 user_id = auth_resp.user.id
             except Exception as e:
-                logger.warning("Auth user creation failed for %s: %s", entry.email, e)
+                logger.warning("Auth user creation failed for %s: %s", email, e)
                 results.append({
-                    "email": entry.email,
+                    "email": email,
                     "status": "error",
                     "error": str(e),
                 })
@@ -949,8 +967,8 @@ async def assign_candidates(
             # Insert into public.users
             supabase.table("users").insert({
                 "id": user_id,
-                "full_name": entry.full_name,
-                "email": entry.email,
+                "full_name": full_name,
+                "email": email,
                 "phone": entry.phone,
                 "password_hash": "managed_by_supabase_auth",
                 "is_active": True,
@@ -991,27 +1009,35 @@ async def assign_candidates(
             assignment_id = assignment_row["id"]
 
         # 5. Build invitation payload (email plug-in point)
-        login_url = f"/login?token={token}"
+        login_url = _absolute_login_url(token)
         payload = {
-            "candidate_name": entry.full_name,
-            "candidate_email": entry.email,
+            "candidate_name": full_name,
+            "candidate_email": email,
             "exam_name": sched["exams"]["title"],
             "exam_duration_minutes": sched["exams"]["duration_minutes"],
             "login_url": login_url,
-            "temp_password": temp_password if not entry.temp_password else None,
+            "temp_password": temp_password,
             "invitation_token": token,
         }
-        # TODO: await email_service.send_invitation(payload) when SMTP is configured
+        email_result = send_candidate_invitation(payload)
 
         results.append({
-            "email": entry.email,
+            "email": email,
             "user_id": user_id,
             "assignment_id": assignment_id,
             "status": "assigned",
+            "email_status": "sent" if email_result.sent else "skipped" if email_result.skipped else "failed",
+            "email_error": email_result.error,
             "invitation_payload": payload,
         })
 
-    return {"assigned": len([r for r in results if r["status"] == "assigned"]), "results": results}
+    return {
+        "assigned": len([r for r in results if r["status"] == "assigned"]),
+        "emails_sent": len([r for r in results if r.get("email_status") == "sent"]),
+        "emails_failed": len([r for r in results if r.get("email_status") == "failed"]),
+        "emails_skipped": len([r for r in results if r.get("email_status") == "skipped"]),
+        "results": results,
+    }
 
 
 @router.get("/candidates/{exam_schedule_id}")

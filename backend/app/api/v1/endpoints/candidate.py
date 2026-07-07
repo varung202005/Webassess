@@ -1,9 +1,8 @@
 """
 Candidate portal endpoints.
 
-Candidates are users with the Candidate role. They do not need per-exam
-assignment rows: any PUBLISHED ENTRANCE exam with an active schedule is
-available to every candidate account.
+Candidates are users with the Candidate role and must also be assigned to an
+entrance exam schedule by faculty before they can see or start that test.
 """
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -23,25 +22,35 @@ def _dt(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _published_entrance_schedules(supabase) -> list[dict]:
-    schedules = (
-        supabase.table("exam_schedules")
+def _assigned_entrance_schedules(supabase, candidate_id: str) -> list[dict]:
+    assignments = (
+        supabase.table("candidate_exam_assignments")
         .select(
-            "id,start_time,end_time,is_published,"
+            "id,status,exam_schedule_id,"
+            "exam_schedules(id,start_time,end_time,is_published,"
             "exams(id,title,status,exam_type,duration_minutes,total_marks,pass_marks,instructions,"
             "exam_questions(id),exam_rules(id,require_fullscreen,enable_proctoring,"
-            "allow_backtrack,allow_review_flag,max_tab_switches,auto_save_interval_sec))"
+            "allow_backtrack,allow_review_flag,max_tab_switches,auto_save_interval_sec)))"
         )
-        .order("start_time")
+        .eq("candidate_id", candidate_id)
+        .order("created_at")
         .execute()
         .data
     ) or []
+
+    schedules = []
+    for assignment in assignments:
+        schedule = assignment.get("exam_schedules") or {}
+        schedule["assignment_id"] = assignment.get("id")
+        schedule["assignment_status"] = assignment.get("status")
+        schedules.append(schedule)
 
     return [
         schedule for schedule in schedules
         if str((schedule.get("exams") or {}).get("exam_type", "")).upper() == "ENTRANCE"
         and str((schedule.get("exams") or {}).get("status", "")).upper() == "PUBLISHED"
         and schedule.get("is_published") is True
+        and str(schedule.get("assignment_status", "")).upper() in {"INVITED", "STARTED"}
     ]
 
 
@@ -58,7 +67,7 @@ def _attempts_by_schedule(supabase, candidate_id: str) -> dict[str, dict]:
 
 def _pick_candidate_schedule(supabase, candidate_id: str) -> tuple[dict | None, dict | None, str]:
     now = datetime.now(timezone.utc)
-    schedules = _published_entrance_schedules(supabase)
+    schedules = _assigned_entrance_schedules(supabase, candidate_id)
     attempts = _attempts_by_schedule(supabase, candidate_id)
 
     for schedule in schedules:
@@ -105,7 +114,7 @@ def _pick_candidate_schedule(supabase, candidate_id: str) -> tuple[dict | None, 
 def _active_schedule_or_error(supabase, candidate_id: str) -> tuple[dict, dict]:
     schedule, attempt, state = _pick_candidate_schedule(supabase, candidate_id)
     if not schedule:
-        raise HTTPException(status_code=403, detail="No published entrance assessment is available")
+        raise HTTPException(status_code=403, detail="No entrance assessment is assigned to this account")
     if state == "IN_PROGRESS" and attempt:
         return schedule, attempt
     if state != "ACTIVE":
@@ -208,6 +217,12 @@ async def start_attempt(
         "metadata": f'{{"schedule_id": "{schedule_id}", "role": "CANDIDATE"}}',
     }).execute()
 
+    assignment_id = schedule.get("assignment_id")
+    if assignment_id:
+        supabase.table("candidate_exam_assignments").update({
+            "status": "STARTED",
+        }).eq("id", assignment_id).execute()
+
     started_at = _dt(attempt["started_at"]) or datetime.now(timezone.utc)
     duration_deadline = started_at + timedelta(minutes=exam.get("duration_minutes", 60))
     effective_deadline = min(duration_deadline, end)
@@ -251,6 +266,11 @@ async def submit_attempt(
     result = await _finalize_attempt(supabase, attempt.data, submission_type)
     if result is None:
         raise HTTPException(status_code=409, detail="Attempt was already submitted")
+
+    supabase.table("candidate_exam_assignments").update({
+        "status": "COMPLETED",
+    }).eq("exam_schedule_id", attempt.data["exam_schedule_id"]).eq("candidate_id", candidate_id).execute()
+
     return result
 
 
