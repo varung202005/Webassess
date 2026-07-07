@@ -33,6 +33,13 @@
  * wizard never sets status: "PUBLISHED" or is_published: true.
  *
  * Drop this file at:  src/pages/faculty/CreateExam.tsx
+ *
+ * FIX (see comment near defaultRules()): the "Rules" form field names now
+ * match the real exam_rules table columns exactly — they previously did
+ * NOT (fullscreen_required/proctoring_enabled/mark_for_review vs the real
+ * require_fullscreen/enable_proctoring/allow_review_flag columns), which
+ * silently dropped fullscreen/proctoring toggles on every save and on
+ * every edit-mode reload.
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -117,9 +124,6 @@ interface ExamDraft {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Timezone helpers
-// Converts a datetime-local string (entered by user in IST) to UTC ISO string,
-// and back — used both when sending to the backend and when pre-filling the
-// form from a server ISO timestamp in edit mode.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function toUTCString(localStr: string): string {
@@ -127,12 +131,9 @@ function toUTCString(localStr: string): string {
   return new Date(`${localStr}+05:30`).toISOString();
 }
 
-/** Converts a UTC ISO string from the backend into the "YYYY-MM-DDTHH:mm"
- * shape a <input type="datetime-local"> expects, rendered in IST. */
 function toLocalInputString(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
-  // Shift by +5:30 then read UTC fields so we display IST wall-clock time.
   const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${ist.getUTCFullYear()}-${pad(ist.getUTCMonth() + 1)}-${pad(ist.getUTCDate())}T${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}`;
@@ -182,11 +183,19 @@ const defaultForm = (): ExamForm => ({
   shuffle_options: false,
 });
 
+// FIX: these keys now match the real exam_rules table columns exactly
+// (confirmed via information_schema.columns) —
+//   fullscreen_required -> require_fullscreen
+//   proctoring_enabled  -> enable_proctoring
+//   mark_for_review     -> allow_review_flag
+// They previously did NOT match, which meant every save silently sent a
+// field the backend model didn't recognize, so the real DB columns just
+// kept their default value forever regardless of what was toggled here.
 const defaultRules = () => ({
   allow_backtrack: true,
-  mark_for_review: true,
-  fullscreen_required: false,
-  proctoring_enabled: false,
+  allow_review_flag: true,
+  require_fullscreen: false,
+  enable_proctoring: false,
   camera_required: false,
   microphone_required: false,
   max_tab_switches: 3,
@@ -894,12 +903,12 @@ function StepRules({ rules, onChange }: {
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-layout-board" /> Navigation</h4>
           {rule("allow_backtrack", "Allow question backtracking")}
-          {rule("mark_for_review", "Allow mark for review")}
+          {rule("allow_review_flag", "Allow mark for review")}
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-shield" /> Proctoring</h4>
-          {rule("fullscreen_required", "Require fullscreen mode")}
-          {rule("proctoring_enabled",  "Enable AI proctoring")}
+          {rule("require_fullscreen", "Require fullscreen mode")}
+          {rule("enable_proctoring",  "Enable AI proctoring")}
           {rule("camera_required",     "Require camera access")}
           {rule("microphone_required", "Require microphone")}
         </div>
@@ -1000,7 +1009,6 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
     {} as Record<string, number>
   );
 
-  // Show the datetime-local value as-is (it's already in IST, user entered it)
   const fmt = (dt: string) => dt ? new Date(`${dt}+05:30`).toLocaleString() : "—";
 
   if (justSaved) {
@@ -1096,10 +1104,6 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Locked-for-editing screen
-// Shown instead of the wizard whenever the exam being edited already has
-// attempts, or its scheduled start time has passed — editing questions,
-// marks, or rules at that point could invalidate an exam students have
-// already started or already taken.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EditLockedNotice({ title, reason }: { title: string; reason: string }) {
@@ -1123,10 +1127,7 @@ function EditLockedNotice({ title, reason }: { title: string; reason: string }) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Extract a question id from whatever shape /exams/{id}/questions returns
-// (some backends return the join row with a nested `questions` object,
-// others return the question_id directly) — kept defensive since the exact
-// response shape isn't guaranteed across environments.
+// Extract a question id
 // ─────────────────────────────────────────────────────────────────────────────
 
 function extractQuestionId(row: Record<string, unknown>): string | null {
@@ -1158,7 +1159,6 @@ export default function CreateExam() {
   const [examId,       setExamId]       = useState<string | null>(null);
   const [justSaved,    setJustSaved]    = useState(false);
 
-  // ── Edit-mode loading / locking state ─────────────────────────────────────
   const [editLoading, setEditLoading] = useState(isEditMode);
   const [editLoadError, setEditLoadError] = useState("");
   const [locked, setLocked] = useState(false);
@@ -1219,7 +1219,6 @@ export default function CreateExam() {
           return;
         }
 
-        // Populate exam info
         setForm({
           title: exam.title ?? "",
           course_id: exam.course_id ?? "",
@@ -1233,13 +1232,19 @@ export default function CreateExam() {
         });
 
         // Populate rules (nested on the exam response, per GET /exams/{id})
+        // FIX: read the REAL column names returned by the backend
+        // (require_fullscreen / enable_proctoring / allow_review_flag) —
+        // previously read fullscreen_required/proctoring_enabled/
+        // mark_for_review, which never existed on the row, so edit mode
+        // always silently showed these toggles as off regardless of the
+        // actual saved value.
         const rawRules = Array.isArray(exam.exam_rules) ? exam.exam_rules[0] : exam.exam_rules;
         if (rawRules) {
           setRules({
             allow_backtrack: rawRules.allow_backtrack ?? true,
-            mark_for_review: rawRules.mark_for_review ?? true,
-            fullscreen_required: rawRules.fullscreen_required ?? false,
-            proctoring_enabled: rawRules.proctoring_enabled ?? false,
+            allow_review_flag: rawRules.allow_review_flag ?? true,
+            require_fullscreen: rawRules.require_fullscreen ?? false,
+            enable_proctoring: rawRules.enable_proctoring ?? false,
             camera_required: rawRules.camera_required ?? false,
             microphone_required: rawRules.microphone_required ?? false,
             max_tab_switches: rawRules.max_tab_switches ?? 3,
@@ -1247,7 +1252,6 @@ export default function CreateExam() {
           });
         }
 
-        // Populate schedule
         if (scheduleRow) {
           setExistingScheduleId(scheduleRow.id);
           setSchedule({
@@ -1257,9 +1261,6 @@ export default function CreateExam() {
           });
         }
 
-        // Populate selected questions — resolve ids to full Question objects
-        // via getQuestion so downstream code (marks, options, etc.) has the
-        // same shape it expects everywhere else.
         const ids = (questionRows ?? [])
           .map((row) => extractQuestionId(row as Record<string, unknown>))
           .filter((id): id is string => Boolean(id));
@@ -1283,8 +1284,6 @@ export default function CreateExam() {
     return () => { cancelled = true; };
   }, [isEditMode, editExamId]);
 
-  // Auto-save draft — only for brand-new exams, never while editing an
-  // existing one (editing shouldn't create a phantom "untitled" draft entry).
   useEffect(() => {
     if (isEditMode) return;
     if (!form.title && currentStep === 0 && selectedQuestions.length === 0) return;
@@ -1299,7 +1298,6 @@ export default function CreateExam() {
     });
   }, [isEditMode, draftId, currentStep, form, rules, schedule, selectedQuestions]);
 
-  // Resolve pending question IDs after server data loads
   const [pendingQuestionIds, setPendingQuestionIds] = useState<string[]>([]);
   useEffect(() => {
     if (pendingQuestionIds.length === 0 || serverQuestions.length === 0) return;
@@ -1377,11 +1375,9 @@ export default function CreateExam() {
       let targetExamId: string;
 
       if (isEditMode && editExamId) {
-        // ── EDIT: update exam info in place ──────────────────────────────
         await facultyApi.updateExam(editExamId, examFields);
         targetExamId = editExamId;
 
-        // Diff questions: add newly-selected, remove de-selected
         const originalIds = originalLinkedQuestionIds.current;
         const selectedIdSet = new Set(selectedQuestions.map((q) => q.id));
 
@@ -1398,10 +1394,8 @@ export default function CreateExam() {
           await facultyApi.removeQuestionFromExam(targetExamId, qid);
         }
 
-        // Rules — upsert by exam_id
         await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rules });
 
-        // Schedule — update existing row if we found one, else create one
         const scheduleFields = {
           start_time:             schedule.start_time ? toUTCString(schedule.start_time) : null,
           end_time:               schedule.end_time ? toUTCString(schedule.end_time) : null,
@@ -1413,7 +1407,6 @@ export default function CreateExam() {
           await facultyApi.createExamSchedule({ exam_id: targetExamId, ...scheduleFields, is_published: true });
         }
       } else {
-        // ── CREATE: original flow ────────────────────────────────────────
         const examData = await facultyApi.createExam({ ...examFields, status: "DRAFT" });
         targetExamId = examData.id;
 
@@ -1468,7 +1461,6 @@ export default function CreateExam() {
     setPageTab("create");
   };
 
-  // ── Locked state: show blocking message instead of the wizard ────────────
   if (isEditMode && locked) {
     return (
       <FacultyLayout activePage="create-exam">

@@ -61,9 +61,14 @@ function getRule(session: any): ExamRule {
   const raw = Array.isArray(session?.exam?.exam_rules)
     ? session.exam.exam_rules[0]
     : session?.exam?.exam_rules;
+  // FIX: the real exam_rules columns are require_fullscreen / enable_proctoring
+  // (confirmed via information_schema.columns) — this was previously reading
+  // raw?.fullscreen_required / raw?.proctoring_enabled, which don't exist on
+  // the row at all, so these always silently fell back to their defaults
+  // regardless of what was actually configured in Create Exam.
   return {
-    fullscreen_required:    raw?.fullscreen_required    ?? false,
-    proctoring_enabled:     raw?.proctoring_enabled     ?? false,
+    fullscreen_required:    raw?.require_fullscreen     ?? false,
+    proctoring_enabled:     raw?.enable_proctoring       ?? false,
     camera_required:        raw?.camera_required        ?? false,
     microphone_required:    raw?.microphone_required    ?? false,
     max_tab_switches:       raw?.max_tab_switches       ?? 3,
@@ -114,7 +119,6 @@ export default function LiveExam() {
 
   const session     = sessionQuery.data;
   const currentUser = useAuthStore((s) => s.user);
-  const activeRole  = useAuthStore((s) => s.activeRole);
   const rule        = getRule(session);
 
   // ── Restore saved answers ────────────────────────────────────────────────────
@@ -187,16 +191,13 @@ export default function LiveExam() {
       // 3. Submit the exam attempt
       await studentApi.submitAttempt(session.attempt.id, type);
 
-      navigate(
-        activeRole === "CANDIDATE" ? "/candidate/thank-you" : "/student/thank-you",
-        { replace: true, state: { submitted: true } }
-      );
+      navigate("/student/history", { replace: true, state: { submitted: true } });
     } catch (cause) {
       submitted.current = false;
       setError(apiMessage(cause));
       setSubmitting(false);
     }
-  }, [session, activeRole, navigate, flushAnswers]);
+  }, [session, navigate, flushAnswers]);
 
   // ── Auto-submit on deadline ──────────────────────────────────────────────────
   useEffect(() => {

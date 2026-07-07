@@ -77,8 +77,8 @@ export interface ExamRule {
   exam_id?: string;
   allow_backtrack: boolean;
   mark_for_review: boolean;
-  fullscreen_required: boolean;
-  proctoring_enabled: boolean;
+  require_fullscreen: boolean;
+  enable_proctoring: boolean;
   camera_required: boolean;
   microphone_required: boolean;
   max_tab_switches: number;
