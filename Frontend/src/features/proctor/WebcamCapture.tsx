@@ -4,12 +4,21 @@
  * Captures webcam frames every `intervalMs` and runs REAL, free, in-browser
  * AI analysis on each one before deciding what to do with it:
  *
- *   - face-api.js (TinyFaceDetector)  → face count / presence
- *   - @tensorflow-models/coco-ssd     → object detection, incl. "cell phone"
+ *   - @tensorflow-models/coco-ssd  → object detection: "person" (face/people
+ *     presence + multi-person count) and "cell phone"/"remote" (phone use).
  *
- * Both run entirely on the student's device — zero API cost, zero server
- * load. Nothing is uploaded to Supabase Storage unless the frame is
- * actually flagged (no face, multiple people, or a phone in frame):
+ * NOTE: this used to also run face-api.js's TinyFaceDetector alongside
+ * coco-ssd, but face-api.js bundles a very old TFJS core (~1.7.x) that
+ * conflicts with the modern TFJS coco-ssd needs (~4.x) — both register
+ * kernels into the same global TFJS registry, which broke coco-ssd's ops
+ * with "TypeError: t is not a function". Rather than pin fragile version
+ * combinations, we rely solely on coco-ssd's "person" class as the
+ * face/person-presence signal (0 people → no face, 2+ → multi-person),
+ * which needs no separate face model and has no version conflict.
+ *
+ * Runs entirely on the student's device — zero API cost, zero server load.
+ * Nothing is uploaded to Supabase Storage unless the frame is actually
+ * flagged (no person, multiple people, or a phone in frame):
  *
  *   - CLEAN frame   → overwrites one fixed "latest.jpg" per student, purely
  *                     for the proctor's live-feed thumbnail. Storage cost
@@ -17,16 +26,14 @@
  *   - FLAGGED frame → uploaded under a unique timestamped path and kept
  *                     permanently for proctor review.
  *
- * This replaces the previous version, which always posted hardcoded
- * `face_detected: true, phone_detected: false` and uploaded every single
- * frame forever regardless of content.
- *
  * REQUIRES (add to package.json):
- *   npm install face-api.js @tensorflow/tfjs @tensorflow-models/coco-ssd
+ *   npm install @tensorflow/tfjs @tensorflow-models/coco-ssd
  */
 import { useEffect, useRef, useCallback, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { post } from "../../lib/api";
+import * as cocoSsdStatic from "@tensorflow-models/coco-ssd";
+import * as tfStatic from "@tensorflow/tfjs";
 
 interface WebcamCaptureProps {
   attemptId: string;
@@ -38,10 +45,7 @@ interface WebcamCaptureProps {
 const BUCKET             = "exam-snapshots";
 const DEFAULT_INTERVAL   = 30_000;
 const PHONE_CONFIDENCE   = 0.4;    // coco-ssd "cell phone"/"remote" score threshold
-const FACE_CONFIDENCE    = 0.5;    // face-api TinyFaceDetector score threshold
-
-// face-api.js model weights — loaded once, cached by the browser afterwards.
-const FACE_MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights";
+const PERSON_CONFIDENCE  = 0.5;    // coco-ssd "person" score threshold
 
 type DetectionResult = {
   faceDetected: boolean;
@@ -55,12 +59,6 @@ type DetectedObject = {
   score: number;
 };
 
-type FaceApiModule = {
-  nets: { tinyFaceDetector: { loadFromUri: (url: string) => Promise<void> } };
-  TinyFaceDetectorOptions: new (options?: { scoreThreshold?: number }) => unknown;
-  detectAllFaces: (video: HTMLVideoElement, options?: unknown) => Promise<unknown[]>;
-};
-
 type CocoSsdModule = {
   load: (options?: { base?: string }) => Promise<{ detect: (video: HTMLVideoElement) => Promise<DetectedObject[]> }>;
 };
@@ -68,10 +66,6 @@ type CocoSsdModule = {
 type TensorflowModule = {
   ready: () => Promise<void>;
 };
-
-function optionalImport<T>(moduleName: string): Promise<T> {
-  return import(/* @vite-ignore */ moduleName) as Promise<T>;
-}
 
 export default function WebcamCapture({
   attemptId,
@@ -84,42 +78,36 @@ export default function WebcamCapture({
   const streamRef      = useRef<MediaStream | null>(null);
   const activeRef      = useRef(true);
   const modelsReadyRef = useRef(false);
-  const faceapiRef     = useRef<FaceApiModule | null>(null);
   const cocoModelRef   = useRef<{ detect: (video: HTMLVideoElement) => Promise<DetectedObject[]> } | null>(null);
   const [modelsLoading, setModelsLoading] = useState(true);
 
-  // ── Load AI models once (free, client-side, cached by browser) ────────────
+  // ── Load AI model once (free, client-side, cached by browser) ─────────────
   useEffect(() => {
     let cancelled = false;
 
     const loadModels = async () => {
       try {
-        console.log("[WebcamCapture] Loading AI models (face-api.js + coco-ssd)...");
-        const [faceapi, cocoSsd, tf] = await Promise.all([
-          optionalImport<FaceApiModule>("face-api.js"),
-          optionalImport<CocoSsdModule>("@tensorflow-models/coco-ssd"),
-          optionalImport<TensorflowModule>("@tensorflow/tfjs"),
-        ]);
+        console.log("[WebcamCapture] Loading AI model (coco-ssd)...");
+        const cocoSsd = cocoSsdStatic as unknown as CocoSsdModule;
+        const tf      = tfStatic as unknown as TensorflowModule;
         await tf.ready();
-        await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL);
         const cocoModel = await cocoSsd.load({ base: "lite_mobilenet_v2" });
 
         if (cancelled) return;
-        faceapiRef.current = faceapi;
         cocoModelRef.current = cocoModel;
         modelsReadyRef.current = true;
         setModelsLoading(false);
         console.log(
-          "%c[WebcamCapture] ✓✓✓ AI DETECTION ACTIVE — face-api.js + coco-ssd loaded successfully",
+          "%c[WebcamCapture] ✓✓✓ AI DETECTION ACTIVE — coco-ssd loaded successfully",
           "color: #16a34a; font-weight: bold;"
         );
       } catch (err) {
         console.error(
-          "%c[WebcamCapture] ❌❌❌ AI MODELS FAILED TO LOAD — phone/face detection is OFFLINE, every frame will be flagged for manual review instead. Root cause below:",
+          "%c[WebcamCapture] ❌❌❌ AI MODEL FAILED TO LOAD — phone/face detection is OFFLINE, every frame will be flagged for manual review instead. Root cause below:",
           "color: #dc2626; font-weight: bold;",
           err
         );
-        // Fail safe: if models can't load (offline, blocked CDN, low-end
+        // Fail safe: if the model can't load (offline, blocked CDN, low-end
         // device), every frame gets flagged for manual review instead of
         // silently trusting an unanalyzed frame as clean.
         modelsReadyRef.current = false;
@@ -172,36 +160,27 @@ export default function WebcamCapture({
 
   // ── Run AI detection on the current video frame ────────────────────────────
   const runDetection = useCallback(async (video: HTMLVideoElement): Promise<DetectionResult> => {
-    if (!modelsReadyRef.current || !faceapiRef.current || !cocoModelRef.current) {
-      // Models unavailable — safe default: don't fabricate a violation, but
+    if (!modelsReadyRef.current || !cocoModelRef.current) {
+      // Model unavailable — safe default: don't fabricate a violation, but
       // note it wasn't actually verified by AI (confidence_score below
       // reflects this so a proctor can tell "unverified" from "AI-cleared").
       return {
         faceDetected: true,
         personCount: 1,
         phoneDetected: false,
-        flagReasons: ["AI models unavailable — manual review"],
+        flagReasons: ["AI model unavailable — manual review"],
       };
     }
 
-    const faceapi = faceapiRef.current;
     const flagReasons: string[] = [];
+    const objectPredictions = await cocoModelRef.current.detect(video);
 
-    const [faceResults, objectPredictions] = await Promise.all([
-      faceapi.detectAllFaces(
-        video,
-        new faceapi.TinyFaceDetectorOptions({ scoreThreshold: FACE_CONFIDENCE })
-      ),
-      cocoModelRef.current.detect(video),
-    ]);
-
-    const faceCount = faceResults.length;
-    const personObjectCount = objectPredictions.filter(
-      (p: DetectedObject) => p.class === "person" && p.score >= 0.5
+    // coco-ssd's "person" class is used as the face/people-presence signal —
+    // no separate face model needed (see file header for why face-api.js
+    // was dropped).
+    const personCount = objectPredictions.filter(
+      (p: DetectedObject) => p.class === "person" && p.score >= PERSON_CONFIDENCE
     ).length;
-    // Take the stronger signal — a turned-away face might miss face-api but
-    // still show up as a "person" object, and vice versa.
-    const personCount = Math.max(faceCount, personObjectCount);
 
     const faceDetected = personCount > 0;
     const phoneDetected = objectPredictions.some(

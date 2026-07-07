@@ -8,14 +8,29 @@
  *   Step 4 — Schedule  (start / end time, registration deadline — mandatory)
  *   Step 5 — Preview & Create
  *
- * On submit:
+ * CREATE mode (no ?examId in URL):
  *   1. POST /api/v1/exams          → status: "DRAFT"
  *   2. POST /api/v1/questions link  (per selected question)
  *   3. POST /api/v1/exam-rules
  *   4. POST /api/v1/exam-schedules → is_published: false, times from Step 4
  *
- * Publishing happens ONLY from the Dashboard Publish button — this wizard
- * never sets status: "PUBLISHED" or is_published: true.
+ * EDIT mode (?examId=...&edit=true):
+ *   On mount: fetch the exam, its linked questions, its rules (nested on the
+ *   exam response), its schedule, and its attempts.
+ *     - If the exam already has attempts, OR its schedule start_time is in
+ *       the past, editing is BLOCKED — faculty sees a locked message instead
+ *       of the wizard. This prevents changing questions/rules/marks after
+ *       students may already be relying on them.
+ *     - Otherwise the wizard is pre-filled from server data and "Create
+ *       Exam" becomes "Save Changes", which:
+ *         1. PATCH /api/v1/exams/{id}                 (info fields)
+ *         2. Diffs selected questions vs originally-linked questions →
+ *            POST new links, DELETE removed links
+ *         3. POST /api/v1/exam-rules (upsert by exam_id)
+ *         4. PATCH the existing schedule (or POST one if none existed)
+ *
+ * Publishing still happens ONLY from the Dashboard Publish button — this
+ * wizard never sets status: "PUBLISHED" or is_published: true.
  *
  * Drop this file at:  src/pages/faculty/CreateExam.tsx
  */
@@ -101,15 +116,26 @@ interface ExamDraft {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Timezone helper
-// Converts a datetime-local string (entered by user in IST) to UTC ISO string.
-// The datetime-local input gives "YYYY-MM-DDTHH:mm" with no timezone.
-// We treat it as IST (+05:30) and convert to UTC before sending to the backend.
+// Timezone helpers
+// Converts a datetime-local string (entered by user in IST) to UTC ISO string,
+// and back — used both when sending to the backend and when pre-filling the
+// form from a server ISO timestamp in edit mode.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function toUTCString(localStr: string): string {
   if (!localStr) return localStr;
   return new Date(`${localStr}+05:30`).toISOString();
+}
+
+/** Converts a UTC ISO string from the backend into the "YYYY-MM-DDTHH:mm"
+ * shape a <input type="datetime-local"> expects, rendered in IST. */
+function toLocalInputString(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  // Shift by +5:30 then read UTC fields so we display IST wall-clock time.
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${ist.getUTCFullYear()}-${pad(ist.getUTCMonth() + 1)}-${pad(ist.getUTCDate())}T${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -960,11 +986,13 @@ function StepSchedule({ schedule, onChange }: {
 // Step 5: Preview
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepPreview({ form, schedule, selectedQuestions, examId }: {
+function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, justSaved }: {
   form: ExamForm;
   schedule: ScheduleForm;
   selectedQuestions: Question[];
   examId: string | null;
+  isEditMode: boolean;
+  justSaved: boolean;
 }) {
   const totalMarks = selectedQuestions.reduce((s, q) => s + q.marks, 0);
   const byType = selectedQuestions.reduce(
@@ -975,18 +1003,24 @@ function StepPreview({ form, schedule, selectedQuestions, examId }: {
   // Show the datetime-local value as-is (it's already in IST, user entered it)
   const fmt = (dt: string) => dt ? new Date(`${dt}+05:30`).toLocaleString() : "—";
 
-  if (examId) {
+  if (justSaved) {
     return (
       <div className="step-panel">
         <div className="preview-success">
           <i className="ti ti-circle-check" style={{ fontSize: 48, color: "#059669" }} />
-          <div className="preview-success-title">Exam Created Successfully!</div>
+          <div className="preview-success-title">
+            {isEditMode ? "Exam Updated Successfully!" : "Exam Created Successfully!"}
+          </div>
           <div className="preview-success-sub" style={{ color: "#555", marginTop: 6 }}>
-            Saved as draft. Go to your dashboard and click <strong>Publish</strong> when you're ready to make it visible to students.
+            {isEditMode
+              ? "Your changes have been saved."
+              : (<>Saved as draft. Go to your dashboard and click <strong>Publish</strong> when you're ready to make it visible to students.</>)}
           </div>
-          <div className="preview-success-sub" style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>
-            Exam ID: {examId}
-          </div>
+          {examId && (
+            <div className="preview-success-sub" style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>
+              Exam ID: {examId}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -995,8 +1029,11 @@ function StepPreview({ form, schedule, selectedQuestions, examId }: {
   return (
     <div className="step-panel">
       <div className="step-header">
-        <h3>Review &amp; Create</h3>
-        <p>Check everything below, then click <strong>Create Exam</strong>. You can publish from the dashboard whenever you're ready.</p>
+        <h3>Review &amp; {isEditMode ? "Save" : "Create"}</h3>
+        <p>
+          Check everything below, then click <strong>{isEditMode ? "Save Changes" : "Create Exam"}</strong>.
+          {!isEditMode && " You can publish from the dashboard whenever you're ready."}
+        </p>
       </div>
 
       <div className="preview-grid">
@@ -1032,27 +1069,72 @@ function StepPreview({ form, schedule, selectedQuestions, examId }: {
         </div>
       </div>
 
-      <div
-        style={{
-          marginTop: 20,
-          padding: "12px 16px",
-          background: "#fff3d8",
-          border: "1.5px solid #f5d76e",
-          borderRadius: 10,
-          fontSize: 13,
-          color: "#5a3c00",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <i className="ti ti-send" style={{ flexShrink: 0, color: "#94600a" }} />
-        <span>
-          This exam will be saved as a <strong>draft</strong>. To make it visible to students, go to your dashboard and click the <strong>Publish</strong> button on this exam's row.
-        </span>
+      {!isEditMode && (
+        <div
+          style={{
+            marginTop: 20,
+            padding: "12px 16px",
+            background: "#fff3d8",
+            border: "1.5px solid #f5d76e",
+            borderRadius: 10,
+            fontSize: 13,
+            color: "#5a3c00",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <i className="ti ti-send" style={{ flexShrink: 0, color: "#94600a" }} />
+          <span>
+            This exam will be saved as a <strong>draft</strong>. To make it visible to students, go to your dashboard and click the <strong>Publish</strong> button on this exam's row.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Locked-for-editing screen
+// Shown instead of the wizard whenever the exam being edited already has
+// attempts, or its scheduled start time has passed — editing questions,
+// marks, or rules at that point could invalidate an exam students have
+// already started or already taken.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function EditLockedNotice({ title, reason }: { title: string; reason: string }) {
+  const navigate = useNavigate();
+  return (
+    <div className="workspace-card">
+      <div className="workspace-body">
+        <div className="empty-state" style={{ padding: "50px 20px" }}>
+          <i className="ti ti-lock" style={{ fontSize: 40, color: "#dc2626" }} />
+          <div className="empty-state-title" style={{ marginTop: 10 }}>Editing locked</div>
+          <div className="empty-state-text" style={{ maxWidth: 420, margin: "6px auto 0" }}>
+            <strong>{title}</strong> can no longer be edited. {reason}
+          </div>
+          <button className="btn btn-primary" style={{ marginTop: 18 }} onClick={() => navigate("/faculty/dashboard")}>
+            <i className="ti ti-arrow-left" /> Back to Dashboard
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extract a question id from whatever shape /exams/{id}/questions returns
+// (some backends return the join row with a nested `questions` object,
+// others return the question_id directly) — kept defensive since the exact
+// response shape isn't guaranteed across environments.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function extractQuestionId(row: Record<string, unknown>): string | null {
+  const nested = row["questions"] as Record<string, unknown> | undefined;
+  if (nested && typeof nested["id"] === "string") return nested["id"];
+  if (typeof row["question_id"] === "string") return row["question_id"] as string;
+  if (typeof row["id"] === "string") return row["id"] as string;
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1064,6 +1146,9 @@ export default function CreateExam() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
+  const editExamId = searchParams.get("examId");
+  const isEditMode = Boolean(editExamId) && searchParams.get("edit") === "true";
+
   const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
 
   const [draftId] = useState(() => newDraftId());
@@ -1071,6 +1156,15 @@ export default function CreateExam() {
   const [saving,       setSaving]       = useState(false);
   const [saveError,    setSaveError]    = useState("");
   const [examId,       setExamId]       = useState<string | null>(null);
+  const [justSaved,    setJustSaved]    = useState(false);
+
+  // ── Edit-mode loading / locking state ─────────────────────────────────────
+  const [editLoading, setEditLoading] = useState(isEditMode);
+  const [editLoadError, setEditLoadError] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [lockReason, setLockReason] = useState("");
+  const [existingScheduleId, setExistingScheduleId] = useState<string | null>(null);
+  const originalLinkedQuestionIds = useRef<Set<string>>(new Set());
 
   const [form,     setForm]     = useState<ExamForm>(() => ({
     ...defaultForm(),
@@ -1092,8 +1186,107 @@ export default function CreateExam() {
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const selectedIds = new Set(selectedQuestions.map((q) => q.id));
 
-  // Auto-save draft
+  // ── Load existing exam data when in edit mode ─────────────────────────────
   useEffect(() => {
+    if (!isEditMode || !editExamId) return;
+    let cancelled = false;
+
+    (async () => {
+      setEditLoading(true);
+      setEditLoadError("");
+      try {
+        const [exam, questionRows, schedules, attempts] = await Promise.all([
+          facultyApi.getExam(editExamId),
+          facultyApi.getExamQuestions(editExamId).catch(() => []),
+          facultyApi.listSchedules({ exam_id: editExamId }).catch(() => []),
+          facultyApi.getExamAttempts(editExamId).catch(() => []),
+        ]);
+        if (cancelled) return;
+
+        const scheduleRow = schedules?.[0] ?? null;
+        const now = Date.now();
+        const startPassed = scheduleRow?.start_time ? new Date(scheduleRow.start_time).getTime() <= now : false;
+        const hasAttempts = Array.isArray(attempts) && attempts.length > 0;
+
+        if (hasAttempts || startPassed) {
+          setLocked(true);
+          setLockReason(
+            hasAttempts
+              ? "Students have already started or completed attempts on this exam, so its content and rules are now locked."
+              : "Its scheduled start time has already passed, so it can no longer be edited."
+          );
+          setEditLoading(false);
+          return;
+        }
+
+        // Populate exam info
+        setForm({
+          title: exam.title ?? "",
+          course_id: exam.course_id ?? "",
+          exam_type: (exam as any).exam_type ?? defaultForm().exam_type,
+          duration_minutes: exam.duration_minutes ?? defaultForm().duration_minutes,
+          total_marks: exam.total_marks ?? defaultForm().total_marks,
+          pass_marks: exam.pass_marks ?? defaultForm().pass_marks,
+          instructions: exam.instructions ?? "",
+          shuffle_questions: exam.shuffle_questions ?? false,
+          shuffle_options: exam.shuffle_options ?? false,
+        });
+
+        // Populate rules (nested on the exam response, per GET /exams/{id})
+        const rawRules = Array.isArray(exam.exam_rules) ? exam.exam_rules[0] : exam.exam_rules;
+        if (rawRules) {
+          setRules({
+            allow_backtrack: rawRules.allow_backtrack ?? true,
+            mark_for_review: rawRules.mark_for_review ?? true,
+            fullscreen_required: rawRules.fullscreen_required ?? false,
+            proctoring_enabled: rawRules.proctoring_enabled ?? false,
+            camera_required: rawRules.camera_required ?? false,
+            microphone_required: rawRules.microphone_required ?? false,
+            max_tab_switches: rawRules.max_tab_switches ?? 3,
+            auto_save_interval_sec: rawRules.auto_save_interval_sec ?? 30,
+          });
+        }
+
+        // Populate schedule
+        if (scheduleRow) {
+          setExistingScheduleId(scheduleRow.id);
+          setSchedule({
+            start_time: toLocalInputString(scheduleRow.start_time),
+            end_time: toLocalInputString(scheduleRow.end_time),
+            registration_deadline: toLocalInputString(scheduleRow.registration_deadline),
+          });
+        }
+
+        // Populate selected questions — resolve ids to full Question objects
+        // via getQuestion so downstream code (marks, options, etc.) has the
+        // same shape it expects everywhere else.
+        const ids = (questionRows ?? [])
+          .map((row) => extractQuestionId(row as Record<string, unknown>))
+          .filter((id): id is string => Boolean(id));
+        originalLinkedQuestionIds.current = new Set(ids);
+
+        if (ids.length > 0) {
+          const resolved = await Promise.all(
+            ids.map((id) => facultyApi.getQuestion(id).catch(() => null))
+          );
+          if (!cancelled) {
+            setSelectedQuestions(resolved.filter((q): q is Question => Boolean(q)));
+          }
+        }
+      } catch (e: any) {
+        if (!cancelled) setEditLoadError(e?.message ?? "Failed to load exam for editing.");
+      } finally {
+        if (!cancelled) setEditLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isEditMode, editExamId]);
+
+  // Auto-save draft — only for brand-new exams, never while editing an
+  // existing one (editing shouldn't create a phantom "untitled" draft entry).
+  useEffect(() => {
+    if (isEditMode) return;
     if (!form.title && currentStep === 0 && selectedQuestions.length === 0) return;
     upsertDraft({
       draftId,
@@ -1104,7 +1297,7 @@ export default function CreateExam() {
       schedule,
       selectedQuestionIds: selectedQuestions.map((q) => q.id),
     });
-  }, [draftId, currentStep, form, rules, schedule, selectedQuestions]);
+  }, [isEditMode, draftId, currentStep, form, rules, schedule, selectedQuestions]);
 
   // Resolve pending question IDs after server data loads
   const [pendingQuestionIds, setPendingQuestionIds] = useState<string[]>([]);
@@ -1164,13 +1357,12 @@ export default function CreateExam() {
     }
   };
 
-  // ── Create exam ────────────────────────────────────────────────────────────
+  // ── Create or update exam ──────────────────────────────────────────────────
   const saveExam = async () => {
     setSaving(true);
     setSaveError("");
     try {
-      // Step 1 — create exam as DRAFT
-      const examData = await facultyApi.createExam({
+      const examFields = {
         title:             form.title,
         course_id:         form.course_id || null,
         exam_type:         form.exam_type,
@@ -1180,39 +1372,78 @@ export default function CreateExam() {
         shuffle_questions: form.shuffle_questions,
         shuffle_options:   form.shuffle_options,
         instructions:      form.instructions || null,
-        status:            "DRAFT",
-      });
-      const newExamId = examData.id;
+      };
 
-      // Step 2 — link questions
-      for (let i = 0; i < selectedQuestions.length; i++) {
-        await facultyApi.addQuestionToExam(newExamId, {
-          question_id: selectedQuestions[i].id,
-          order_index: i,
+      let targetExamId: string;
+
+      if (isEditMode && editExamId) {
+        // ── EDIT: update exam info in place ──────────────────────────────
+        await facultyApi.updateExam(editExamId, examFields);
+        targetExamId = editExamId;
+
+        // Diff questions: add newly-selected, remove de-selected
+        const originalIds = originalLinkedQuestionIds.current;
+        const selectedIdSet = new Set(selectedQuestions.map((q) => q.id));
+
+        const toAdd = selectedQuestions.filter((q) => !originalIds.has(q.id));
+        const toRemove = [...originalIds].filter((id) => !selectedIdSet.has(id));
+
+        for (let i = 0; i < toAdd.length; i++) {
+          await facultyApi.addQuestionToExam(targetExamId, {
+            question_id: toAdd[i].id,
+            order_index: originalIds.size + i,
+          });
+        }
+        for (const qid of toRemove) {
+          await facultyApi.removeQuestionFromExam(targetExamId, qid);
+        }
+
+        // Rules — upsert by exam_id
+        await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rules });
+
+        // Schedule — update existing row if we found one, else create one
+        const scheduleFields = {
+          start_time:             schedule.start_time ? toUTCString(schedule.start_time) : null,
+          end_time:               schedule.end_time ? toUTCString(schedule.end_time) : null,
+          registration_deadline:  schedule.registration_deadline ? toUTCString(schedule.registration_deadline) : null,
+        };
+        if (existingScheduleId) {
+          await facultyApi.updateSchedule(existingScheduleId, scheduleFields);
+        } else {
+          await facultyApi.createExamSchedule({ exam_id: targetExamId, ...scheduleFields, is_published: true });
+        }
+      } else {
+        // ── CREATE: original flow ────────────────────────────────────────
+        const examData = await facultyApi.createExam({ ...examFields, status: "DRAFT" });
+        targetExamId = examData.id;
+
+        for (let i = 0; i < selectedQuestions.length; i++) {
+          await facultyApi.addQuestionToExam(targetExamId, {
+            question_id: selectedQuestions[i].id,
+            order_index: i,
+          });
+        }
+
+        await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rules });
+
+        await facultyApi.createExamSchedule({
+          exam_id:               targetExamId,
+          start_time:            schedule.start_time ? toUTCString(schedule.start_time) : null,
+          end_time:              schedule.end_time ? toUTCString(schedule.end_time) : null,
+          registration_deadline: schedule.registration_deadline ? toUTCString(schedule.registration_deadline) : null,
+          is_published:          true,
         });
+
+        deleteDraft(draftId);
       }
 
-      // Step 3 — exam rules
-      await facultyApi.upsertExamRules({ exam_id: newExamId, ...rules });
-
-      // Step 4 — create schedule
-      // toUTCString converts the datetime-local value (IST) to UTC ISO string
-      // so the backend stores the correct UTC time.
-      await facultyApi.createExamSchedule({
-        exam_id:               newExamId,
-        start_time:            schedule.start_time ? toUTCString(schedule.start_time) : null,
-        end_time:              schedule.end_time ? toUTCString(schedule.end_time) : null,
-        registration_deadline: schedule.registration_deadline ? toUTCString(schedule.registration_deadline) : null,
-        is_published:          true,
-      });
-
-      setExamId(newExamId);
-      deleteDraft(draftId);
+      setExamId(targetExamId);
+      setJustSaved(true);
 
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.exams() });
     } catch (e: any) {
-      setSaveError(e?.message ?? "Failed to create exam. Check all fields and try again.");
+      setSaveError(e?.message ?? `Failed to ${isEditMode ? "save changes" : "create exam"}. Check all fields and try again.`);
     } finally {
       setSaving(false);
     }
@@ -1237,14 +1468,33 @@ export default function CreateExam() {
     setPageTab("create");
   };
 
+  // ── Locked state: show blocking message instead of the wizard ────────────
+  if (isEditMode && locked) {
+    return (
+      <FacultyLayout activePage="create-exam">
+        <div className="page-heading">
+          <div>
+            <h1>Edit Exam</h1>
+            <p>{form.title || "This exam"}</p>
+          </div>
+        </div>
+        <EditLockedNotice title={form.title || "This exam"} reason={lockReason} />
+      </FacultyLayout>
+    );
+  }
+
   return (
     <FacultyLayout activePage="create-exam">
-      <PageState loading={portalLoading}>
+      <PageState
+        loading={portalLoading || editLoading}
+        error={isEditMode && editLoadError ? editLoadError : undefined}
+        onRetry={() => window.location.reload()}
+      >
         <div className="create-exam-workspace">
-          <RepositoryOverview portal={portal} />
+          {!isEditMode && <RepositoryOverview portal={portal} />}
 
           <div className="workspace-card">
-            {!examId && (
+            {!examId && !isEditMode && (
               <div className="page-tabs">
                 <button className={`page-tab ${pageTab === "create" ? "active" : ""}`}
                   onClick={() => setPageTab("create")} type="button">
@@ -1258,7 +1508,7 @@ export default function CreateExam() {
               </div>
             )}
 
-            {pageTab === "drafts" && !examId && (
+            {pageTab === "drafts" && !examId && !isEditMode && (
               <div className="workspace-body">
                 <div className="step-header">
                   <h3>Saved Drafts</h3>
@@ -1273,18 +1523,20 @@ export default function CreateExam() {
               </div>
             )}
 
-            {(pageTab === "create" || !!examId) && (
+            {(pageTab === "create" || !!examId || isEditMode) && (
               <>
                 <div className="workspace-header">
                   <div>
-                    <h2 className="workspace-title">{examId ? "Exam Created!" : "Create New Exam"}</h2>
+                    <h2 className="workspace-title">
+                      {justSaved ? (isEditMode ? "Changes Saved!" : "Exam Created!") : (isEditMode ? "Edit Exam" : "Create New Exam")}
+                    </h2>
                     <p className="workspace-sub">
-                      {examId
-                        ? "Saved as draft — go to your dashboard and click Publish when ready."
+                      {justSaved
+                        ? (isEditMode ? "Your changes are live." : "Saved as draft — go to your dashboard and click Publish when ready.")
                         : `Step ${currentStep + 1} of ${STEPS.length} · ${STEPS[currentStep].label}`}
                     </p>
                   </div>
-                  {!examId && (
+                  {!justSaved && (
                     <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")} type="button">
                       <i className="ti ti-x" /> Cancel
                     </button>
@@ -1316,11 +1568,13 @@ export default function CreateExam() {
                       schedule={schedule}
                       selectedQuestions={selectedQuestions}
                       examId={examId}
+                      isEditMode={isEditMode}
+                      justSaved={justSaved}
                     />
                   )}
                 </div>
 
-                {!examId && (
+                {!justSaved && (
                   <div className="workspace-footer">
                     <div className="footer-left">
                       {currentStep > 0 && (
@@ -1331,7 +1585,7 @@ export default function CreateExam() {
                     </div>
                     <div className="footer-center">
                       {saveError && <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>}
-                      {form.title.trim() && (
+                      {!isEditMode && form.title.trim() && (
                         <span className="draft-autosave-indicator"><i className="ti ti-device-floppy" /> Draft auto-saved</span>
                       )}
                     </div>
@@ -1341,20 +1595,20 @@ export default function CreateExam() {
                           Next <i className="ti ti-chevron-right" />
                         </button>
                       ) : (
-                        <button className="btn btn-primary" onClick={saveExam} disabled={saving || !!examId} type="button">
+                        <button className="btn btn-primary" onClick={saveExam} disabled={saving} type="button">
                           {saving
-                            ? <><span className="spinner-sm" /> Creating…</>
-                            : <><i className="ti ti-check" /> Create Exam</>}
+                            ? <><span className="spinner-sm" /> {isEditMode ? "Saving…" : "Creating…"}</>
+                            : <><i className="ti ti-check" /> {isEditMode ? "Save Changes" : "Create Exam"}</>}
                         </button>
                       )}
                     </div>
                   </div>
                 )}
 
-                {examId && (
+                {justSaved && (
                   <div className="workspace-footer">
                     <button className="btn btn-primary" onClick={() => navigate("/faculty/dashboard")} type="button">
-                      <i className="ti ti-home" /> Go to Dashboard to Publish
+                      <i className="ti ti-home" /> Go to Dashboard{!isEditMode ? " to Publish" : ""}
                     </button>
                   </div>
                 )}
