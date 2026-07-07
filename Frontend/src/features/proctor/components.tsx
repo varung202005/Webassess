@@ -156,6 +156,9 @@ interface FlaggedTableProps {
   pendingId: string | null;
 }
 export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: FlaggedTableProps) {
+  // Which evidence modal is open, if any: which attempt + which issue type.
+  const [evidence, setEvidence] = useState<{ attemptId: string; name: string; issue: string } | null>(null);
+
   if (loading) {
     return (
       <div style={{ padding: "20px 18px" }}>
@@ -212,18 +215,22 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
                   {a.total_incidents}
                 </td>
 
-                {/* Issue chips */}
+                {/* Issue chips — clickable, opens the evidence modal for that issue */}
                 <td>
                   {issues.length > 0 ? (
                     <div className="issues-list">
                       {issues.map((iss) => (
-                        <span
+                        <button
                           key={iss}
+                          type="button"
                           className={`issue-chip${iss === "Audio Noise" ? " audio" : ""}`}
+                          style={{ cursor: "pointer", border: "none" }}
+                          onClick={() => setEvidence({ attemptId: a.attempt_id, name: studentName(a), issue: iss })}
+                          title="Click to view evidence"
                         >
                           {iss === "Audio Noise" && <i className="ti ti-microphone" style={{ fontSize: 9, marginRight: 3 }} />}
                           {iss}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   ) : (
@@ -277,9 +284,151 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
           })}
         </tbody>
       </table>
+
+      {evidence && (
+        <EvidenceModal
+          attemptId={evidence.attemptId}
+          studentName={evidence.name}
+          issue={evidence.issue}
+          onClose={() => setEvidence(null)}
+        />
+      )}
     </div>
   );
 }
+
+/* ── Evidence Modal ────────────────────────────────────────────────────────
+ * Shown when a proctor clicks an issue chip in the Flagged Attempts table.
+ * Pulls the actual frames/events that caused that specific issue:
+ *   - Phone / Face Absent / Multi-Person → snapshot photos from
+ *     face_verification_logs (WebcamCapture already uploads + logs a
+ *     snapshot_url for every flagged frame).
+ *   - Audio Noise → the logged noise events from audio_monitoring_logs
+ *     (no photo — shows dB level / notes / timestamp instead).
+ */
+function EvidenceModal({
+  attemptId,
+  studentName: name,
+  issue,
+  onClose,
+}: {
+  attemptId: string;
+  studentName: string;
+  issue: string;
+  onClose: () => void;
+}) {
+  const isAudio = issue === "Audio Noise";
+
+  const { data: rows, isLoading } = useQuery({
+    queryKey: ["evidence", attemptId, issue],
+    queryFn: async () => {
+      if (isAudio) {
+        const { data, error } = await supabase
+          .from("audio_monitoring_logs")
+          .select("noise_level_db,notes,detected_at")
+          .eq("attempt_id", attemptId)
+          .eq("noise_detected", true)
+          .order("detected_at", { ascending: false })
+          .limit(20);
+        if (error) { console.error("[EvidenceModal] audio query error:", error.message); return []; }
+        return data ?? [];
+      }
+
+      let q = supabase
+        .from("face_verification_logs")
+        .select("snapshot_url,face_detected,person_count,phone_detected,confidence_score,created_at")
+        .eq("attempt_id", attemptId)
+        .not("snapshot_url", "is", null);
+
+      if (issue === "Phone")        q = q.eq("phone_detected", true);
+      else if (issue === "Face Absent") q = q.eq("face_detected", false);
+      else if (issue === "Multi-Person") q = q.gt("person_count", 1);
+
+      const { data, error } = await q.order("created_at", { ascending: false }).limit(20);
+      if (error) { console.error("[EvidenceModal] face query error:", error.message); return []; }
+      return data ?? [];
+    },
+    staleTime: 10_000,
+  });
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,.5)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#fff", borderRadius: 12, width: "min(720px, 100%)",
+          maxHeight: "80vh", overflowY: "auto", padding: 20,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{name} — {issue}</div>
+            <div style={{ fontSize: 12, color: "#888" }}>
+              {isAudio ? "Logged noise events" : "Flagged snapshots"}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            style={{ border: "none", background: "transparent", fontSize: 20, cursor: "pointer", color: "#888" }}
+          >
+            <i className="ti ti-x" />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div style={{ padding: "30px 0" }}>
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="skeleton" style={{ height: 60, marginBottom: 8, borderRadius: 6 }} />
+            ))}
+          </div>
+        ) : !rows?.length ? (
+          <div className="empty-state" style={{ padding: "30px 0" }}>
+            <i className="ti ti-photo-off" style={{ fontSize: 26, marginBottom: 6 }} />
+            No {isAudio ? "noise events" : "snapshots"} found for this issue
+          </div>
+        ) : isAudio ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(rows as { noise_level_db: number | null; notes: string | null; detected_at: string }[]).map((r, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8f9fb", borderRadius: 8, fontSize: 13 }}>
+                <span>{r.notes ?? "Noise detected"}</span>
+                <span style={{ color: "#888", whiteSpace: "nowrap", marginLeft: 12 }}>
+                  {r.noise_level_db != null ? `${r.noise_level_db} dB · ` : ""}{relativeTime(r.detected_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+            {(rows as { snapshot_url: string; person_count: number; created_at: string }[]).map((r, i) => (
+              <div key={i} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #eee" }}>
+                <img
+                  src={r.snapshot_url}
+                  alt={`${issue} evidence`}
+                  style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
+                />
+                <div style={{ padding: "6px 8px", fontSize: 11, color: "#888" }}>
+                  {relativeTime(r.created_at)}
+                  {issue === "Multi-Person" ? ` · ${r.person_count} people` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 /* ── Students Panel — per-student browser monitoring ─────────────────────────
  * Shows every active student with their live tab-switch and fullscreen-exit
