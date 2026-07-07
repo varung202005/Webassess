@@ -334,18 +334,37 @@ function EvidenceModal({
         return data ?? [];
       }
 
+      // Try querying face_verification_logs first.
+      // The timestamp column is "logged_at" — NOT "created_at" (which doesn't exist).
       let q = supabase
         .from("face_verification_logs")
-        .select("snapshot_url,face_detected,person_count,phone_detected,confidence_score,created_at")
+        .select("snapshot_url,face_detected,person_count,phone_detected,confidence_score,checked_at")
         .eq("attempt_id", attemptId)
         .not("snapshot_url", "is", null);
 
-      if (issue === "Phone")        q = q.eq("phone_detected", true);
-      else if (issue === "Face Absent") q = q.eq("face_detected", false);
+      if (issue === "Phone")             q = q.eq("phone_detected", true);
+      else if (issue === "Face Absent")  q = q.eq("face_detected", false);
       else if (issue === "Multi-Person") q = q.gt("person_count", 1);
 
-      const { data, error } = await q.order("created_at", { ascending: false }).limit(20);
-      if (error) { console.error("[EvidenceModal] face query error:", error.message); return []; }
+      const { data, error } = await q.order("checked_at", { ascending: false }).limit(20);
+      if (error) {
+        console.error("[EvidenceModal] face query error:", error.message);
+        return [];
+      }
+
+      // If the issue-specific filter returns nothing, fall back to all snapshots
+      // for this attempt so the proctor always sees available evidence.
+      if (!data?.length) {
+        const { data: allRows } = await supabase
+          .from("face_verification_logs")
+          .select("snapshot_url,face_detected,person_count,phone_detected,confidence_score,checked_at")
+          .eq("attempt_id", attemptId)
+          .not("snapshot_url", "is", null)
+          .order("checked_at", { ascending: false })
+          .limit(20);
+        return allRows ?? [];
+      }
+
       return data ?? [];
     },
     staleTime: 10_000,
@@ -409,7 +428,7 @@ function EvidenceModal({
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-            {(rows as { snapshot_url: string; person_count: number; created_at: string }[]).map((r, i) => (
+            {(rows as { snapshot_url: string; person_count: number; checked_at?: string }[]).map((r, i) => (
               <div key={i} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #eee" }}>
                 <img
                   src={r.snapshot_url}
@@ -417,7 +436,7 @@ function EvidenceModal({
                   style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
                 />
                 <div style={{ padding: "6px 8px", fontSize: 11, color: "#888" }}>
-                  {relativeTime(r.created_at)}
+                  {relativeTime(r.checked_at ?? null)}
                   {issue === "Multi-Person" ? ` · ${r.person_count} people` : ""}
                 </div>
               </div>
