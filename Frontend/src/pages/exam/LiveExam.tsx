@@ -17,17 +17,16 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { candidateApi } from "../../features/candidate/api";
 import { studentApi } from "../../features/student/api";
 import { apiMessage } from "../../features/student/format";
 import type { ExamQuestion } from "../../features/student/types";
-import { useAuthStore } from "../../store/authStore";
 import "./liveExam.css";
 import "./liveExam.proctor.css";
 import WebcamCapture from "../../features/proctor/WebcamCapture";
 import AudioMonitor from "../../features/proctor/AudioMonitor";
 import BrowserMonitor from "../../features/proctor/BrowserMonitor";
 import CameraPermission from "../../features/proctor/CameraPermission";
+import { useAuthStore } from "../../store/authStore";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -77,7 +76,7 @@ function getRule(session: any): ExamRule {
 export default function LiveExam() {
   const { scheduleId } = useParams();
   const navigate = useNavigate();
-  const activeRole = useAuthStore((s) => s.activeRole);
+
   const sessionQuery = useQuery({
     queryKey: ["exam-session", scheduleId],
     queryFn:  () => studentApi.examSession(scheduleId!),
@@ -178,13 +177,16 @@ export default function LiveExam() {
     try {
       // 1. Save any pending answers
       await flushAnswers();
-      if (activeRole === "CANDIDATE") {
-        await candidateApi.submitAttempt(session.attempt.id, type);
-        navigate("/candidate/thank-you", { replace: true });
-      } else {
-        await studentApi.submitAttempt(session.attempt.id, type);
-        navigate("/student/history", { replace: true, state: { submitted: true } });
-      }
+
+      // 2. Compute proctoring summary — this writes to proctoring_summary table,
+      //    calculates integrity score, and flags the attempt if score < 0.7.
+      //    We use .catch(() => undefined) so a proctoring failure never blocks submission.
+      await studentApi.computeProctoringsSummary(session.attempt.id).catch(() => undefined);
+
+      // 3. Submit the exam attempt
+      await studentApi.submitAttempt(session.attempt.id, type);
+
+      navigate("/student/history", { replace: true, state: { submitted: true } });
     } catch (cause) {
       submitted.current = false;
       setError(apiMessage(cause));
@@ -321,25 +323,29 @@ export default function LiveExam() {
   // ── Camera gate ──────────────────────────────────────────────────────────────
   if (session && !cameraCleared) {
     if (rule.camera_required || rule.proctoring_enabled || rule.fullscreen_required) {
+      // Fullscreen MUST be requested synchronously inside a real user
+      // gesture (a click) — browsers silently reject requestFullscreen()
+      // calls made later from a useEffect after a state update, which is
+      // why it was never actually prompting before. Both ways off this gate
+      // screen (Allow Camera, or Skip when camera isn't required) count as
+      // that user gesture, so both need to trigger it — previously only
+      // the "Allow Camera" path did, so a fullscreen-only exam (camera not
+      // required) skipped fullscreen entirely if the student clicked Skip.
+      const proceedPastGate = () => {
+        if (rule.fullscreen_required && document.fullscreenElement === null) {
+          document.documentElement.requestFullscreen().catch((err) =>
+            console.warn("[LiveExam] Could not enter fullscreen on gate click:", err)
+          );
+        }
+        setCameraCleared(true);
+      };
       return (
         <CameraPermission
           examTitle={session.exam.title}
           courseCode={session.exam.courses?.code ?? ""}
           cameraRequired={rule.camera_required}
-          onProceed={() => {
-            // Fullscreen MUST be requested synchronously inside a real user
-            // gesture (this click) — browsers silently reject
-            // requestFullscreen() calls made later from a useEffect after
-            // the state update below, which is why it was never actually
-            // prompting before.
-            if (rule.fullscreen_required && document.fullscreenElement === null) {
-              document.documentElement.requestFullscreen().catch((err) =>
-                console.warn("[LiveExam] Could not enter fullscreen on Start Exam click:", err)
-              );
-            }
-            setCameraCleared(true);
-          }}
-          onSkip={() => setCameraCleared(true)}
+          onProceed={proceedPastGate}
+          onSkip={proceedPastGate}
         />
       );
     }
@@ -747,8 +753,8 @@ function hasAnswer(a: AnswerState) {
 }
 
 function formatRemaining(seconds: number) {
-  const hours   = Math.floor(seconds / 3600);
-  const minutes = Math.floor(seconds / 60) % 60;
-  const secs    = seconds % 60;
-  return [hours, minutes, secs].map((v) => String(v).padStart(2, "0")).join(":");
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor(seconds / 60) % 60;
+  const s = seconds % 60;
+  return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
 }
