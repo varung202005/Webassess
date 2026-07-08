@@ -126,26 +126,57 @@ function statusBadge(status: string) {
   return <span className={`badge ${map[status] ?? "badge-invited"}`}>{status}</span>;
 }
 
+function splitCSVLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const next = line[i + 1];
+    if (char === "\"" && quoted && next === "\"") {
+      current += "\"";
+      i += 1;
+    } else if (char === "\"") {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells.map((cell) => cell.replace(/^"|"$/g, "").trim());
+}
+
 function parseCSV(text: string): ManualEntry[] {
-  const lines = text.trim().split(/\r?\n/);
+  const lines = text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
   if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((c) => c.trim().replace(/^"|"$/g, "").toLowerCase());
+
+  const headers = splitCSVLine(lines[0]).map((c) => c.replace(/^\uFEFF/, "").toLowerCase());
   const find = (names: string[]) => names.map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
   const nameIndex = find(["name", "full_name", "full name", "candidate_name"]);
   const emailIndex = find(["email", "email_id", "email id", "candidate_email"]);
   const phoneIndex = find(["phone", "mobile", "contact"]);
   const passwordIndex = find(["temp_password", "password", "temporary_password"]);
-  if (nameIndex < 0 || emailIndex < 0) return [];
+  if (emailIndex < 0) return [];
 
   return lines.slice(1).map((line) => {
-    const cols = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+    const cols = splitCSVLine(line);
+    const email = cols[emailIndex] ?? "";
+    const fallbackName = email.split("@")[0]?.replace(/[._-]+/g, " ") ?? "";
     return {
-      full_name: cols[nameIndex] ?? "",
-      email: cols[emailIndex] ?? "",
+      full_name: nameIndex >= 0 ? cols[nameIndex] ?? fallbackName : fallbackName,
+      email,
       phone: phoneIndex >= 0 ? cols[phoneIndex] ?? "" : "",
       temp_password: passwordIndex >= 0 ? cols[passwordIndex] ?? "" : "",
     };
-  }).filter((e) => e.full_name && e.email);
+  }).filter((e) => e.email.includes("@"));
 }
 
 interface AssignCandidatesResponse {
@@ -173,16 +204,30 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
   });
 
   const assignMutation = useMutation({
-    mutationFn: (entries: ManualEntry[]) =>
-      post<AssignCandidatesResponse>("/api/v1/faculty/candidates/assign", {
+    mutationFn: (entries: ManualEntry[]) => {
+      const cleaned = entries
+        .map((e) => ({
+          full_name: e.full_name.trim() || e.email.split("@")[0],
+          email: e.email.trim().toLowerCase(),
+          phone: e.phone.trim(),
+          temp_password: e.temp_password.trim(),
+        }))
+        .filter((e) => e.email.includes("@"));
+
+      if (!cleaned.length) {
+        throw new Error("No valid candidates found. Upload a CSV with at least an email column.");
+      }
+
+      return post<AssignCandidatesResponse>("/api/v1/faculty/candidates/assign", {
         exam_schedule_id: examScheduleId,
-        candidates: entries.map((e) => ({
+        candidates: cleaned.map((e) => ({
           full_name: e.full_name,
           email: e.email,
           phone: e.phone || null,
           temp_password: e.temp_password || null,
         })),
-      }),
+      });
+    },
     onSuccess: (data: any) => {
       const assigned = data?.assigned ?? 0;
       const sent = data?.emails_sent ?? 0;
@@ -209,7 +254,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
     reader.onload = (e) => {
       const rows = parseCSV(e.target?.result as string);
       setCSVRows(rows);
-      setNotice(rows.length ? null : { type: "error", msg: "No valid rows found. Ensure CSV has headers: name,email,phone,temp_password" });
+      setNotice(rows.length ? null : { type: "error", msg: "No valid rows found. Ensure CSV has at least an email column. Supported headers: name,email,phone,temp_password" });
     };
     reader.readAsText(file);
   };

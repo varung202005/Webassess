@@ -887,6 +887,15 @@ async def assign_candidates(
     supabase = get_supabase_admin()
     faculty_id = current_user["user_id"]
     schedule_id = str(body.exam_schedule_id)
+    candidates = [
+        entry for entry in body.candidates
+        if entry.email and "@" in entry.email.strip()
+    ]
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid candidates found. Upload a CSV with at least one email address.",
+        )
 
     # Validate schedule exists and faculty owns the exam
     sched = (
@@ -926,7 +935,7 @@ async def assign_candidates(
     student_role_id = student_role_row["id"] if student_role_row else None
 
     results = []
-    for entry in body.candidates:
+    for entry in candidates:
         email = entry.email.strip().lower()
         full_name = entry.full_name.strip()
         temp_password = entry.temp_password or _generate_temp_password()
@@ -1083,7 +1092,7 @@ async def list_exam_candidates(
     assignments = (
         supabase.table("candidate_exam_assignments")
         .select("id,candidate_id,status,created_at,invitation_token,"
-                "users(full_name,email,phone)")
+                "users!cea_candidate_fkey(full_name,email,phone)")
         .eq("exam_schedule_id", schedule_id)
         .order("created_at")
         .execute()
