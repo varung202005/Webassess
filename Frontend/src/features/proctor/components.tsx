@@ -334,37 +334,20 @@ function EvidenceModal({
         return data ?? [];
       }
 
-      // Try querying face_verification_logs first.
-      // The timestamp column is "logged_at" — NOT "created_at" (which doesn't exist).
       let q = supabase
         .from("face_verification_logs")
         .select("snapshot_url,face_detected,person_count,phone_detected,confidence_score,checked_at")
-        .eq("attempt_id", attemptId)
-        .not("snapshot_url", "is", null);
+        .eq("attempt_id", attemptId);
 
-      if (issue === "Phone")             q = q.eq("phone_detected", true);
+      // For Face Absent we don't filter out null snapshot_url — the frame
+      // where the face was missing may not have a photo, but we still show
+      // the event so the proctor knows the violation was logged.
+      if (issue === "Phone")             q = q.eq("phone_detected", true).not("snapshot_url", "is", null);
       else if (issue === "Face Absent")  q = q.eq("face_detected", false);
-      else if (issue === "Multi-Person") q = q.gt("person_count", 1);
+      else if (issue === "Multi-Person") q = q.gt("person_count", 1).not("snapshot_url", "is", null);
 
       const { data, error } = await q.order("checked_at", { ascending: false }).limit(20);
-      if (error) {
-        console.error("[EvidenceModal] face query error:", error.message);
-        return [];
-      }
-
-      // If the issue-specific filter returns nothing, fall back to all snapshots
-      // for this attempt so the proctor always sees available evidence.
-      if (!data?.length) {
-        const { data: allRows } = await supabase
-          .from("face_verification_logs")
-          .select("snapshot_url,face_detected,person_count,phone_detected,confidence_score,checked_at")
-          .eq("attempt_id", attemptId)
-          .not("snapshot_url", "is", null)
-          .order("checked_at", { ascending: false })
-          .limit(20);
-        return allRows ?? [];
-      }
-
+      if (error) { console.error("[EvidenceModal] face query error:", error.message); return []; }
       return data ?? [];
     },
     staleTime: 10_000,
@@ -428,15 +411,26 @@ function EvidenceModal({
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-            {(rows as { snapshot_url: string; person_count: number; checked_at?: string }[]).map((r, i) => (
+            {(rows as { snapshot_url: string | null; person_count: number; face_detected: boolean; checked_at: string }[]).map((r, i) => (
               <div key={i} style={{ borderRadius: 8, overflow: "hidden", border: "1px solid #eee" }}>
-                <img
-                  src={r.snapshot_url}
-                  alt={`${issue} evidence`}
-                  style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
-                />
+                {r.snapshot_url ? (
+                  <img
+                    src={r.snapshot_url}
+                    alt={`${issue} evidence`}
+                    style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block" }}
+                  />
+                ) : (
+                  <div style={{
+                    width: "100%", aspectRatio: "4/3", background: "#f3f4f6",
+                    display: "flex", flexDirection: "column", alignItems: "center",
+                    justifyContent: "center", color: "#aaa", fontSize: 11, gap: 4,
+                  }}>
+                    <i className="ti ti-camera-off" style={{ fontSize: 22 }} />
+                    No snapshot
+                  </div>
+                )}
                 <div style={{ padding: "6px 8px", fontSize: 11, color: "#888" }}>
-                  {relativeTime(r.checked_at ?? null)}
+                  {relativeTime(r.checked_at)}
                   {issue === "Multi-Person" ? ` · ${r.person_count} people` : ""}
                 </div>
               </div>
