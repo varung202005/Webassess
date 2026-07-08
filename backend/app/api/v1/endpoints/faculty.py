@@ -1000,7 +1000,7 @@ async def assign_candidates(
         full_name = entry.full_name.strip()
         temp_password = entry.temp_password or _generate_temp_password()
 
-        # 1. Check if user exists
+        # 1. Check if user exists in public.users
         existing = (
             supabase.table("users")
             .select("id,full_name,email")
@@ -1008,6 +1008,32 @@ async def assign_candidates(
             .execute()
             .data
         )
+
+        # Fallback: user may exist in auth.users but not yet in public.users
+        # (e.g. they registered via a different flow, or the mirror trigger
+        # didn't fire). In that case creation would fail with "already registered"
+        # and the candidate would be silently skipped with no email sent.
+        if not existing:
+            try:
+                auth_users = supabase.auth.admin.list_users()
+                matched = next(
+                    (u for u in (auth_users or []) if (u.email or "").lower() == email),
+                    None,
+                )
+                if matched:
+                    user_id = str(matched.id)
+                    # Sync into public.users so future lookups find them
+                    supabase.table("users").upsert({
+                        "id": user_id,
+                        "full_name": full_name,
+                        "email": email,
+                        "password_hash": "managed_by_supabase_auth",
+                        "is_active": True,
+                        "is_verified": True,
+                    }, on_conflict="id").execute()
+                    existing = [{"id": user_id, "full_name": full_name, "email": email}]
+            except Exception as e:
+                logger.warning("Auth users lookup failed for %s: %s", email, e)
 
         if existing:
             user_id = existing[0]["id"]
