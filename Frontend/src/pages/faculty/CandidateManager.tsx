@@ -15,7 +15,7 @@
  */
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post } from "../../lib/api";
+import { apiFile, get, post } from "../../lib/api";
 
 const css = `
 .cm-wrap { font-family: var(--font); }
@@ -192,6 +192,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
   const [activeTab, setActiveTab] = useState<"list" | "add" | "csv">("list");
   const [entry, setEntry] = useState<ManualEntry>(emptyEntry());
   const [csvRows, setCSVRows] = useState<ManualEntry[]>([]);
+  const [csvFile, setCSVFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<{ type: "error" | "success"; msg: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -241,6 +242,8 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       setNotice({ type: "success", msg: `${assigned} candidate login(s) prepared.${mailSummary}` });
       setEntry(emptyEntry());
       setCSVRows([]);
+      setCSVFile(null);
+      if (fileRef.current) fileRef.current.value = "";
       qc.invalidateQueries({ queryKey: ["faculty", "candidates", examScheduleId] });
       setActiveTab("list");
     },
@@ -249,7 +252,37 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
     },
   });
 
+  const csvMutation = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append("exam_schedule_id", examScheduleId);
+      formData.append("file", file);
+      return apiFile<AssignCandidatesResponse>("/api/v1/faculty/candidates/assign-csv", formData);
+    },
+    onSuccess: (data: any) => {
+      const assigned = data?.assigned ?? 0;
+      const sent = data?.emails_sent ?? 0;
+      const failed = data?.emails_failed ?? 0;
+      const skipped = data?.emails_skipped ?? 0;
+      const mailSummary = skipped
+        ? " Email sending is not configured, so credentials were generated but not mailed."
+        : failed
+          ? ` ${sent} email(s) sent, ${failed} failed.`
+          : ` ${sent} email(s) sent.`;
+      setNotice({ type: "success", msg: `${assigned} candidate login(s) prepared from CSV.${mailSummary}` });
+      setCSVRows([]);
+      setCSVFile(null);
+      if (fileRef.current) fileRef.current.value = "";
+      qc.invalidateQueries({ queryKey: ["faculty", "candidates", examScheduleId] });
+      setActiveTab("list");
+    },
+    onError: (err: Error) => {
+      setNotice({ type: "error", msg: err.message || "Failed to upload candidate CSV." });
+    },
+  });
+
   const handleCSVFile = (file: File) => {
+    setCSVFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
       const rows = parseCSV(e.target?.result as string);
@@ -433,11 +466,11 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
                 </tbody>
               </table>
               <div className="cm-form-actions" style={{ marginTop: 16 }}>
-                <button className="btn btn-secondary" onClick={() => setCSVRows([])}>Clear</button>
+                <button className="btn btn-secondary" onClick={() => { setCSVRows([]); setCSVFile(null); if (fileRef.current) fileRef.current.value = ""; }}>Clear</button>
                 <button
                   className="btn btn-primary"
-                  disabled={assignMutation.isPending}
-                  onClick={() => assignMutation.mutate(csvRows)}
+                  disabled={assignMutation.isPending || csvMutation.isPending}
+                  onClick={() => csvFile ? csvMutation.mutate(csvFile) : assignMutation.mutate(csvRows)}
                 >
                   {assignMutation.isPending ? <><i className="ti ti-loader-2" /> Sending…</> : <><i className="ti ti-mail" /> Send {csvRows.length} Login Email(s)</>}
                 </button>

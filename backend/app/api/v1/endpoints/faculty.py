@@ -1,4 +1,6 @@
 import logging
+import csv
+import io
 import secrets
 import string
 from collections import Counter, defaultdict
@@ -6,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.core.security import require_faculty
@@ -857,6 +859,42 @@ class AssignCandidatesRequest(BaseModel):
     candidates: list[CandidateEntry]
 
 
+def _first(row: dict, names: list[str]) -> str:
+    for name in names:
+        value = row.get(name)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _parse_candidate_csv(raw: bytes) -> list[CandidateEntry]:
+    text = raw.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return []
+
+    normalized_rows = []
+    for row in reader:
+        normalized_rows.append({
+            str(key or "").strip().lower().replace(" ", "_"): value
+            for key, value in row.items()
+        })
+
+    candidates: list[CandidateEntry] = []
+    for row in normalized_rows:
+        email = _first(row, ["email", "email_id", "candidate_email"])
+        if not email or "@" not in email:
+            continue
+        full_name = _first(row, ["name", "full_name", "candidate_name"]) or email.split("@")[0].replace(".", " ")
+        candidates.append(CandidateEntry(
+            full_name=full_name,
+            email=email,
+            phone=_first(row, ["phone", "mobile", "contact"]) or None,
+            temp_password=_first(row, ["temp_password", "temporary_password", "password"]) or None,
+        ))
+    return candidates
+
+
 def _generate_temp_password(length: int = 10) -> str:
     """Generate a readable alphanumeric temporary password."""
     alphabet = string.ascii_letters + string.digits
@@ -865,6 +903,28 @@ def _generate_temp_password(length: int = 10) -> str:
 
 def _absolute_login_url(token: str) -> str:
     return f"{settings.FRONTEND_URL.rstrip('/')}/login?token={token}"
+
+
+@router.post("/candidates/assign-csv")
+async def assign_candidates_csv(
+    exam_schedule_id: UUID = Form(...),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_faculty),
+):
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+
+    candidates = _parse_candidate_csv(await file.read())
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid candidates found. CSV must include an email column.",
+        )
+
+    return await assign_candidates(
+        AssignCandidatesRequest(exam_schedule_id=exam_schedule_id, candidates=candidates),
+        current_user,
+    )
 
 
 @router.post("/candidates/assign")
