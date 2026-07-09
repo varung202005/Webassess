@@ -124,7 +124,7 @@ const css = `
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.icon-btn{position:relative;width:38px;height:38px;border:0;border-radius:12px;background:#f4f5f8;color:#565a69;font-size:18px;cursor:pointer;display:grid;place-items:center;transition:.15s}.icon-btn:hover{background:#ecedf0}
 .input,.select{height:38px;border:1px solid #e2e4e9;border-radius:8px;background:#fff;padding:0 10px;font:13px var(--font);color:#2d2d3f;outline:none}.input:focus,.select:focus{border-color:#c41e3a;box-shadow:0 0 0 3px rgba(196,30,58,.08)}.input{min-width:240px}
 .btn{height:38px;border:1px solid transparent;border-radius:8px;padding:0 13px;display:inline-flex;align-items:center;gap:7px;font:700 13px var(--font);cursor:pointer;transition:.15s}.btn-primary{background:#b31234;color:#fff}.btn-primary:hover{background:#9d102d}.btn-secondary{background:#fff;color:#4a4a5c;border-color:#e2e4e9}.btn-secondary:hover{background:#f9fafb}.btn-ghost{background:#f4f5f8;color:#4a4a5c}.btn-danger{background:#fee2e2;color:#991b1b;border-color:#fecaca}.btn:disabled{opacity:.55;cursor:not-allowed}
-.quick-actions{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:18px}.action-btn{height:58px;border:1px solid #e8e9ef;border-radius:14px;background:#fff;display:flex;align-items:center;gap:12px;padding:0 14px;font:800 13px var(--font);color:#222536;cursor:pointer;text-align:left;box-shadow:var(--shadow-sm);transition:.15s}.action-btn:hover{border-color:#f5b8c4;background:#fff7f9}.action-btn i{width:34px;height:34px;border-radius:12px;background:#fde8ec;color:#9d102d;display:grid;place-items:center;font-size:18px;flex:none}
+.quick-actions{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}.action-btn{height:58px;border:1px solid #e8e9ef;border-radius:14px;background:#fff;display:flex;align-items:center;gap:12px;padding:0 14px;font:800 13px var(--font);color:#222536;cursor:pointer;text-align:left;box-shadow:var(--shadow-sm);transition:.15s}.action-btn:hover{border-color:#f5b8c4;background:#fff7f9}.action-btn i{width:34px;height:34px;border-radius:12px;background:#fde8ec;color:#9d102d;display:grid;place-items:center;font-size:18px;flex:none}
 .data-table{width:100%;border-collapse:collapse}.data-table th{background:#f9fafb;border-bottom:1px solid #e2e4e9;padding:10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.45px;color:#6b6b7b}.data-table td{border-bottom:1px solid #e8e9ef;padding:10px;font-size:13px;vertical-align:middle}.data-table tr:last-child td{border-bottom:0}.muted{color:#8a8a9a;font-size:12px}.name-cell{font-weight:800}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;border:1px solid transparent;text-transform:uppercase}.badge-admin{background:#fde8ec;color:#9d102d}.badge-faculty{background:#ede9fe;color:#5b21b6}.badge-proctor{background:#fef3c7;color:#92400e}.badge-student{background:#fde8ec;color:#9d102d}.badge-candidate{background:#d1fae5;color:#065f46}.badge-off{background:#f3f4f6;color:#6b6b7b}
 .two-col{grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr)}.notice{margin-bottom:14px;border-radius:8px;padding:10px 12px;font-size:13px;border:1px solid}.notice.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}.notice.error{background:#fef2f2;color:#991b1b;border-color:#fecaca}
 .csv-zone{border:2px dashed #d1d5db;border-radius:14px;padding:26px;text-align:center;cursor:pointer;background:#f9fafb}.csv-zone:hover{border-color:#c41e3a;background:#fff}.csv-zone i{font-size:30px;color:#8a8a9a}.csv-zone p{margin:8px 0 3px;color:#4a4a5c;font-weight:700}.csv-zone small{color:#8a8a9a}
@@ -225,7 +225,6 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState("ALL");
   const [userRoleTab, setUserRoleTab] = useState<UserRoleTab>("Admin");
   const [statusFilter, setStatusFilter] = useState<UserStatusFilter>("ALL");
   const [createRole, setCreateRole] = useState<UserRoleTab>("Faculty");
@@ -342,7 +341,6 @@ export default function AdminDashboard() {
     const recentCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return (data?.users ?? []).filter((user) => {
       const role = user.roles[0] ?? "";
-      const matchesRole = roleFilter === "ALL" || role.toLowerCase() === roleFilter.toLowerCase();
       const matchesTab = role.toLowerCase() === userRoleTab.toLowerCase();
       const matchesStatus =
         statusFilter === "ALL" ||
@@ -350,9 +348,9 @@ export default function AdminDashboard() {
         (statusFilter === "INACTIVE" && !user.is_active) ||
         (statusFilter === "RECENT" && new Date(user.created_at).getTime() >= recentCutoff);
       const matchesSearch = !needle || `${user.full_name} ${user.email}`.toLowerCase().includes(needle);
-      return matchesRole && matchesTab && matchesStatus && matchesSearch;
+      return matchesTab && matchesStatus && matchesSearch;
     });
-  }, [data?.users, roleFilter, search, statusFilter, userRoleTab]);
+  }, [data?.users, search, statusFilter, userRoleTab]);
 
   const schedules = data?.entranceSchedules ?? [];
   const selectedScheduleLabel = schedules.find((schedule) => schedule.id === selectedSchedule);
@@ -423,9 +421,7 @@ export default function AdminDashboard() {
           <p>Manage users, exams, schedules and live examinations.</p>
         </div>
         <div className="toolbar">
-          <button className="icon-btn" type="button" aria-label="Notifications"><i className="ti ti-bell" /></button>
-          <button className="icon-btn" type="button" aria-label="Profile"><i className="ti ti-user-circle" /></button>
-          <button className="btn btn-primary" type="button" onClick={() => openCreateAccount("Faculty")}><i className="ti ti-plus" /> Quick Create</button>
+          <button className="btn btn-primary" type="button" onClick={() => openCreateAccount("Faculty")}><i className="ti ti-plus" /> Add Faculty</button>
         </div>
       </section>
       <div className="admin-grid stats-grid">
@@ -436,17 +432,15 @@ export default function AdminDashboard() {
       </div>
       <div className="admin-grid quick-actions">
         {quickAction("Create Faculty", "ti-school", () => openCreateAccount("Faculty"))}
-        {quickAction("Create Student", "ti-user-plus", () => openCreateAccount("Student"))}
         {quickAction("Manage Users", "ti-users", () => setActiveTab("users"))}
         {quickAction("Assign Candidates", "ti-user-plus", () => setActiveTab("candidates"))}
-        {quickAction("Audit Logs", "ti-list-details", () => setActiveTab("audit"))}
         {quickAction("Go to Proctor Portal", "ti-device-desktop", () => navigate("/admin/proctor"))}
       </div>
       <div className="admin-grid two-col">
         <div className="admin-card">
           <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-activity" /> Recent Activity</div><button className="btn btn-secondary" onClick={() => setActiveTab("audit")}>View logs</button></div>
           <div className="admin-card-body">
-            {(data?.auditLogs ?? []).slice(0, 6).map((log) => (
+            {(data?.auditLogs ?? []).slice(0, 5).map((log) => (
               <div className="feed-item" key={log.id}>
                 <div className="row-main">
                   <div className="feed-icon"><i className="ti ti-point-filled" /></div>
@@ -461,7 +455,7 @@ export default function AdminDashboard() {
         <div className="admin-card">
           <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-calendar" /> Upcoming Schedules</div><button className="btn btn-primary" onClick={() => setActiveTab("candidates")}>Assign</button></div>
           <div className="admin-card-body">
-            {(schedules.slice(0, 6)).map((schedule) => (
+            {(schedules.slice(0, 4)).map((schedule) => (
               <div className="schedule-item" key={schedule.id}>
                 <div>
                   <div className="row-title">{schedule.exams?.title ?? "Entrance exam"}</div>
@@ -544,16 +538,12 @@ export default function AdminDashboard() {
                 <option value="INACTIVE">Inactive</option>
                 <option value="RECENT">Recently added</option>
               </select>
-              <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-                <option value="ALL">Role filter</option>
-                {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
-              </select>
             </div>
           </div>
           <div className="admin-card-body" style={{ paddingBottom: 0 }}>
             <div className="tabs">
               {userTabs.map((role) => (
-                <button key={role} type="button" className={`tab-btn ${userRoleTab === role ? "active" : ""}`} onClick={() => { setUserRoleTab(role); setRoleFilter("ALL"); }}>
+                <button key={role} type="button" className={`tab-btn ${userRoleTab === role ? "active" : ""}`} onClick={() => setUserRoleTab(role)}>
                   {role}s
                 </button>
               ))}
@@ -878,7 +868,6 @@ export default function AdminDashboard() {
         <header className="admin-topbar">
           <div><div className="admin-title">Admin Dashboard</div><div className="admin-subtitle">Focused controls for users, candidates, schedules and live exams</div></div>
           <div className="toolbar">
-            <button className="icon-btn" type="button" aria-label="Notifications"><i className="ti ti-bell" /></button>
             <span className="badge badge-admin">ADMIN</span>
             <button className="btn btn-secondary" onClick={signOut}>Sign out</button>
           </div>
