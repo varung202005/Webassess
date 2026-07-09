@@ -43,7 +43,7 @@ interface WebcamCaptureProps {
 }
 
 const BUCKET             = "exam-snapshots";
-const DEFAULT_INTERVAL   = 30_000;
+const DEFAULT_INTERVAL   = 10_000;
 const PHONE_CONFIDENCE   = 0.4;    // coco-ssd "cell phone"/"remote" score threshold
 const PERSON_CONFIDENCE  = 0.5;    // coco-ssd "person" score threshold
 
