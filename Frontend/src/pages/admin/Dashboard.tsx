@@ -135,6 +135,7 @@ const css = `
 .modal-backdrop{position:fixed;inset:0;background:rgba(26,26,46,.38);z-index:50;display:grid;place-items:center;padding:20px}.modal{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid #e8e9ef;box-shadow:var(--shadow-lg);overflow:hidden}.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #ececf1}.modal-title{font-weight:800}.modal-body{padding:16px}.modal-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 16px;border-top:1px solid #ececf1}.preview-list{max-height:220px;overflow:auto;border:1px solid #e8e9ef;border-radius:12px;margin-top:12px}
 .candidate-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}.compact-card .admin-card-body{padding:14px 16px}.section-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}.section-strip strong{font-size:13px}.schedule-select{width:100%;min-width:0}.candidate-tools{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:12px;align-items:stretch}.mini-upload{border:1px dashed #d1d5db;border-radius:14px;background:#f9fafb;padding:14px;display:flex;align-items:center;gap:10px;cursor:pointer;min-height:86px}.mini-upload:hover{border-color:#c41e3a;background:#fff}.mini-upload i{width:34px;height:34px;border-radius:12px;background:#fde8ec;color:#9d102d;display:grid;place-items:center;font-size:18px}.mini-upload p{margin:0;font-weight:800;font-size:13px}.mini-upload small{display:block;margin-top:3px;color:#8a8a9a;font-size:11.5px}.candidate-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 8px}.assigned-list{display:grid;gap:8px}.assigned-row{border:1px solid #ececf1;border-radius:12px;padding:10px 11px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:10px}.assigned-row-main{min-width:0}.assigned-row-main .name-cell,.assigned-row-main .muted{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.assigned-row-meta{text-align:right;flex:none}
 .audit-toolbar{display:grid;grid-template-columns:minmax(220px,1.3fr) repeat(4,minmax(140px,.7fr));gap:10px;padding:16px;border-bottom:1px solid #ececf1}.audit-table tbody tr{cursor:pointer}.audit-table tbody tr:hover td{background:#fff7f9}.audit-details{background:#f9fafb;border:1px solid #ececf1;border-radius:12px;padding:12px;color:#4a4a5c;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto}.badge-success{background:#d1fae5;color:#065f46}.badge-failed{background:#fee2e2;color:#991b1b}.badge-warning{background:#fef3c7;color:#92400e}.badge-info{background:#dbeafe;color:#1e40af}.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-top:1px solid #ececf1}
+.skeleton{position:relative;overflow:hidden;background:#eef0f4;border-radius:10px}.skeleton:after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.62),transparent);animation:shine 1.2s infinite}.sk-line{height:12px}.sk-card{height:108px;border-radius:14px}.sk-table{height:340px;border-radius:14px}@keyframes shine{to{transform:translateX(100%)}}
 @media(max-width:1000px){.admin-sidebar{display:none}.admin-main{margin-left:0;width:100%}.stats-grid,.two-col,.quick-actions{grid-template-columns:1fr}.admin-content{padding:16px}.form-row{grid-template-columns:1fr}.input{min-width:0;width:100%}.hero{align-items:flex-start;flex-direction:column}.admin-topbar{padding:0 16px}}
 @media(max-width:1100px){.user-layout,.candidate-layout,.candidate-tools,.audit-toolbar{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
 `;
@@ -399,6 +400,14 @@ export default function AdminDashboard() {
     setManualCandidate({ full_name: "", email: "", phone: "", temp_password: "" });
   };
 
+  const openCreateAccount = (role: UserRoleTab) => {
+    const nextRole = role === "Candidate" ? "Student" : role;
+    setCreateRole(nextRole);
+    setUserRoleTab(nextRole);
+    setCreateOpen(true);
+    setActiveTab("users");
+  };
+
   const quickAction = (label: string, icon: string, action: () => void) => (
     <button className="action-btn" type="button" onClick={action}>
       <i className={`ti ${icon}`} />
@@ -416,7 +425,7 @@ export default function AdminDashboard() {
         <div className="toolbar">
           <button className="icon-btn" type="button" aria-label="Notifications"><i className="ti ti-bell" /></button>
           <button className="icon-btn" type="button" aria-label="Profile"><i className="ti ti-user-circle" /></button>
-          <button className="btn btn-primary" type="button" onClick={() => setActiveTab("candidates")}><i className="ti ti-plus" /> Quick Create</button>
+          <button className="btn btn-primary" type="button" onClick={() => openCreateAccount("Faculty")}><i className="ti ti-plus" /> Quick Create</button>
         </div>
       </section>
       <div className="admin-grid stats-grid">
@@ -426,11 +435,11 @@ export default function AdminDashboard() {
         <div className="stat-card"><div className="stat-label">Candidates Assigned</div><div className="stat-value">{candidatesAssigned}</div><div className="stat-meta">Across published schedules</div></div>
       </div>
       <div className="admin-grid quick-actions">
-        {quickAction("Create Exam", "ti-file-plus", () => setNotice({ type: "success", text: "Exam creation will be wired into the admin workspace in the next phase." }))}
+        {quickAction("Create Faculty", "ti-school", () => openCreateAccount("Faculty"))}
+        {quickAction("Create Student", "ti-user-plus", () => openCreateAccount("Student"))}
         {quickAction("Manage Users", "ti-users", () => setActiveTab("users"))}
         {quickAction("Assign Candidates", "ti-user-plus", () => setActiveTab("candidates"))}
-        {quickAction("Create Faculty", "ti-school", () => setActiveTab("users"))}
-        {quickAction("Create Schedule", "ti-calendar-plus", () => setNotice({ type: "success", text: "Schedule creation will be wired into the admin workspace in the next phase." }))}
+        {quickAction("Audit Logs", "ti-list-details", () => setActiveTab("audit"))}
         {quickAction("Go to Proctor Portal", "ti-device-desktop", () => navigate("/admin/proctor"))}
       </div>
       <div className="admin-grid two-col">
@@ -562,7 +571,7 @@ export default function AdminDashboard() {
           <div className="rule-box">
             <h4>CSV upload</h4>
             <p>Admin, Faculty and Student CSVs create permanent accounts, generate missing passwords, and send credentials when SMTP is configured.</p>
-            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => { setCreateRole(userRoleTab === "Candidate" ? "Student" : userRoleTab); setCreateOpen(true); }}>
+            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => openCreateAccount(userRoleTab)}>
               <i className="ti ti-upload" /> Upload or create
             </button>
           </div>
@@ -575,7 +584,7 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
-      <button className="fab" type="button" aria-label="Add user" onClick={() => { setCreateRole(userRoleTab === "Candidate" ? "Student" : userRoleTab); setCreateOpen(true); }}>
+      <button className="fab" type="button" aria-label="Add user" onClick={() => openCreateAccount(userRoleTab)}>
         <i className="ti ti-plus" />
       </button>
       {createOpen && renderCreateAccountModal()}
@@ -797,8 +806,30 @@ export default function AdminDashboard() {
     </div>
   );
 
+  const renderLoading = () => (
+    <>
+      <section className="hero">
+        <div style={{ width: "min(460px,100%)" }}>
+          <div className="skeleton sk-line" style={{ width: "60%", height: 28, marginBottom: 12 }} />
+          <div className="skeleton sk-line" style={{ width: "85%" }} />
+        </div>
+        <div className="toolbar">
+          <div className="skeleton" style={{ width: 38, height: 38 }} />
+          <div className="skeleton" style={{ width: 120, height: 38 }} />
+        </div>
+      </section>
+      <div className="admin-grid stats-grid" style={{ marginBottom: 18 }}>
+        {[0, 1, 2, 3].map((item) => <div className="skeleton sk-card" key={item} />)}
+      </div>
+      <div className="admin-grid quick-actions">
+        {[0, 1, 2, 3, 4, 5].map((item) => <div className="skeleton" style={{ height: 58, borderRadius: 14 }} key={item} />)}
+      </div>
+      <div className="skeleton sk-table" />
+    </>
+  );
+
   const content = () => {
-    if (isLoading) return <div className="admin-card"><div className="empty">Loading admin control center...</div></div>;
+    if (isLoading) return renderLoading();
     if (isError) return <div className="admin-card"><div className="empty">Could not load admin dashboard. Check the backend connection.</div></div>;
     if (activeTab === "users") return renderUsers();
     if (activeTab === "candidates") return renderCandidates();
