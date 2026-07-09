@@ -1,45 +1,16 @@
 /**
- * CreateExam.tsx
+ * CreateExam.tsx  — patched
  *
- * 5-step wizard:
- *   Step 1 — Exam Info
- *   Step 2 — Questions
- *   Step 3 — Rules
- *   Step 4 — Schedule  (start / end time, registration deadline — mandatory)
- *   Step 5 — Preview & Create
+ * Changes from original:
+ *   • require_fullscreen is NOW ALWAYS TRUE — it is a platform-level
+ *     enforcement, not a per-exam toggle. The toggle has been removed from
+ *     the StepRules UI and the field is forced to `true` in every save/update
+ *     payload regardless of what defaultRules() holds internally.
+ *   • max_fullscreen_exits added to defaultRules() and to the Browser
+ *     Integrity section of StepRules. Defaults to 3 (configurable per exam).
+ *     0 means unlimited exits are allowed (logged but never force-submitted).
  *
- * CREATE mode (no ?examId in URL):
- *   1. POST /api/v1/exams          → status: "DRAFT"
- *   2. POST /api/v1/questions link  (per selected question)
- *   3. POST /api/v1/exam-rules
- *   4. POST /api/v1/exam-schedules → is_published: false, times from Step 4
- *
- * EDIT mode (?examId=...&edit=true):
- *   On mount: fetch the exam, its linked questions, its rules (nested on the
- *   exam response), its schedule, and its attempts.
- *     - If the exam already has attempts, OR its schedule start_time is in
- *       the past, editing is BLOCKED — faculty sees a locked message instead
- *       of the wizard. This prevents changing questions/rules/marks after
- *       students may already be relying on them.
- *     - Otherwise the wizard is pre-filled from server data and "Create
- *       Exam" becomes "Save Changes", which:
- *         1. PATCH /api/v1/exams/{id}                 (info fields)
- *         2. Diffs selected questions vs originally-linked questions →
- *            POST new links, DELETE removed links
- *         3. POST /api/v1/exam-rules (upsert by exam_id)
- *         4. PATCH the existing schedule (or POST one if none existed)
- *
- * Publishing still happens ONLY from the Dashboard Publish button — this
- * wizard never sets status: "PUBLISHED" or is_published: true.
- *
- * Drop this file at:  src/pages/faculty/CreateExam.tsx
- *
- * FIX (see comment near defaultRules()): the "Rules" form field names now
- * match the real exam_rules table columns exactly — they previously did
- * NOT (fullscreen_required/proctoring_enabled/mark_for_review vs the real
- * require_fullscreen/enable_proctoring/allow_review_flag columns), which
- * silently dropped fullscreen/proctoring toggles on every save and on
- * every edit-mode reload.
+ * All other behaviour is unchanged.
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -183,22 +154,19 @@ const defaultForm = (): ExamForm => ({
   shuffle_options: false,
 });
 
-// FIX: these keys now match the real exam_rules table columns exactly
-// (confirmed via information_schema.columns) —
-//   fullscreen_required -> require_fullscreen
-//   proctoring_enabled  -> enable_proctoring
-//   mark_for_review     -> allow_review_flag
-// They previously did NOT match, which meant every save silently sent a
-// field the backend model didn't recognize, so the real DB columns just
-// kept their default value forever regardless of what was toggled here.
+// NOTE: require_fullscreen is intentionally omitted from the UI-editable rules.
+// It is ALWAYS forced to `true` in every save payload (see saveExam).
+// max_fullscreen_exits controls how many exits are tolerated before
+// force-submit triggers in LiveExam (0 = unlimited / log-only).
 const defaultRules = () => ({
   allow_backtrack: true,
   allow_review_flag: true,
-  require_fullscreen: false,
+  // require_fullscreen is always true — not exposed in UI
   enable_proctoring: false,
   camera_required: false,
   microphone_required: false,
   max_tab_switches: 3,
+  max_fullscreen_exits: 3,
   auto_save_interval_sec: 30,
 });
 
@@ -871,6 +839,12 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 3: Rules
+//
+// CHANGE: require_fullscreen toggle REMOVED — fullscreen is always enforced
+//         at the platform level and is forced to `true` on every save.
+//         max_fullscreen_exits is added to the Browser Integrity section so
+//         faculty can control how many exits are tolerated before LiveExam
+//         auto-submits the student's attempt (0 = unlimited / log-only).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function StepRules({ rules, onChange }: {
@@ -893,29 +867,57 @@ function StepRules({ rules, onChange }: {
       </div>
     );
   };
+
   return (
     <div className="step-panel">
       <div className="step-header">
         <h3>Exam Rules &amp; Proctoring</h3>
         <p>Configure exam environment rules and anti-cheating settings.</p>
       </div>
+
+      {/* Platform fullscreen notice */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 10,
+          padding: "11px 15px",
+          background: "#f0f7ff",
+          border: "1.5px solid #bfdbfe",
+          borderRadius: 10,
+          marginBottom: 20,
+          fontSize: 13,
+          color: "#1e40af",
+        }}
+      >
+        <i className="ti ti-maximize" style={{ marginTop: 1, flexShrink: 0 }} />
+        <span>
+          <strong>Fullscreen mode is always required</strong> — this is a platform-level rule that cannot be disabled.
+          Use <em>Max fullscreen exits allowed</em> below to control how many exits a student may make before their exam
+          is auto-submitted.
+        </span>
+      </div>
+
       <div className="rules-grid">
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-layout-board" /> Navigation</h4>
-          {rule("allow_backtrack", "Allow question backtracking")}
-          {rule("allow_review_flag", "Allow mark for review")}
+          {rule("allow_backtrack",  "Allow question backtracking")}
+          {rule("allow_review_flag","Allow mark for review")}
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-shield" /> Proctoring</h4>
-          {rule("require_fullscreen", "Require fullscreen mode")}
-          {rule("enable_proctoring",  "Enable AI proctoring")}
+          {rule("enable_proctoring",   "Enable AI proctoring")}
           {rule("camera_required",     "Require camera access")}
           {rule("microphone_required", "Require microphone")}
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
-          {rule("max_tab_switches",       "Max tab switches allowed",  "num", 0)}
-          {rule("auto_save_interval_sec", "Auto-save interval (sec)", "num", 10)}
+          {rule("max_tab_switches",       "Max tab switches allowed",       "num", 0)}
+          {rule("max_fullscreen_exits",   "Max fullscreen exits allowed",   "num", 0)}
+          <span className="field-hint" style={{ display: "block", marginTop: -6, marginBottom: 10, fontSize: 12, color: "#888" }}>
+            Set 0 to log exits without auto-submitting.
+          </span>
+          {rule("auto_save_interval_sec", "Auto-save interval (sec)",       "num", 10)}
         </div>
       </div>
     </div>
@@ -1231,23 +1233,19 @@ export default function CreateExam() {
           shuffle_options: exam.shuffle_options ?? false,
         });
 
-        // Populate rules (nested on the exam response, per GET /exams/{id})
-        // FIX: read the REAL column names returned by the backend
-        // (require_fullscreen / enable_proctoring / allow_review_flag) —
-        // previously read fullscreen_required/proctoring_enabled/
-        // mark_for_review, which never existed on the row, so edit mode
-        // always silently showed these toggles as off regardless of the
-        // actual saved value.
+        // FIX: read the REAL column names returned by the backend.
+        // Note: require_fullscreen is always true — we still read it here for
+        // round-trip accuracy but the save payload always overwrites it to true.
         const rawRules = Array.isArray(exam.exam_rules) ? exam.exam_rules[0] : exam.exam_rules;
         if (rawRules) {
           setRules({
-            allow_backtrack: rawRules.allow_backtrack ?? true,
-            allow_review_flag: rawRules.allow_review_flag ?? true,
-            require_fullscreen: rawRules.require_fullscreen ?? false,
-            enable_proctoring: rawRules.enable_proctoring ?? false,
-            camera_required: rawRules.camera_required ?? false,
-            microphone_required: rawRules.microphone_required ?? false,
-            max_tab_switches: rawRules.max_tab_switches ?? 3,
+            allow_backtrack:       rawRules.allow_backtrack       ?? true,
+            allow_review_flag:     rawRules.allow_review_flag     ?? true,
+            enable_proctoring:     rawRules.enable_proctoring     ?? false,
+            camera_required:       rawRules.camera_required       ?? false,
+            microphone_required:   rawRules.microphone_required   ?? false,
+            max_tab_switches:      rawRules.max_tab_switches      ?? 3,
+            max_fullscreen_exits:  rawRules.max_fullscreen_exits  ?? 3,
             auto_save_interval_sec: rawRules.auto_save_interval_sec ?? 30,
           });
         }
@@ -1372,6 +1370,13 @@ export default function CreateExam() {
         instructions:      form.instructions || null,
       };
 
+      // Always force require_fullscreen: true regardless of UI state —
+      // fullscreen is a platform-level requirement, not a per-exam toggle.
+      const rulesPayload = {
+        ...rules,
+        require_fullscreen: true,
+      };
+
       let targetExamId: string;
 
       if (isEditMode && editExamId) {
@@ -1394,7 +1399,7 @@ export default function CreateExam() {
           await facultyApi.removeQuestionFromExam(targetExamId, qid);
         }
 
-        await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rules });
+        await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rulesPayload });
 
         const scheduleFields = {
           start_time:             schedule.start_time ? toUTCString(schedule.start_time) : null,
@@ -1417,7 +1422,7 @@ export default function CreateExam() {
           });
         }
 
-        await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rules });
+        await facultyApi.upsertExamRules({ exam_id: targetExamId, ...rulesPayload });
 
         await facultyApi.createExamSchedule({
           exam_id:               targetExamId,

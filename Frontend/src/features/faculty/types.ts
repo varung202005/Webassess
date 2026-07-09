@@ -77,11 +77,12 @@ export interface ExamRule {
   exam_id?: string;
   allow_backtrack: boolean;
   allow_review_flag: boolean;
-  require_fullscreen: boolean;
+  require_fullscreen: boolean;   // always true — enforced at the platform level
   enable_proctoring: boolean;
   camera_required: boolean;
   microphone_required: boolean;
   max_tab_switches: number;
+  max_fullscreen_exits: number;  // 0 = unlimited; >0 = force-submit on limit
   auto_save_interval_sec: number;
 }
 

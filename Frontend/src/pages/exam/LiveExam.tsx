@@ -1,19 +1,19 @@
 /**
- * LiveExam.tsx — Final
+ * LiveExam.tsx — patched
  *
- * Connected to exam_rules set by faculty in Step 3 of CreateExam:
- *   fullscreen_required     → enforces fullscreen, nag bar on exit
- *   max_tab_switches        → warns per switch, force-submits on limit
- *   proctoring_enabled      → gates camera / audio / browser monitors
- *   camera_required         → gates CameraPermission screen + WebcamCapture
- *   microphone_required     → gates AudioMonitor
- *   auto_save_interval_sec  → drives auto-save timer
+ * Changes vs original:
+ *   • max_fullscreen_exits added to ExamRule interface and getRule().
+ *     When max_fullscreen_exits > 0 and the student exits fullscreen that
+ *     many times, the exam is force-submitted (same flow as max_tab_switches).
+ *     0 = unlimited / log-only (original behaviour).
+ *   • fullscreenCountRef added to track exits across the session.
+ *   • handleViolation "fullscreen" branch updated to enforce the limit and
+ *     show graduated warnings ("1 more exit = auto-submit") matching the
+ *     tab-switch UX pattern.
  *
- * On every submit (manual, auto, or force):
- *   1. Flush pending answers
- *   2. POST /proctoring/summary/:id  ← computes integrity score, flags if < 0.7
- *   3. POST /exam-attempts/submit
+ * Everything else is unchanged.
  */
+
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
@@ -52,6 +52,7 @@ interface ExamRule {
   camera_required: boolean;
   microphone_required: boolean;
   max_tab_switches: number;
+  max_fullscreen_exits: number;  // 0 = unlimited/log-only; >0 = force-submit on limit
   auto_save_interval_sec: number;
 }
 
@@ -61,17 +62,13 @@ function getRule(session: any): ExamRule {
   const raw = Array.isArray(session?.exam?.exam_rules)
     ? session.exam.exam_rules[0]
     : session?.exam?.exam_rules;
-  // FIX: the real exam_rules columns are require_fullscreen / enable_proctoring
-  // (confirmed via information_schema.columns) — this was previously reading
-  // raw?.fullscreen_required / raw?.proctoring_enabled, which don't exist on
-  // the row at all, so these always silently fell back to their defaults
-  // regardless of what was actually configured in Create Exam.
   return {
-    fullscreen_required:    raw?.require_fullscreen     ?? false,
-    proctoring_enabled:     raw?.enable_proctoring       ?? false,
+    fullscreen_required:    raw?.require_fullscreen     ?? true,   // always true at platform level
+    proctoring_enabled:     raw?.enable_proctoring      ?? false,
     camera_required:        raw?.camera_required        ?? false,
     microphone_required:    raw?.microphone_required    ?? false,
     max_tab_switches:       raw?.max_tab_switches       ?? 3,
+    max_fullscreen_exits:   raw?.max_fullscreen_exits   ?? 3,      // ← NEW
     auto_save_interval_sec: raw?.auto_save_interval_sec ?? 30,
   };
 }
@@ -109,13 +106,15 @@ export default function LiveExam() {
   // Violation state
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
   const [tabCount,        setTabCount]        = useState(0);
+  const [fsCount,         setFsCount]         = useState(0);   // ← NEW: fullscreen exit display count
   const [forceSubmitting, setForceSubmitting] = useState(false);
   const [forceReason,     setForceReason]     = useState("");
 
-  const dirty       = useRef(new Set<string>());
-  const submitted   = useRef(false);
-  const enteredAt   = useRef(Date.now());
-  const tabCountRef = useRef(0);
+  const dirty              = useRef(new Set<string>());
+  const submitted          = useRef(false);
+  const enteredAt          = useRef(Date.now());
+  const tabCountRef        = useRef(0);
+  const fullscreenCountRef = useRef(0);   // ← NEW
 
   const session     = sessionQuery.data;
   const currentUser = useAuthStore((s) => s.user);
@@ -173,24 +172,16 @@ export default function LiveExam() {
     }
   }, [session, answers]);
 
-  // ── Core submit — called for manual, auto-deadline, and force-submit ─────────
+  // ── Core submit ──────────────────────────────────────────────────────────────
   const submit = useCallback(async (type: "MANUAL" | "AUTO") => {
     if (!session || submitted.current) return;
     submitted.current = true;
     setSubmitting(true);
     setError(null);
     try {
-      // 1. Save any pending answers
       await flushAnswers();
-
-      // 2. Compute proctoring summary — this writes to proctoring_summary table,
-      //    calculates integrity score, and flags the attempt if score < 0.7.
-      //    We use .catch(() => undefined) so a proctoring failure never blocks submission.
       await studentApi.computeProctoringsSummary(session.attempt.id).catch(() => undefined);
-
-      // 3. Submit the exam attempt
       await studentApi.submitAttempt(session.attempt.id, type);
-
       navigate("/student/history", { replace: true, state: { submitted: true } });
     } catch (cause) {
       submitted.current = false;
@@ -207,7 +198,7 @@ export default function LiveExam() {
       void submit("AUTO");
   }, [remaining, session, submit]);
 
-  // ── Auto-save (interval from exam_rules) ────────────────────────────────────
+  // ── Auto-save ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) return;
     const interval = Math.max(5, rule.auto_save_interval_sec) * 1000;
@@ -228,7 +219,7 @@ export default function LiveExam() {
     };
   }, [session]);
 
-  // ── Violation handler — driven by exam_rules ─────────────────────────────────
+  // ── Violation handler ────────────────────────────────────────────────────────
   const handleViolation = useCallback((
     _message: string,
     type: ViolationType,
@@ -239,15 +230,12 @@ export default function LiveExam() {
       setTabCount(newCount);
       const max = rule.max_tab_switches;
 
-      // Log to backend submission_logs
       void studentApi.logEvent(session?.attempt.id ?? "", "TAB_SWITCH_WARNING").catch(() => undefined);
 
-      // Limit reached → force-submit
       if (max > 0 && newCount >= max) {
         const reason = `You switched tabs ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
         setForceReason(reason);
         setForceSubmitting(true);
-        // 4s grace so student sees the reason, then submit
         setTimeout(async () => {
           await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
           void submit("AUTO");
@@ -255,7 +243,6 @@ export default function LiveExam() {
         return;
       }
 
-      // Under limit → warn with remaining count
       const remaining_switches = max - newCount;
       const id = ++warnCounter;
       setWarnings((prev) => [{
@@ -270,12 +257,37 @@ export default function LiveExam() {
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 10_000);
 
     } else if (type === "fullscreen") {
+      // ── UPDATED: enforce max_fullscreen_exits ────────────────────────────────
+      fullscreenCountRef.current += 1;
+      const newCount = fullscreenCountRef.current;
+      setFsCount(newCount);
+      const max = rule.max_fullscreen_exits;
+
       void studentApi.logEvent(session?.attempt.id ?? "", "FULLSCREEN_EXIT").catch(() => undefined);
+
+      // Limit reached → force-submit
+      if (max > 0 && newCount >= max) {
+        const reason = `You exited fullscreen ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
+        setForceReason(reason);
+        setForceSubmitting(true);
+        setTimeout(async () => {
+          await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
+          void submit("AUTO");
+        }, 4000);
+        return;
+      }
+
+      // Under limit → graduated warning
+      const remaining_exits = max > 0 ? max - newCount : null;
       const id = ++warnCounter;
       setWarnings((prev) => [{
-        id, 
-        type: "fullscreen" as ViolationType, 
-        message: "⚠ You exited fullscreen. This has been logged. Return to fullscreen immediately.",
+        id,
+        type: "fullscreen" as ViolationType,
+        message: remaining_exits === null
+          ? `⚠ You exited fullscreen (${newCount} total). This has been logged. Return immediately.`
+          : remaining_exits === 1
+          ? `⚠ Fullscreen exit ${newCount}/${max} — ONE MORE exit will automatically submit your exam.`
+          : `⚠ Fullscreen exit ${newCount}/${max} — ${remaining_exits} more allowed before your exam is auto-submitted.`,
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 12_000);
 
@@ -287,7 +299,7 @@ export default function LiveExam() {
         message: "🚨 Another tab with this exam was detected. Close it immediately — this is a violation.",
       }, ...prev].slice(0, 5));
     }
-  }, [rule.max_tab_switches, session, submit]);
+  }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, submit]);
 
   const handleConflict = useCallback(() => handleViolation("", "conflict"), [handleViolation]);
 
@@ -328,14 +340,6 @@ export default function LiveExam() {
   // ── Camera gate ──────────────────────────────────────────────────────────────
   if (session && !cameraCleared) {
     if (rule.camera_required || rule.proctoring_enabled || rule.fullscreen_required) {
-      // Fullscreen MUST be requested synchronously inside a real user
-      // gesture (a click) — browsers silently reject requestFullscreen()
-      // calls made later from a useEffect after a state update, which is
-      // why it was never actually prompting before. Both ways off this gate
-      // screen (Allow Camera, or Skip when camera isn't required) count as
-      // that user gesture, so both need to trigger it — previously only
-      // the "Allow Camera" path did, so a fullscreen-only exam (camera not
-      // required) skipped fullscreen entirely if the student clicked Skip.
       const proceedPastGate = () => {
         if (rule.fullscreen_required && document.fullscreenElement === null) {
           document.documentElement.requestFullscreen().catch((err) =>
@@ -354,7 +358,6 @@ export default function LiveExam() {
         />
       );
     }
-    // No camera needed — skip gate immediately
     setCameraCleared(true);
   }
 
@@ -418,7 +421,10 @@ export default function LiveExam() {
       {rule.fullscreen_required && !isFullscreen && (
         <div className="proctor-nag-bar">
           <i className="ti ti-maximize" />
-          <span>This exam requires <strong>fullscreen mode</strong>. Your exit has been logged.</span>
+          <span>
+            This exam requires <strong>fullscreen mode</strong>. Your exit has been logged
+            {rule.max_fullscreen_exits > 0 && ` (${fsCount}/${rule.max_fullscreen_exits})`}.
+          </span>
           <button
             className="nag-btn"
             onClick={() => document.documentElement.requestFullscreen().catch(() => undefined)}
@@ -447,6 +453,29 @@ export default function LiveExam() {
           </div>
           {tabCount >= rule.max_tab_switches - 1 && (
             <span className="tab-switch-danger">Next switch = auto-submit</span>
+          )}
+        </div>
+      )}
+
+      {/* Fullscreen exit progress bar (mirrors tab-switch bar style) */}
+      {rule.max_fullscreen_exits > 0 && fsCount > 0 && (
+        <div className="tab-switch-bar">
+          <i className="ti ti-maximize-off" />
+          <span>Fullscreen exits: <strong>{fsCount} / {rule.max_fullscreen_exits}</strong></span>
+          <div className="tab-switch-track">
+            <div
+              className="tab-switch-fill"
+              style={{
+                width: `${Math.min(100, (fsCount / rule.max_fullscreen_exits) * 100)}%`,
+                background:
+                  fsCount >= rule.max_fullscreen_exits - 1 ? "#dc2626" :
+                  fsCount >= Math.floor(rule.max_fullscreen_exits / 2) ? "#d97706" :
+                  "#4ade80",
+              }}
+            />
+          </div>
+          {fsCount >= rule.max_fullscreen_exits - 1 && (
+            <span className="tab-switch-danger">Next exit = auto-submit</span>
           )}
         </div>
       )}
@@ -594,11 +623,19 @@ export default function LiveExam() {
             </button>
           )}
 
-          {/* Tab switch counter in palette */}
+          {/* Tab switch counter */}
           {rule.max_tab_switches > 0 && (
             <div className={`palette-integrity${tabCount >= rule.max_tab_switches - 1 && tabCount > 0 ? " danger" : ""}`}>
               <i className="ti ti-eye" />
               <span>Tab switches: {tabCount}/{rule.max_tab_switches}</span>
+            </div>
+          )}
+
+          {/* Fullscreen exit counter — NEW */}
+          {rule.max_fullscreen_exits > 0 && (
+            <div className={`palette-integrity${fsCount >= rule.max_fullscreen_exits - 1 && fsCount > 0 ? " danger" : ""}`}>
+              <i className="ti ti-maximize-off" />
+              <span>Fullscreen exits: {fsCount}/{rule.max_fullscreen_exits}</span>
             </div>
           )}
 
@@ -620,14 +657,6 @@ export default function LiveExam() {
         </aside>
       </div>
 
-      {/* Invisible proctoring components.
-          Camera/mic each mount purely off their own "required" flag — NOT
-          gated behind proctoring_enabled, otherwise a faculty member can set
-          microphone_required=true without also flipping proctoring_enabled
-          and the mic permission prompt / recording never happens.
-          BrowserMonitor (tab-switch + fullscreen tracking) always runs once
-          the session is live, since a configured tab-switch limit needs to
-          be enforced regardless of the camera/mic proctoring toggle. */}
       {session && (
         <>
           {rule.camera_required && (
