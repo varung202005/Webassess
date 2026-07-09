@@ -394,12 +394,23 @@ async def log_browser_activity(
       browser_activity_logs. The old upsert only ever fired the Realtime
       trigger once (on first insert). Now we INSERT a separate event row
       with event_type so every tab switch fires a Live Alert.
+
+    FIX 3 — browser_activity_summary was never being written:
+      proctor.py's dashboard endpoint reads cumulative tab-switch /
+      fullscreen-exit counts from a SEPARATE table, browser_activity_summary
+      (one row per attempt), not from browser_activity_logs. This endpoint
+      was only ever upserting into browser_activity_logs, so the dashboard's
+      Students panel / tab-switch stat cards were reading a table nothing
+      wrote to — always stale/empty regardless of real activity. Now the
+      cumulative row is upserted into browser_activity_summary too.
     """
     supabase = get_supabase_admin()
     aid = str(body.attempt_id)
     p   = settings.INTEGRITY_SCORE_PENALTIES
 
     # ── 1. Upsert the cumulative activity row (unchanged behaviour) ───────────
+    #    browser_activity_logs stays as the per-event/history table used by
+    #    Realtime + compute_proctoring_summary()'s final read.
     supabase.table("browser_activity_logs").upsert(
         {
             "attempt_id":                aid,
@@ -409,6 +420,24 @@ async def log_browser_activity(
         },
         on_conflict="attempt_id",
     ).execute()
+
+    # ── 1b. FIX: also upsert into browser_activity_summary ────────────────────
+    #    This is the table the dashboard (proctor.py) actually reads
+    #    cumulative counts from for the Students panel / stat cards.
+    try:
+        supabase.table("browser_activity_summary").upsert(
+            {
+                "attempt_id":            aid,
+                "tab_switch_count":      body.tab_switch_count,
+                "fullscreen_exit_count": body.fullscreen_exit_count,
+            },
+            on_conflict="attempt_id",
+        ).execute()
+    except Exception as exc:
+        # Don't let a missing/misnamed browser_activity_summary table break
+        # the whole /browser sync — log it and carry on, since
+        # browser_activity_logs (above) still succeeded.
+        print(f"[proctoring] browser_activity_summary upsert failed (non-fatal): {exc}")
 
     # ── 2. FIX: INSERT a separate event row per violation type ────────────────
     #    These INSERT rows are what fires the Supabase Realtime trigger
