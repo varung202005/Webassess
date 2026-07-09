@@ -119,8 +119,9 @@ const css = `
 .tabs{display:flex;gap:6px;padding:4px;background:#f4f5f8;border:1px solid #e8e9ef;border-radius:12px}.tab-btn{height:34px;border:0;border-radius:9px;background:transparent;color:#6b6b7b;padding:0 12px;font:700 13px var(--font);cursor:pointer}.tab-btn.active{background:#fff;color:#9d102d;box-shadow:var(--shadow-sm)}
 .user-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:16px}.side-panel{display:grid;gap:12px}.rule-box{border:1px solid #e8e9ef;border-radius:14px;background:#fff;padding:14px}.rule-box h4{margin:0 0 8px;font-size:13px}.rule-box p{margin:0;color:#6b6b7b;font-size:12.5px;line-height:1.55}.fab{position:fixed;right:28px;bottom:28px;width:52px;height:52px;border:0;border-radius:16px;background:#b31234;color:#fff;box-shadow:0 12px 30px rgba(112,12,35,.24);display:grid;place-items:center;font-size:24px;cursor:pointer;z-index:25}.fab:hover{background:#9d102d}
 .modal-backdrop{position:fixed;inset:0;background:rgba(26,26,46,.38);z-index:50;display:grid;place-items:center;padding:20px}.modal{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid #e8e9ef;box-shadow:var(--shadow-lg);overflow:hidden}.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #ececf1}.modal-title{font-weight:800}.modal-body{padding:16px}.modal-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 16px;border-top:1px solid #ececf1}.preview-list{max-height:220px;overflow:auto;border:1px solid #e8e9ef;border-radius:12px;margin-top:12px}
+.candidate-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}.compact-card .admin-card-body{padding:14px 16px}.section-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}.section-strip strong{font-size:13px}.schedule-select{width:100%;min-width:0}.candidate-tools{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:12px;align-items:stretch}.mini-upload{border:1px dashed #d1d5db;border-radius:14px;background:#f9fafb;padding:14px;display:flex;align-items:center;gap:10px;cursor:pointer;min-height:86px}.mini-upload:hover{border-color:#c41e3a;background:#fff}.mini-upload i{width:34px;height:34px;border-radius:12px;background:#fde8ec;color:#9d102d;display:grid;place-items:center;font-size:18px}.mini-upload p{margin:0;font-weight:800;font-size:13px}.mini-upload small{display:block;margin-top:3px;color:#8a8a9a;font-size:11.5px}.candidate-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 8px}.assigned-list{display:grid;gap:8px}.assigned-row{border:1px solid #ececf1;border-radius:12px;padding:10px 11px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:10px}.assigned-row-main{min-width:0}.assigned-row-main .name-cell,.assigned-row-main .muted{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.assigned-row-meta{text-align:right;flex:none}
 @media(max-width:1000px){.admin-sidebar{display:none}.admin-main{margin-left:0;width:100%}.stats-grid,.two-col,.quick-actions{grid-template-columns:1fr}.admin-content{padding:16px}.form-row{grid-template-columns:1fr}.input{min-width:0;width:100%}.hero{align-items:flex-start;flex-direction:column}.admin-topbar{padding:0 16px}}
-@media(max-width:1100px){.user-layout{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
+@media(max-width:1100px){.user-layout,.candidate-layout,.candidate-tools{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
 `;
 
 function roleClass(role?: string) {
@@ -565,65 +566,104 @@ export default function AdminDashboard() {
   );
 
   const renderCandidates = () => (
-    <div className="admin-grid two-col">
-      <div className="admin-card">
-        <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-user-plus" /> Candidate Assignment</div></div>
+    <div className="candidate-layout">
+      <div className="admin-card compact-card">
+        <div className="admin-card-head">
+          <div>
+            <div className="admin-card-title"><i className="ti ti-user-plus" /> Candidate Assignment</div>
+            <div className="muted" style={{ marginTop: 4 }}>Batch temporary exam access by schedule.</div>
+          </div>
+          <span className="badge badge-candidate">{candidateRows.length} ready</span>
+        </div>
         <div className="admin-card-body">
-          <div className="toolbar" style={{ marginBottom: 14 }}>
-            <select className="select" style={{ minWidth: 320 }} value={selectedSchedule} onChange={(e) => setSelectedSchedule(e.target.value)}>
-              <option value="">Select entrance exam schedule</option>
-              {schedules.map((schedule) => (
-                <option key={schedule.id} value={schedule.id}>
-                  {schedule.exams?.title ?? "Entrance exam"} - {fmtDate(schedule.start_time)}
-                </option>
-              ))}
-            </select>
+          <div className="section-strip">
+            <strong>Schedule</strong>
+            <span className="muted">{selectedScheduleLabel?.exams?.title ?? "Required before sending credentials"}</span>
+          </div>
+          <select className="select schedule-select" value={selectedSchedule} onChange={(e) => setSelectedSchedule(e.target.value)}>
+            <option value="">Select entrance exam schedule</option>
+            {schedules.map((schedule) => (
+              <option key={schedule.id} value={schedule.id}>
+                {schedule.exams?.title ?? "Entrance exam"} - {fmtDate(schedule.start_time)}
+              </option>
+            ))}
+          </select>
+
+          <div className="candidate-tools" style={{ marginTop: 14 }}>
+            <div>
+              <div className="section-strip">
+                <strong>Add candidate</strong>
+                <button className="btn btn-secondary" onClick={addManualCandidate}><i className="ti ti-plus" /> Add</button>
+              </div>
+              <div className="form-row">
+                <input className="input" placeholder="Full name" value={manualCandidate.full_name} onChange={(e) => setManualCandidate((row) => ({ ...row, full_name: e.target.value }))} />
+                <input className="input" placeholder="Email" value={manualCandidate.email} onChange={(e) => setManualCandidate((row) => ({ ...row, email: e.target.value }))} />
+                <input className="input" placeholder="Phone optional" value={manualCandidate.phone} onChange={(e) => setManualCandidate((row) => ({ ...row, phone: e.target.value }))} />
+                <input className="input" placeholder="Password optional" value={manualCandidate.temp_password} onChange={(e) => setManualCandidate((row) => ({ ...row, temp_password: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="mini-upload" onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) uploadCSV(file); }}>
+              <i className="ti ti-upload" />
+              <div>
+                <p>Upload CSV</p>
+                <small>name,email,phone,temp_password</small>
+              </div>
+              <input ref={fileRef} type="file" accept=".csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadCSV(file); }} />
+            </div>
           </div>
 
-          <div className="form-row">
-            <input className="input" placeholder="Full name" value={manualCandidate.full_name} onChange={(e) => setManualCandidate((row) => ({ ...row, full_name: e.target.value }))} />
-            <input className="input" placeholder="Email" value={manualCandidate.email} onChange={(e) => setManualCandidate((row) => ({ ...row, email: e.target.value }))} />
-            <input className="input" placeholder="Phone optional" value={manualCandidate.phone} onChange={(e) => setManualCandidate((row) => ({ ...row, phone: e.target.value }))} />
-            <input className="input" placeholder="Password optional" value={manualCandidate.temp_password} onChange={(e) => setManualCandidate((row) => ({ ...row, temp_password: e.target.value }))} />
-          </div>
-          <button className="btn btn-secondary" onClick={addManualCandidate}><i className="ti ti-plus" /> Add to batch</button>
-
-          <div className="csv-zone" style={{ marginTop: 16 }} onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) uploadCSV(file); }}>
-            <i className="ti ti-upload" />
-            <p>Upload candidate CSV</p>
-            <small>Headers: name,email,phone,temp_password. Email is sent after import.</small>
-            <input ref={fileRef} type="file" accept=".csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadCSV(file); }} />
-          </div>
-
-          {candidateRows.length > 0 && (
-            <div style={{ marginTop: 16, overflowX: "auto" }}>
-              <div className="toolbar" style={{ justifyContent: "space-between", marginBottom: 10 }}>
-                <strong>{candidateRows.length} candidate(s) ready</strong>
+          {candidateRows.length > 0 ? (
+            <div>
+              <div className="candidate-preview-head">
+                <strong>{candidateRows.length} candidate(s) in batch</strong>
                 <div className="toolbar">
                   <button className="btn btn-secondary" onClick={() => setCandidateRows([])}>Clear</button>
                   <button className="btn btn-primary" disabled={!selectedSchedule || assignMutation.isPending} onClick={() => assignMutation.mutate(candidateRows)}>
-                    <i className="ti ti-mail" /> Send login email(s)
+                    <i className="ti ti-mail" /> Send credentials
                   </button>
                 </div>
               </div>
-              <table className="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Password</th></tr></thead><tbody>
-                {candidateRows.slice(0, 12).map((row, index) => <tr key={`${row.email}-${index}`}><td>{row.full_name}</td><td>{row.email}</td><td>{row.phone || "-"}</td><td>{row.temp_password ? "Provided" : "Auto"}</td></tr>)}
-              </tbody></table>
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Password</th></tr></thead><tbody>
+                  {candidateRows.slice(0, 12).map((row, index) => <tr key={`${row.email}-${index}`}><td>{row.full_name}</td><td>{row.email}</td><td>{row.phone || "-"}</td><td>{row.temp_password ? "Provided" : "Auto"}</td></tr>)}
+                </tbody></table>
+              </div>
             </div>
+          ) : (
+            <div className="empty" style={{ padding: "20px 0 8px" }}>Add candidates manually or import a CSV to preview the batch.</div>
           )}
         </div>
       </div>
-      <div className="admin-card">
-        <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-list-check" /> Assigned Candidates</div></div>
+      <div className="admin-card compact-card">
+        <div className="admin-card-head">
+          <div>
+            <div className="admin-card-title"><i className="ti ti-list-check" /> Assigned Candidates</div>
+            <div className="muted" style={{ marginTop: 4 }}>{selectedScheduleLabel?.exams?.title ?? "Select a schedule"}</div>
+          </div>
+          <span className="badge badge-off">{assignments.length}</span>
+        </div>
         <div className="admin-card-body">
-          <div className="muted" style={{ marginBottom: 10 }}>{selectedScheduleLabel?.exams?.title ?? "Select a schedule"}</div>
-          {assignments.length === 0 ? <div className="empty">No candidates loaded for this schedule.</div> : assignments.map((row) => (
-            <div key={row.assignment_id} style={{ padding: "10px 0", borderBottom: "1px solid var(--c-border)" }}>
-              <div className="name-cell">{row.full_name}</div>
-              <div className="muted">{row.email}</div>
-              <div style={{ marginTop: 5 }}><span className="badge badge-candidate">{row.invitation_status}</span> <span className="muted">{row.attempt_status ?? "Not started"}</span></div>
+          {!selectedSchedule ? (
+            <div className="empty">Choose a schedule to view assignments.</div>
+          ) : assignments.length === 0 ? (
+            <div className="empty">No candidates loaded for this schedule.</div>
+          ) : (
+            <div className="assigned-list">
+              {assignments.map((row) => (
+                <div className="assigned-row" key={row.assignment_id}>
+                  <div className="assigned-row-main">
+                    <div className="name-cell">{row.full_name}</div>
+                    <div className="muted">{row.email}</div>
+                  </div>
+                  <div className="assigned-row-meta">
+                    <span className="badge badge-candidate">{row.invitation_status}</span>
+                    <div className="muted" style={{ marginTop: 5 }}>{row.attempt_status ?? "Not started"}</div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       </div>
     </div>

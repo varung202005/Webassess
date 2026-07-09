@@ -97,6 +97,9 @@ button{font-family:var(--font);cursor:pointer;}
 
 .auth-signup-row { text-align: center; font-size: 13px; color: var(--c-gray-600); margin-top: 16px; }
 .auth-signup-row button { color: var(--c-primary-700); font-weight: 600; cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; }
+.auth-role-note { display:flex; gap:10px; padding:11px 12px; border:1px solid var(--c-gray-200); border-radius:var(--radius-xl); background:var(--c-gray-50); margin:0 0 16px; color:var(--c-gray-600); font-size:12.5px; line-height:1.45; }
+.auth-role-note i { color:var(--c-primary-700); font-size:17px; margin-top:1px; }
+.auth-role-note strong { display:block; color:var(--c-gray-800); font-size:12.5px; margin-bottom:2px; }
 
 /* Banners */
 .error-banner { background: var(--c-danger-100); border: 1px solid #FCA5A5; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: var(--c-danger-700); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
@@ -290,11 +293,11 @@ export default function Login() {
 
       <div className="auth-right">
         <div className="auth-form-box">
-          <div className="auth-form-title">{mode === "login" ? "Welcome back" : "Create your account"}</div>
+          <div className="auth-form-title">{mode === "login" ? "Welcome back" : "Create student account"}</div>
           <div className="auth-form-sub">
             {mode === "login"
-              ? "Sign in to your examination portal account"
-              : "Register with your university email to get started"}
+              ? "Sign in as Admin, Faculty, Student, Proctor or Candidate"
+              : "Student self-registration only. Faculty accounts are created by Admin."}
           </div>
 
           <div className="auth-tabs">
@@ -302,9 +305,19 @@ export default function Login() {
               Sign In
             </button>
             <button type="button" className={`auth-tab ${mode === "signup" ? "active" : ""}`} onClick={() => switchMode("signup")}>
-              Create Account
+              Student Signup
             </button>
           </div>
+
+          {mode === "login" && (
+            <div className="auth-role-note">
+              <i className="ti ti-school"></i>
+              <div>
+                <strong>Faculty login is supported</strong>
+                Use the credentials created manually by Admin or sent after faculty CSV import.
+              </div>
+            </div>
+          )}
 
           {invitationBanner && (
             <div className="success-banner">
@@ -396,7 +409,7 @@ export default function Login() {
 
           <div className="auth-signup-row">
             {mode === "login" ? (
-              <>New to the portal? <button onClick={() => switchMode("signup")}>Create an account</button></>
+              <>Student without an account? <button onClick={() => switchMode("signup")}>Create student account</button></>
             ) : (
               <>Already have an account? <button onClick={() => switchMode("login")}>Sign in</button></>
             )}
