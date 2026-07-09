@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { get, patch, post } from "../../lib/api";
 import { useAuthStore } from "../../store/authStore";
 
-type AdminTab = "overview" | "users" | "candidates" | "proctor" | "audit";
+type AdminTab = "overview" | "users" | "candidates" | "audit";
 type ApiRole = "Admin" | "Faculty" | "Proctor" | "Student" | "Candidate";
 
 interface AdminUser {
@@ -833,7 +833,6 @@ export default function AdminDashboard() {
     if (isError) return <div className="admin-card"><div className="empty">Could not load admin dashboard. Check the backend connection.</div></div>;
     if (activeTab === "users") return renderUsers();
     if (activeTab === "candidates") return renderCandidates();
-    if (activeTab === "proctor") return <div className="admin-card"><div className="empty">Open proctor mode from the sidebar.</div></div>;
     if (activeTab === "audit") return renderAudit();
     return renderOverview();
   };
