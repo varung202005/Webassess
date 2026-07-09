@@ -3,6 +3,7 @@
  * Live Proctor Dashboard — multi-exam support with per-exam filter tabs.
  */
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useFlaggedAttempts, useProctorDashboard, useRecomputeSummary, useSetVerdict } from "../../features/proctor/hooks";
 import ProctorLayout from "../../features/proctor/ProctorLayout";
@@ -45,7 +46,12 @@ const EMPTY_STATS = {
 };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
-export default function ProctorDashboard() {
+interface ProctorDashboardProps {
+  returnToAdmin?: boolean;
+}
+
+export default function ProctorDashboard({ returnToAdmin = false }: ProctorDashboardProps) {
+  const navigate = useNavigate();
   const { data: portal, isLoading: portalLoading, isError: portalError } = useProctorDashboard();
   const { data: flaggedData, isLoading: flaggedLoading } = useFlaggedAttempts();
   const setVerdict = useSetVerdict();
@@ -244,6 +250,17 @@ export default function ProctorDashboard() {
 
   return (
     <ProctorLayout activePage="dashboard">
+      {returnToAdmin && (
+        <div className="pcard" style={{ marginBottom: 12, padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 800 }}>Admin proctor mode</div>
+            <div style={{ color: "var(--muted)", fontSize: 13 }}>Your admin session is still active.</div>
+          </div>
+          <button className="btn btn-secondary" type="button" onClick={() => navigate("/admin/dashboard", { replace: true })}>
+            <i className="ti ti-arrow-left" /> Return to Admin Dashboard
+          </button>
+        </div>
+      )}
 
       {sessions.length === 0 ? (
         <div className="pcard">

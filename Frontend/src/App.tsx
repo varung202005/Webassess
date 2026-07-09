@@ -72,6 +72,7 @@ export default function App() {
 
         {/* ── Proctor ──────────────────────────────────────────────────── */}
         <Route path="/proctor/dashboard"    element={<ProtectedRoute roles={["PROCTOR"]}><ProctorDashboard /></ProtectedRoute>} />
+        <Route path="/admin/proctor"        element={<ProtectedRoute roles={["ADMIN"]}><ProctorDashboard returnToAdmin /></ProtectedRoute>} />
 
         {/* ── Admin ────────────────────────────────────────────────────── */}
         <Route path="/admin/dashboard"      element={<ProtectedRoute roles={["ADMIN"]}><AdminDashboard /></ProtectedRoute>} />
