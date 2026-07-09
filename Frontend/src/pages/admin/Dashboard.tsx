@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { get, post } from "../../lib/api";
+import { get, patch, post } from "../../lib/api";
 import { useAuthStore } from "../../store/authStore";
 
 type AdminTab = "overview" | "users" | "candidates" | "proctor" | "audit";
@@ -78,7 +78,18 @@ interface CandidateEntry {
   temp_password: string;
 }
 
+interface ManagedAccountEntry {
+  full_name: string;
+  email: string;
+  phone: string;
+  password: string;
+}
+
+type UserRoleTab = "Admin" | "Faculty" | "Student" | "Candidate";
+type UserStatusFilter = "ALL" | "ACTIVE" | "INACTIVE" | "RECENT";
+
 const roleOptions: ApiRole[] = ["Admin", "Faculty", "Proctor", "Student", "Candidate"];
+const userTabs: UserRoleTab[] = ["Admin", "Faculty", "Student", "Candidate"];
 
 const css = `
 .admin-shell{display:flex;min-height:100vh;background:#f6f7fb;color:#222536;font-family:var(--font);--side:252px}
@@ -105,7 +116,11 @@ const css = `
 .csv-zone{border:2px dashed #d1d5db;border-radius:14px;padding:26px;text-align:center;cursor:pointer;background:#f9fafb}.csv-zone:hover{border-color:#c41e3a;background:#fff}.csv-zone i{font-size:30px;color:#8a8a9a}.csv-zone p{margin:8px 0 3px;color:#4a4a5c;font-weight:700}.csv-zone small{color:#8a8a9a}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}.empty{padding:28px;text-align:center;color:#8a8a9a;font-size:13px}.audit-row{display:grid;grid-template-columns:110px 120px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid #e8e9ef;font-size:13px}.audit-row:last-child{border-bottom:0}
 .feed-item,.schedule-item,.live-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #ececf1}.feed-item:last-child,.schedule-item:last-child,.live-item:last-child{border-bottom:0}.feed-icon{width:34px;height:34px;border-radius:12px;background:#fde8ec;color:#9d102d;display:grid;place-items:center}.row-main{display:flex;align-items:center;gap:10px;min-width:0}.row-title{font-weight:800;font-size:13px}.row-meta{font-size:12px;color:#8a8a9a;margin-top:2px}.status-dot{width:8px;height:8px;border-radius:99px;background:#10b981}.status-dot.off{background:#9ca3af}
+.tabs{display:flex;gap:6px;padding:4px;background:#f4f5f8;border:1px solid #e8e9ef;border-radius:12px}.tab-btn{height:34px;border:0;border-radius:9px;background:transparent;color:#6b6b7b;padding:0 12px;font:700 13px var(--font);cursor:pointer}.tab-btn.active{background:#fff;color:#9d102d;box-shadow:var(--shadow-sm)}
+.user-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:16px}.side-panel{display:grid;gap:12px}.rule-box{border:1px solid #e8e9ef;border-radius:14px;background:#fff;padding:14px}.rule-box h4{margin:0 0 8px;font-size:13px}.rule-box p{margin:0;color:#6b6b7b;font-size:12.5px;line-height:1.55}.fab{position:fixed;right:28px;bottom:28px;width:52px;height:52px;border:0;border-radius:16px;background:#b31234;color:#fff;box-shadow:0 12px 30px rgba(112,12,35,.24);display:grid;place-items:center;font-size:24px;cursor:pointer;z-index:25}.fab:hover{background:#9d102d}
+.modal-backdrop{position:fixed;inset:0;background:rgba(26,26,46,.38);z-index:50;display:grid;place-items:center;padding:20px}.modal{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid #e8e9ef;box-shadow:var(--shadow-lg);overflow:hidden}.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #ececf1}.modal-title{font-weight:800}.modal-body{padding:16px}.modal-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 16px;border-top:1px solid #ececf1}.preview-list{max-height:220px;overflow:auto;border:1px solid #e8e9ef;border-radius:12px;margin-top:12px}
 @media(max-width:1000px){.admin-sidebar{display:none}.admin-main{margin-left:0;width:100%}.stats-grid,.two-col,.quick-actions{grid-template-columns:1fr}.admin-content{padding:16px}.form-row{grid-template-columns:1fr}.input{min-width:0;width:100%}.hero{align-items:flex-start;flex-direction:column}.admin-topbar{padding:0 16px}}
+@media(max-width:1100px){.user-layout{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
 `;
 
 function roleClass(role?: string) {
@@ -138,6 +153,27 @@ function parseCSV(text: string): CandidateEntry[] {
   }).filter((row) => row.full_name && row.email.includes("@"));
 }
 
+function parseAccountCSV(text: string): ManagedAccountEntry[] {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((cell) => cell.trim().replace(/^"|"$/g, "").toLowerCase());
+  const find = (names: string[]) => names.map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const nameIndex = find(["name", "full_name", "full name"]);
+  const emailIndex = find(["email", "email_id", "email id"]);
+  const phoneIndex = find(["phone", "mobile", "contact"]);
+  const passwordIndex = find(["password", "temp_password", "temporary_password"]);
+  if (nameIndex < 0 || emailIndex < 0) return [];
+  return lines.slice(1).map((line) => {
+    const cols = line.split(",").map((cell) => cell.trim().replace(/^"|"$/g, ""));
+    return {
+      full_name: cols[nameIndex] || "",
+      email: cols[emailIndex] || "",
+      phone: phoneIndex >= 0 ? cols[phoneIndex] || "" : "",
+      password: passwordIndex >= 0 ? cols[passwordIndex] || "" : "",
+    };
+  }).filter((row) => row.full_name && row.email.includes("@"));
+}
+
 function fmtDate(value?: string) {
   if (!value) return "-";
   return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -152,11 +188,18 @@ export default function AdminDashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("ALL");
+  const [userRoleTab, setUserRoleTab] = useState<UserRoleTab>("Admin");
+  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>("ALL");
+  const [createRole, setCreateRole] = useState<UserRoleTab>("Faculty");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [accountRows, setAccountRows] = useState<ManagedAccountEntry[]>([]);
+  const [manualAccount, setManualAccount] = useState<ManagedAccountEntry>({ full_name: "", email: "", phone: "", password: "" });
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState("");
   const [candidateRows, setCandidateRows] = useState<CandidateEntry[]>([]);
   const [manualCandidate, setManualCandidate] = useState<CandidateEntry>({ full_name: "", email: "", phone: "", temp_password: "" });
   const fileRef = useRef<HTMLInputElement>(null);
+  const accountFileRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, isError } = useQuery<AdminDashboardData>({
     queryKey: ["admin-dashboard"],
@@ -168,6 +211,41 @@ export default function AdminDashboard() {
     queryKey: ["admin-candidates", selectedSchedule],
     queryFn: () => get<CandidateRow[]>(`/api/v1/admin/candidates/${selectedSchedule}`),
     enabled: Boolean(selectedSchedule),
+  });
+
+  const createAccountsMutation = useMutation({
+    mutationFn: (rows: ManagedAccountEntry[]) =>
+      post<{ created: number; failed: number; emails_sent: number; emails_failed: number; emails_skipped: number }>("/api/v1/admin/users/bulk", {
+        role: createRole,
+        users: rows.map((row) => ({
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone || null,
+          password: row.password || null,
+        })),
+      }),
+    onSuccess: (result) => {
+      const mailText = result.emails_skipped
+        ? " SMTP is not configured, so credentials were created but email was skipped."
+        : ` ${result.emails_sent} credential email(s) sent, ${result.emails_failed} failed.`;
+      setNotice({ type: "success", text: `${result.created} ${createRole.toLowerCase()} account(s) created.${mailText}` });
+      setAccountRows([]);
+      setManualAccount({ full_name: "", email: "", phone: "", password: "" });
+      setCreateOpen(false);
+      setUserRoleTab(createRole);
+      void qc.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (err: Error) => setNotice({ type: "error", text: err.message || "Could not create accounts." }),
+  });
+
+  const roleMutation = useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: "Student" | "Candidate" }) =>
+      patch(`/api/v1/admin/users/${userId}/role`, { role }),
+    onSuccess: () => {
+      setNotice({ type: "success", text: "Temporary exam role updated." });
+      void qc.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (err: Error) => setNotice({ type: "error", text: err.message || "Could not update role." }),
   });
 
   const assignMutation = useMutation({
@@ -196,13 +274,20 @@ export default function AdminDashboard() {
 
   const users = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const recentCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return (data?.users ?? []).filter((user) => {
       const role = user.roles[0] ?? "";
       const matchesRole = roleFilter === "ALL" || role.toLowerCase() === roleFilter.toLowerCase();
+      const matchesTab = role.toLowerCase() === userRoleTab.toLowerCase();
+      const matchesStatus =
+        statusFilter === "ALL" ||
+        (statusFilter === "ACTIVE" && user.is_active) ||
+        (statusFilter === "INACTIVE" && !user.is_active) ||
+        (statusFilter === "RECENT" && new Date(user.created_at).getTime() >= recentCutoff);
       const matchesSearch = !needle || `${user.full_name} ${user.email}`.toLowerCase().includes(needle);
-      return matchesRole && matchesSearch;
+      return matchesRole && matchesTab && matchesStatus && matchesSearch;
     });
-  }, [data?.users, roleFilter, search]);
+  }, [data?.users, roleFilter, search, statusFilter, userRoleTab]);
 
   const schedules = data?.entranceSchedules ?? [];
   const selectedScheduleLabel = schedules.find((schedule) => schedule.id === selectedSchedule);
@@ -220,6 +305,25 @@ export default function AdminDashboard() {
       setNotice(rows.length ? null : { type: "error", text: "No valid rows found. Use headers: name,email,phone,temp_password" });
     };
     reader.readAsText(file);
+  };
+
+  const uploadAccountCSV = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rows = parseAccountCSV(String(event.target?.result ?? ""));
+      setAccountRows(rows);
+      setNotice(rows.length ? null : { type: "error", text: "No valid rows found. Use headers: name,email,phone,password" });
+    };
+    reader.readAsText(file);
+  };
+
+  const addManualAccount = () => {
+    if (!manualAccount.full_name.trim() || !manualAccount.email.includes("@")) {
+      setNotice({ type: "error", text: "Enter a valid name and email." });
+      return;
+    }
+    setAccountRows((rows) => [...rows, manualAccount]);
+    setManualAccount({ full_name: "", email: "", phone: "", password: "" });
   };
 
   const addManualCandidate = () => {
@@ -328,9 +432,19 @@ export default function AdminDashboard() {
               <td className="muted">{fmtDate(user.created_at)}</td>
               {editable && (
                 <td>
-                  <span className="muted">
-                    {canTemporarilySwitch ? "Student / Candidate only" : "Create a new account for this role"}
-                  </span>
+                  {canTemporarilySwitch ? (
+                    <select
+                      className="select"
+                      value={currentRole}
+                      disabled={roleMutation.isPending}
+                      onChange={(event) => roleMutation.mutate({ userId: user.id, role: event.target.value as "Student" | "Candidate" })}
+                    >
+                      <option value="Student">Student</option>
+                      <option value="Candidate">Candidate</option>
+                    </select>
+                  ) : (
+                    <span className="muted">Create a new account for this role</span>
+                  )}
                 </td>
               )}
             </tr>
@@ -341,18 +455,112 @@ export default function AdminDashboard() {
   );
 
   const renderUsers = () => (
-    <div className="admin-card">
-      <div className="admin-card-head">
-        <div className="admin-card-title"><i className="ti ti-shield-lock" /> Users and Roles</div>
-        <div className="toolbar">
-          <input className="input" placeholder="Search users" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-            <option value="ALL">All roles</option>
-            {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
-          </select>
+    <>
+      <div className="user-layout">
+        <div className="admin-card">
+          <div className="admin-card-head">
+            <div>
+              <div className="admin-card-title"><i className="ti ti-shield-lock" /> Users and Roles</div>
+              <div className="muted" style={{ marginTop: 4 }}>Role-first user management with restricted conversions.</div>
+            </div>
+            <div className="toolbar">
+              <input className="input" placeholder={`Search ${userRoleTab.toLowerCase()}s`} value={search} onChange={(e) => setSearch(e.target.value)} />
+              <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as UserStatusFilter)}>
+                <option value="ALL">All status</option>
+                <option value="ACTIVE">Active</option>
+                <option value="INACTIVE">Inactive</option>
+                <option value="RECENT">Recently added</option>
+              </select>
+              <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+                <option value="ALL">Role filter</option>
+                {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="admin-card-body" style={{ paddingBottom: 0 }}>
+            <div className="tabs">
+              {userTabs.map((role) => (
+                <button key={role} type="button" className={`tab-btn ${userRoleTab === role ? "active" : ""}`} onClick={() => { setUserRoleTab(role); setRoleFilter("ALL"); }}>
+                  {role}s
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ overflowX: "auto" }}>{renderUsersTable(users)}</div>
+          {users.length === 0 && <div className="empty">No {userRoleTab.toLowerCase()} users match these filters.</div>}
+        </div>
+
+        <div className="side-panel">
+          <div className="rule-box">
+            <h4>Role rules</h4>
+            <p>Students and candidates can switch because Candidate is a temporary exam role. Admin and Faculty accounts must be created explicitly.</p>
+          </div>
+          <div className="rule-box">
+            <h4>CSV upload</h4>
+            <p>Admin, Faculty and Student CSVs create permanent accounts, generate missing passwords, and send credentials when SMTP is configured.</p>
+            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => { setCreateRole(userRoleTab === "Candidate" ? "Student" : userRoleTab); setCreateOpen(true); }}>
+              <i className="ti ti-upload" /> Upload or create
+            </button>
+          </div>
+          <div className="rule-box">
+            <h4>Candidates</h4>
+            <p>Candidate accounts stay tied to exam assignment. Use Candidate Assignment for temporary examination access.</p>
+            <button className="btn btn-secondary" style={{ marginTop: 12 }} onClick={() => setActiveTab("candidates")}>
+              <i className="ti ti-user-plus" /> Assign candidates
+            </button>
+          </div>
         </div>
       </div>
-      <div style={{ overflowX: "auto" }}>{renderUsersTable(users)}</div>
+      <button className="fab" type="button" aria-label="Add user" onClick={() => { setCreateRole(userRoleTab === "Candidate" ? "Student" : userRoleTab); setCreateOpen(true); }}>
+        <i className="ti ti-plus" />
+      </button>
+      {createOpen && renderCreateAccountModal()}
+    </>
+  );
+
+  const renderCreateAccountModal = () => (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal" role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <div className="modal-title">Create accounts</div>
+          <button className="icon-btn" type="button" aria-label="Close" onClick={() => setCreateOpen(false)}><i className="ti ti-x" /></button>
+        </div>
+        <div className="modal-body">
+          <div className="toolbar" style={{ marginBottom: 12 }}>
+            <select className="select" value={createRole} onChange={(e) => setCreateRole(e.target.value as UserRoleTab)}>
+              <option value="Admin">Admin</option>
+              <option value="Faculty">Faculty</option>
+              <option value="Student">Student</option>
+            </select>
+            <button className="btn btn-secondary" type="button" onClick={() => accountFileRef.current?.click()}>
+              <i className="ti ti-upload" /> CSV
+            </button>
+            <input ref={accountFileRef} type="file" accept=".csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadAccountCSV(file); }} />
+          </div>
+          <div className="form-row">
+            <input className="input" placeholder="Full name" value={manualAccount.full_name} onChange={(e) => setManualAccount((row) => ({ ...row, full_name: e.target.value }))} />
+            <input className="input" placeholder="Email" value={manualAccount.email} onChange={(e) => setManualAccount((row) => ({ ...row, email: e.target.value }))} />
+            <input className="input" placeholder="Phone optional" value={manualAccount.phone} onChange={(e) => setManualAccount((row) => ({ ...row, phone: e.target.value }))} />
+            <input className="input" placeholder="Password optional" value={manualAccount.password} onChange={(e) => setManualAccount((row) => ({ ...row, password: e.target.value }))} />
+          </div>
+          <button className="btn btn-secondary" type="button" onClick={addManualAccount}><i className="ti ti-plus" /> Add to batch</button>
+          {accountRows.length > 0 && (
+            <div className="preview-list">
+              <table className="data-table">
+                <thead><tr><th>Name</th><th>Email</th><th>Password</th></tr></thead>
+                <tbody>{accountRows.slice(0, 12).map((row, index) => <tr key={`${row.email}-${index}`}><td>{row.full_name}</td><td>{row.email}</td><td>{row.password ? "Provided" : "Auto"}</td></tr>)}</tbody>
+              </table>
+            </div>
+          )}
+          <div className="muted" style={{ marginTop: 10 }}>CSV headers: name,email,phone,password. Password may be blank for auto-generation.</div>
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-secondary" type="button" onClick={() => setAccountRows([])}>Clear</button>
+          <button className="btn btn-primary" type="button" disabled={!accountRows.length || createAccountsMutation.isPending} onClick={() => createAccountsMutation.mutate(accountRows)}>
+            <i className="ti ti-mail" /> Create and email
+          </button>
+        </div>
+      </div>
     </div>
   );
 

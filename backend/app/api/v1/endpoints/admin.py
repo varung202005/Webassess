@@ -13,13 +13,14 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.security import require_admin
 from app.db.supabase import get_supabase_admin
-from app.services.email_service import send_candidate_invitation
+from app.services.email_service import send_account_credentials, send_candidate_invitation
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 VALID_ROLES = {"Admin", "Faculty", "Proctor", "Student", "Candidate"}
+MANAGED_ACCOUNT_ROLES = {"Admin", "Faculty", "Student"}
 
 
 class RoleChangeRequest(BaseModel):
@@ -31,6 +32,22 @@ class CandidateEntry(BaseModel):
     email: str
     phone: Optional[str] = None
     temp_password: Optional[str] = None
+
+
+class ManagedAccountEntry(BaseModel):
+    full_name: str
+    email: str
+    phone: Optional[str] = None
+    password: Optional[str] = None
+
+
+class CreateManagedAccountRequest(ManagedAccountEntry):
+    role: str
+
+
+class BulkCreateManagedAccountsRequest(BaseModel):
+    role: str
+    users: list[ManagedAccountEntry]
 
 
 class AdminAssignCandidatesRequest(BaseModel):
@@ -45,6 +62,10 @@ def _generate_temp_password(length: int = 10) -> str:
 
 def _absolute_login_url(token: str) -> str:
     return f"{settings.FRONTEND_URL.rstrip('/')}/login?token={token}"
+
+
+def _login_url() -> str:
+    return f"{settings.FRONTEND_URL.rstrip('/')}/login"
 
 
 def _count(supabase, table: str, **eq_filters) -> int:
@@ -75,6 +96,81 @@ def _user_role_map(supabase, user_ids: list[str]) -> dict[str, list[str]]:
         if role_name:
             role_map.setdefault(row["user_id"], []).append(role_name)
     return role_map
+
+
+def _normalize_managed_role(role: str) -> str:
+    role_name = role.strip().title()
+    if role_name not in MANAGED_ACCOUNT_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail="Admin-managed account creation only supports Admin, Faculty, and Student. Candidates must be assigned to an exam.",
+        )
+    return role_name
+
+
+def _create_or_update_managed_account(supabase, role_name: str, entry: ManagedAccountEntry) -> dict:
+    email = entry.email.strip().lower()
+    full_name = entry.full_name.strip()
+    if not full_name or "@" not in email:
+        return {"email": email, "status": "error", "error": "Valid name and email are required"}
+
+    roles = _role_lookup(supabase)
+    role_id = roles.get(role_name)
+    if not role_id:
+        return {"email": email, "status": "error", "error": f"{role_name} role not found"}
+
+    password = entry.password or _generate_temp_password()
+    existing = supabase.table("users").select("id").eq("email", email).execute().data or []
+
+    try:
+        if existing:
+            user_id = existing[0]["id"]
+            supabase.auth.admin.update_user_by_id(user_id, {"password": password})
+            supabase.table("users").update({
+                "full_name": full_name,
+                "phone": entry.phone,
+                "is_active": True,
+                "is_verified": True,
+            }).eq("id", user_id).execute()
+        else:
+            auth_resp = supabase.auth.admin.create_user({
+                "email": email,
+                "password": password,
+                "email_confirm": True,
+                "user_metadata": {"full_name": full_name, "role": role_name.lower()},
+            })
+            user_id = auth_resp.user.id
+            supabase.table("users").upsert({
+                "id": user_id,
+                "full_name": full_name,
+                "email": email,
+                "phone": entry.phone,
+                "password_hash": "managed_by_supabase_auth",
+                "is_active": True,
+                "is_verified": True,
+            }, on_conflict="id").execute()
+
+        supabase.table("user_roles").delete().eq("user_id", user_id).execute()
+        supabase.table("user_roles").insert({"user_id": user_id, "role_id": role_id}).execute()
+
+        email_result = send_account_credentials({
+            "full_name": full_name,
+            "email": email,
+            "password": password,
+            "role": role_name,
+            "login_url": _login_url(),
+        })
+        return {
+            "email": email,
+            "user_id": user_id,
+            "role": role_name,
+            "status": "created",
+            "email_status": "sent" if email_result.sent else "skipped" if email_result.skipped else "failed",
+            "email_error": email_result.error,
+        }
+    except Exception as exc:
+        logger.warning("Managed account creation failed for %s: %s", email, exc)
+        return {"email": email, "status": "error", "error": str(exc)}
 
 
 @router.get("/dashboard")
@@ -180,9 +276,51 @@ async def change_user_role(
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
 
+    current_roles = _user_role_map(supabase, [str(user_id)]).get(str(user_id), [])
+    current_role = current_roles[0] if current_roles else None
+    allowed_pair = {current_role, role_name} <= {"Student", "Candidate"}
+    if not allowed_pair:
+        raise HTTPException(
+            status_code=400,
+            detail="Only Student and Candidate roles can be switched. Create a new Admin or Faculty account explicitly.",
+        )
+
     supabase.table("user_roles").delete().eq("user_id", str(user_id)).execute()
     supabase.table("user_roles").insert({"user_id": str(user_id), "role_id": role_id}).execute()
     return {"message": "Role updated", "user_id": str(user_id), "role": role_name}
+
+
+@router.post("/users")
+async def create_managed_account(
+    body: CreateManagedAccountRequest,
+    _: dict = Depends(require_admin),
+):
+    role_name = _normalize_managed_role(body.role)
+    supabase = get_supabase_admin()
+    result = _create_or_update_managed_account(supabase, role_name, body)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.post("/users/bulk")
+async def bulk_create_managed_accounts(
+    body: BulkCreateManagedAccountsRequest,
+    _: dict = Depends(require_admin),
+):
+    if not body.users:
+        raise HTTPException(status_code=400, detail="At least one user is required")
+    role_name = _normalize_managed_role(body.role)
+    supabase = get_supabase_admin()
+    results = [_create_or_update_managed_account(supabase, role_name, entry) for entry in body.users]
+    return {
+        "created": len([row for row in results if row["status"] == "created"]),
+        "failed": len([row for row in results if row["status"] == "error"]),
+        "emails_sent": len([row for row in results if row.get("email_status") == "sent"]),
+        "emails_failed": len([row for row in results if row.get("email_status") == "failed"]),
+        "emails_skipped": len([row for row in results if row.get("email_status") == "skipped"]),
+        "results": results,
+    }
 
 
 @router.get("/candidate-schedules")
