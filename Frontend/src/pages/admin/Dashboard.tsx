@@ -1,10 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { get, patch, post } from "../../lib/api";
 import { useAuthStore } from "../../store/authStore";
 
-type AdminTab = "overview" | "users" | "candidates" | "proctor" | "audit";
+type AdminTab = "overview" | "users" | "candidates" | "audit";
 type ApiRole = "Admin" | "Faculty" | "Proctor" | "Student" | "Candidate";
 
 interface AdminUser {
@@ -37,8 +37,22 @@ interface AuditLog {
   id: string;
   action: string;
   table_name?: string;
+  record_id?: string;
+  target_id?: string;
+  status?: string;
+  ip_address?: string;
+  details?: unknown;
+  metadata?: unknown;
   created_at: string;
+  user_id?: string;
   users?: { full_name?: string; email?: string } | null;
+}
+
+interface AuditLogResponse {
+  items: AuditLog[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 interface AdminDashboardData {
@@ -120,8 +134,10 @@ const css = `
 .user-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:16px}.side-panel{display:grid;gap:12px}.rule-box{border:1px solid #e8e9ef;border-radius:14px;background:#fff;padding:14px}.rule-box h4{margin:0 0 8px;font-size:13px}.rule-box p{margin:0;color:#6b6b7b;font-size:12.5px;line-height:1.55}.fab{position:fixed;right:28px;bottom:28px;width:52px;height:52px;border:0;border-radius:16px;background:#b31234;color:#fff;box-shadow:0 12px 30px rgba(112,12,35,.24);display:grid;place-items:center;font-size:24px;cursor:pointer;z-index:25}.fab:hover{background:#9d102d}
 .modal-backdrop{position:fixed;inset:0;background:rgba(26,26,46,.38);z-index:50;display:grid;place-items:center;padding:20px}.modal{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid #e8e9ef;box-shadow:var(--shadow-lg);overflow:hidden}.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #ececf1}.modal-title{font-weight:800}.modal-body{padding:16px}.modal-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 16px;border-top:1px solid #ececf1}.preview-list{max-height:220px;overflow:auto;border:1px solid #e8e9ef;border-radius:12px;margin-top:12px}
 .candidate-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}.compact-card .admin-card-body{padding:14px 16px}.section-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px}.section-strip strong{font-size:13px}.schedule-select{width:100%;min-width:0}.candidate-tools{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:12px;align-items:stretch}.mini-upload{border:1px dashed #d1d5db;border-radius:14px;background:#f9fafb;padding:14px;display:flex;align-items:center;gap:10px;cursor:pointer;min-height:86px}.mini-upload:hover{border-color:#c41e3a;background:#fff}.mini-upload i{width:34px;height:34px;border-radius:12px;background:#fde8ec;color:#9d102d;display:grid;place-items:center;font-size:18px}.mini-upload p{margin:0;font-weight:800;font-size:13px}.mini-upload small{display:block;margin-top:3px;color:#8a8a9a;font-size:11.5px}.candidate-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 8px}.assigned-list{display:grid;gap:8px}.assigned-row{border:1px solid #ececf1;border-radius:12px;padding:10px 11px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:10px}.assigned-row-main{min-width:0}.assigned-row-main .name-cell,.assigned-row-main .muted{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.assigned-row-meta{text-align:right;flex:none}
+.audit-toolbar{display:grid;grid-template-columns:minmax(220px,1.3fr) repeat(4,minmax(140px,.7fr));gap:10px;padding:16px;border-bottom:1px solid #ececf1}.audit-table tbody tr{cursor:pointer}.audit-table tbody tr:hover td{background:#fff7f9}.audit-details{background:#f9fafb;border:1px solid #ececf1;border-radius:12px;padding:12px;color:#4a4a5c;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto}.badge-success{background:#d1fae5;color:#065f46}.badge-failed{background:#fee2e2;color:#991b1b}.badge-warning{background:#fef3c7;color:#92400e}.badge-info{background:#dbeafe;color:#1e40af}.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-top:1px solid #ececf1}
+.skeleton{position:relative;overflow:hidden;background:#eef0f4;border-radius:10px}.skeleton:after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.62),transparent);animation:shine 1.2s infinite}.sk-line{height:12px}.sk-card{height:108px;border-radius:14px}.sk-table{height:340px;border-radius:14px}@keyframes shine{to{transform:translateX(100%)}}
 @media(max-width:1000px){.admin-sidebar{display:none}.admin-main{margin-left:0;width:100%}.stats-grid,.two-col,.quick-actions{grid-template-columns:1fr}.admin-content{padding:16px}.form-row{grid-template-columns:1fr}.input{min-width:0;width:100%}.hero{align-items:flex-start;flex-direction:column}.admin-topbar{padding:0 16px}}
-@media(max-width:1100px){.user-layout,.candidate-layout,.candidate-tools{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
+@media(max-width:1100px){.user-layout,.candidate-layout,.candidate-tools,.audit-toolbar{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
 `;
 
 function roleClass(role?: string) {
@@ -180,6 +196,27 @@ function fmtDate(value?: string) {
   return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function auditStatus(log: AuditLog): "success" | "failed" | "warning" | "info" {
+  const raw = `${log.status ?? log.action ?? ""}`.toLowerCase();
+  if (raw.includes("fail") || raw.includes("error") || raw.includes("denied")) return "failed";
+  if (raw.includes("warn") || raw.includes("flag") || raw.includes("suspicious")) return "warning";
+  if (raw.includes("create") || raw.includes("update") || raw.includes("assign") || raw.includes("publish") || raw.includes("success")) return "success";
+  return "info";
+}
+
+function auditTarget(log: AuditLog) {
+  return log.table_name ?? log.record_id ?? log.target_id ?? "record";
+}
+
+function auditDetails(log: AuditLog) {
+  const payload = log.details ?? log.metadata ?? log;
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return String(payload ?? "No extra details.");
+  }
+}
+
 export default function AdminDashboard() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -195,6 +232,13 @@ export default function AdminDashboard() {
   const [createOpen, setCreateOpen] = useState(false);
   const [accountRows, setAccountRows] = useState<ManagedAccountEntry[]>([]);
   const [manualAccount, setManualAccount] = useState<ManagedAccountEntry>({ full_name: "", email: "", phone: "", password: "" });
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditAction, setAuditAction] = useState("");
+  const [auditUser, setAuditUser] = useState("");
+  const [auditStart, setAuditStart] = useState("");
+  const [auditEnd, setAuditEnd] = useState("");
+  const [auditPage, setAuditPage] = useState(0);
+  const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState("");
   const [candidateRows, setCandidateRows] = useState<CandidateEntry[]>([]);
@@ -212,6 +256,26 @@ export default function AdminDashboard() {
     queryKey: ["admin-candidates", selectedSchedule],
     queryFn: () => get<CandidateRow[]>(`/api/v1/admin/candidates/${selectedSchedule}`),
     enabled: Boolean(selectedSchedule),
+  });
+
+  const auditLimit = 12;
+  const auditParams = useMemo(() => {
+    const params = new URLSearchParams({
+      limit: String(auditLimit),
+      offset: String(auditPage * auditLimit),
+    });
+    if (auditSearch.trim()) params.set("search", auditSearch.trim());
+    if (auditAction) params.set("action", auditAction);
+    if (auditUser) params.set("user_id", auditUser);
+    if (auditStart) params.set("start_date", new Date(auditStart).toISOString());
+    if (auditEnd) params.set("end_date", new Date(`${auditEnd}T23:59:59`).toISOString());
+    return params.toString();
+  }, [auditAction, auditEnd, auditPage, auditSearch, auditStart, auditUser]);
+
+  const { data: auditData, isLoading: auditLoading } = useQuery<AuditLogResponse>({
+    queryKey: ["audit-logs", auditParams],
+    queryFn: () => get<AuditLogResponse>(`/api/v1/audit-logs/?${auditParams}`),
+    enabled: activeTab === "audit",
   });
 
   const createAccountsMutation = useMutation({
@@ -336,6 +400,14 @@ export default function AdminDashboard() {
     setManualCandidate({ full_name: "", email: "", phone: "", temp_password: "" });
   };
 
+  const openCreateAccount = (role: UserRoleTab) => {
+    const nextRole = role === "Candidate" ? "Student" : role;
+    setCreateRole(nextRole);
+    setUserRoleTab(nextRole);
+    setCreateOpen(true);
+    setActiveTab("users");
+  };
+
   const quickAction = (label: string, icon: string, action: () => void) => (
     <button className="action-btn" type="button" onClick={action}>
       <i className={`ti ${icon}`} />
@@ -353,7 +425,7 @@ export default function AdminDashboard() {
         <div className="toolbar">
           <button className="icon-btn" type="button" aria-label="Notifications"><i className="ti ti-bell" /></button>
           <button className="icon-btn" type="button" aria-label="Profile"><i className="ti ti-user-circle" /></button>
-          <button className="btn btn-primary" type="button" onClick={() => setActiveTab("candidates")}><i className="ti ti-plus" /> Quick Create</button>
+          <button className="btn btn-primary" type="button" onClick={() => openCreateAccount("Faculty")}><i className="ti ti-plus" /> Quick Create</button>
         </div>
       </section>
       <div className="admin-grid stats-grid">
@@ -363,11 +435,11 @@ export default function AdminDashboard() {
         <div className="stat-card"><div className="stat-label">Candidates Assigned</div><div className="stat-value">{candidatesAssigned}</div><div className="stat-meta">Across published schedules</div></div>
       </div>
       <div className="admin-grid quick-actions">
-        {quickAction("Create Exam", "ti-file-plus", () => setNotice({ type: "success", text: "Exam creation will be wired into the admin workspace in the next phase." }))}
+        {quickAction("Create Faculty", "ti-school", () => openCreateAccount("Faculty"))}
+        {quickAction("Create Student", "ti-user-plus", () => openCreateAccount("Student"))}
         {quickAction("Manage Users", "ti-users", () => setActiveTab("users"))}
         {quickAction("Assign Candidates", "ti-user-plus", () => setActiveTab("candidates"))}
-        {quickAction("Create Faculty", "ti-school", () => setActiveTab("users"))}
-        {quickAction("Create Schedule", "ti-calendar-plus", () => setNotice({ type: "success", text: "Schedule creation will be wired into the admin workspace in the next phase." }))}
+        {quickAction("Audit Logs", "ti-list-details", () => setActiveTab("audit"))}
         {quickAction("Go to Proctor Portal", "ti-device-desktop", () => navigate("/admin/proctor"))}
       </div>
       <div className="admin-grid two-col">
@@ -499,7 +571,7 @@ export default function AdminDashboard() {
           <div className="rule-box">
             <h4>CSV upload</h4>
             <p>Admin, Faculty and Student CSVs create permanent accounts, generate missing passwords, and send credentials when SMTP is configured.</p>
-            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => { setCreateRole(userRoleTab === "Candidate" ? "Student" : userRoleTab); setCreateOpen(true); }}>
+            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => openCreateAccount(userRoleTab)}>
               <i className="ti ti-upload" /> Upload or create
             </button>
           </div>
@@ -512,7 +584,7 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
-      <button className="fab" type="button" aria-label="Add user" onClick={() => { setCreateRole(userRoleTab === "Candidate" ? "Student" : userRoleTab); setCreateOpen(true); }}>
+      <button className="fab" type="button" aria-label="Add user" onClick={() => openCreateAccount(userRoleTab)}>
         <i className="ti ti-plus" />
       </button>
       {createOpen && renderCreateAccountModal()}
@@ -671,25 +743,96 @@ export default function AdminDashboard() {
 
   const renderAudit = () => (
     <div className="admin-card">
-      <div className="admin-card-head"><div className="admin-card-title"><i className="ti ti-list-details" /> Audit Logs</div></div>
-      <div className="admin-card-body">
-        {(data?.auditLogs ?? []).map((log) => (
-          <div className="audit-row" key={log.id}>
-            <span className="muted">{new Date(log.created_at).toLocaleTimeString()}</span>
-            <span className="badge badge-off">{log.action}</span>
-            <span>{log.users?.email ?? "System"} on {log.table_name ?? "record"}</span>
-          </div>
-        ))}
+      <div className="admin-card-head">
+        <div>
+          <div className="admin-card-title"><i className="ti ti-list-details" /> Audit Logs</div>
+          <div className="muted" style={{ marginTop: 4 }}>Searchable event history for admin actions and system changes.</div>
+        </div>
+        <span className="badge badge-off">{auditData?.total ?? 0} events</span>
+      </div>
+      <div className="audit-toolbar">
+        <input className="input" placeholder="Search action or target" value={auditSearch} onChange={(e) => { setAuditSearch(e.target.value); setAuditPage(0); }} />
+        <select className="select" value={auditAction} onChange={(e) => { setAuditAction(e.target.value); setAuditPage(0); }}>
+          <option value="">All actions</option>
+          {Array.from(new Set([...(data?.auditLogs ?? []), ...(auditData?.items ?? [])].map((log) => log.action).filter(Boolean))).map((action) => (
+            <option key={action} value={action}>{action}</option>
+          ))}
+        </select>
+        <select className="select" value={auditUser} onChange={(e) => { setAuditUser(e.target.value); setAuditPage(0); }}>
+          <option value="">All users</option>
+          {(data?.users ?? []).map((user) => <option key={user.id} value={user.id}>{user.full_name || user.email}</option>)}
+        </select>
+        <input className="input" type="date" value={auditStart} onChange={(e) => { setAuditStart(e.target.value); setAuditPage(0); }} />
+        <input className="input" type="date" value={auditEnd} onChange={(e) => { setAuditEnd(e.target.value); setAuditPage(0); }} />
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="data-table audit-table">
+          <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th><th>Status</th><th>IP Address</th><th>Details</th></tr></thead>
+          <tbody>
+            {auditLoading && <tr><td colSpan={7}><div className="empty">Loading audit logs...</div></td></tr>}
+            {!auditLoading && (auditData?.items ?? []).length === 0 && <tr><td colSpan={7}><div className="empty">No audit logs match these filters.</div></td></tr>}
+            {(auditData?.items ?? []).map((log) => {
+              const status = auditStatus(log);
+              const expanded = expandedAuditId === log.id;
+              return (
+                <Fragment key={log.id}>
+                  <tr onClick={() => setExpandedAuditId(expanded ? null : log.id)}>
+                    <td className="muted">{fmtDate(log.created_at)}</td>
+                    <td><div className="name-cell">{log.users?.full_name ?? "System"}</div><div className="muted">{log.users?.email ?? "Automated event"}</div></td>
+                    <td><span className="badge badge-off">{log.action}</span></td>
+                    <td>{auditTarget(log)}</td>
+                    <td><span className={`badge badge-${status}`}>{status}</span></td>
+                    <td className="muted">{log.ip_address ?? "-"}</td>
+                    <td><button className="btn btn-secondary" type="button">{expanded ? "Hide" : "View"}</button></td>
+                  </tr>
+                  {expanded && (
+                    <tr>
+                      <td colSpan={7}><pre className="audit-details">{auditDetails(log)}</pre></td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="pagination">
+        <span className="muted">Page {auditPage + 1} · Showing {(auditData?.items ?? []).length} of {auditData?.total ?? 0}</span>
+        <div className="toolbar">
+          <button className="btn btn-secondary" disabled={auditPage === 0} onClick={() => setAuditPage((page) => Math.max(0, page - 1))}>Previous</button>
+          <button className="btn btn-secondary" disabled={(auditPage + 1) * auditLimit >= (auditData?.total ?? 0)} onClick={() => setAuditPage((page) => page + 1)}>Next</button>
+        </div>
       </div>
     </div>
   );
 
+  const renderLoading = () => (
+    <>
+      <section className="hero">
+        <div style={{ width: "min(460px,100%)" }}>
+          <div className="skeleton sk-line" style={{ width: "60%", height: 28, marginBottom: 12 }} />
+          <div className="skeleton sk-line" style={{ width: "85%" }} />
+        </div>
+        <div className="toolbar">
+          <div className="skeleton" style={{ width: 38, height: 38 }} />
+          <div className="skeleton" style={{ width: 120, height: 38 }} />
+        </div>
+      </section>
+      <div className="admin-grid stats-grid" style={{ marginBottom: 18 }}>
+        {[0, 1, 2, 3].map((item) => <div className="skeleton sk-card" key={item} />)}
+      </div>
+      <div className="admin-grid quick-actions">
+        {[0, 1, 2, 3, 4, 5].map((item) => <div className="skeleton" style={{ height: 58, borderRadius: 14 }} key={item} />)}
+      </div>
+      <div className="skeleton sk-table" />
+    </>
+  );
+
   const content = () => {
-    if (isLoading) return <div className="admin-card"><div className="empty">Loading admin control center...</div></div>;
+    if (isLoading) return renderLoading();
     if (isError) return <div className="admin-card"><div className="empty">Could not load admin dashboard. Check the backend connection.</div></div>;
     if (activeTab === "users") return renderUsers();
     if (activeTab === "candidates") return renderCandidates();
-    if (activeTab === "proctor") return <div className="admin-card"><div className="empty">Open proctor mode from the sidebar.</div></div>;
     if (activeTab === "audit") return renderAudit();
     return renderOverview();
   };
