@@ -517,6 +517,15 @@ async def log_browser_activity(
             "session_conflict_detected": True,
         }).execute()
 
+    # Always log a HEARTBEAT event so the backend can verify the network wasn't intercepted
+    supabase.table("browser_activity_logs").insert({
+        "attempt_id":                aid,
+        "event_type":                "HEARTBEAT",
+        "tab_switch_count":          body.tab_switch_count,
+        "fullscreen_exit_count":     body.fullscreen_exit_count,
+        "session_conflict_detected": body.session_conflict_detected,
+    }).execute()
+
     # ── 3. FIX: sync into proctoring_summary live ─────────────────────────────
     #    Compute a partial integrity score from browser events only.
     #    When the exam is submitted, compute_proctoring_summary() will
@@ -738,6 +747,24 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
     audio_logs   = supabase.table("audio_monitoring_logs").select("id").eq("attempt_id", aid).eq("noise_detected", True).execute().data or []
     noise_events = len(audio_logs)
 
+    # ── Missing Heartbeat Defense ─────────────────────────────────────────────
+    # Verify the student didn't block the API using an extension/proxy
+    attempt_data = supabase.table("exam_attempts").select("started_at").eq("id", aid).execute().data
+    time_spent_sec = 0
+    if attempt_data and attempt_data[0].get("started_at"):
+        from datetime import datetime, timezone
+        started_at = datetime.fromisoformat(attempt_data[0]["started_at"])
+        now = datetime.now(timezone.utc)
+        time_spent_sec = (now - started_at).total_seconds()
+        
+    heartbeat_logs = supabase.table("browser_activity_logs").select("id").eq("attempt_id", aid).eq("event_type", "HEARTBEAT").execute().data or []
+    actual_heartbeats = len(heartbeat_logs)
+    expected_heartbeats = time_spent_sec / 30.0
+    
+    missing_heartbeat_penalty = 0.0
+    if time_spent_sec > 60 and actual_heartbeats < (expected_heartbeats * 0.5):
+        missing_heartbeat_penalty = 0.5  # Massive penalty for network interception
+
     # ── Integrity score ───────────────────────────────────────────────────────
     noise_penalty = p.get("noise_event", 0.02)
     penalty = (
@@ -750,7 +777,8 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
         clipboard    * p.get("clipboard", 0.05)       +
         screenshot   * p.get("screenshot", 0.10)      +
         print_count  * p.get("print", 0.10)           +
-        noise_events * noise_penalty
+        noise_events * noise_penalty                  +
+        missing_heartbeat_penalty
     )
     integrity_score = round(max(0.0, 1.0 - penalty), 4)
     total_incidents = face_absence + multi_person + phone_detect + tab_switches + fs_exits + focus_loss + clipboard + screenshot + print_count + noise_events
@@ -759,8 +787,8 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
     # Flag threshold: a student shows up in "Flagged Attempts" once their
     # integrity score falls below 50% — OR immediately, regardless of score,
     # if their exam was shut down for breaching a hard rule (tab-switch limit
-    # exceeded / duplicate session detected).
-    flagged = integrity_score < 0.5 or hard_violation
+    # exceeded / duplicate session detected) or missing heartbeats.
+    flagged = integrity_score < 0.5 or hard_violation or (missing_heartbeat_penalty > 0)
 
     # Preserve an existing proctor decision — a recompute shouldn't silently
     # un-clear/un-violate an attempt a proctor already reviewed. Only default
@@ -772,7 +800,10 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
         .execute()
         .data
     ) or []
+    
     proctor_verdict = existing[0]["proctor_verdict"] if existing and existing[0].get("proctor_verdict") else "PENDING"
+    if missing_heartbeat_penalty > 0 and proctor_verdict == "PENDING":
+        proctor_verdict = "SUSPICIOUS_NETWORK_INTERCEPTION"
 
     # ── Write final summary ───────────────────────────────────────────────────
     supabase.table("proctoring_summary").upsert(

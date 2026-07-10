@@ -58,6 +58,13 @@ async def _finalize_attempt(supabase, attempt: dict, submission_type: Submission
     started_at = datetime.fromisoformat(attempt["started_at"])
     time_spent = int((now - started_at).total_seconds())
     effective_deadline = _effective_deadline(supabase, attempt)
+    
+    # ── Time Tampering Defense ──
+    # If the student froze the local timer, they might submit way past the deadline.
+    time_tampering_detected = False
+    if now > effective_deadline + timedelta(minutes=2):
+        time_tampering_detected = True
+
     if now >= effective_deadline and submission_type == "MANUAL":
         submission_type = "AUTO"
 
@@ -86,6 +93,14 @@ async def _finalize_attempt(supabase, attempt: dict, submission_type: Submission
         "metadata": f'{{"total_score": {total_score}, "time_spent_sec": {time_spent}}}',
     }).execute()
     await _create_result(attempt_id, attempt, total_score)
+    
+    # If time tampering is detected, retroactively flag the proctoring_summary
+    if time_tampering_detected:
+        supabase.table("proctoring_summary").update({
+            "flagged_for_review": True,
+            "proctor_verdict": "SUSPICIOUS_TIME_TAMPERING"
+        }).eq("attempt_id", attempt_id).execute()
+
     return {
         "message": "Exam submitted",
         "total_score": total_score,
