@@ -522,7 +522,7 @@ def _call_groq(api_key: str, batch: list[dict], offset: int, temperature: float,
         max_tokens = 3
 
     payload = {
-        "model":       "llama-3.3-70b-versatile",
+        "model":       "qwen-qwq-32b",
         "temperature": temperature,
         "max_tokens":  max_tokens,
         "messages": [
