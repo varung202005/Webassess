@@ -310,7 +310,7 @@ export default function ProctorDashboard({ returnToAdmin = false }: ProctorDashb
         <div className="pcard-head">
           <i className="ti ti-camera" style={{ color: "var(--c-primary-700)", fontSize: 17 }} />
           <span className="pcard-title">Live Candidate Feeds</span>
-          <span className="pcard-count" style={{ background: "#f0fdf4", color: "#166534" }}>~30s delay</span>
+          <span className="pcard-count" style={{ background: "#f0fdf4", color: "#166534" }}>~10s delay</span>
           {visibleAttempts.length > 0 && (
             <span style={{ fontSize: 11, color: "#aaa", marginLeft: "auto" }}>
               {visibleAttempts.length} candidate{visibleAttempts.length !== 1 ? "s" : ""} monitored

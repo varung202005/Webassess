@@ -12,8 +12,8 @@ export function useProctorDashboard() {
   return useQuery({
     queryKey: DASHBOARD_KEY,
     queryFn:  () => proctorApi.dashboard(),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 5_000,
+    refetchInterval: 10_000,   // refresh every 10s — matches webcam capture interval
   });
 }
 
@@ -24,8 +24,8 @@ export function useFlaggedAttempts() {
   const query = useQuery({
     queryKey: FLAGGED_KEY,
     queryFn:  () => proctorApi.flagged(),
-    staleTime: 10_000,
-    refetchInterval: 20_000,
+    staleTime: 5_000,
+    refetchInterval: 10_000,   // refresh every 10s
   });
 
   useEffect(() => {

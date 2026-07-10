@@ -317,11 +317,17 @@ function EvidenceModal({
   issue: string;
   onClose: () => void;
 }) {
-  const isAudio = issue === "Audio Noise";
+  const isAudio   = issue === "Audio Noise";
+  // Tab Limit and Fullscreen Exit are pure browser events — no camera snapshot
+  // is ever captured for them, so skip the face_verification_logs query entirely.
+  const isBrowser = issue === "Tab Limit" || issue === "Fullscreen Exit";
 
   const { data: rows, isLoading } = useQuery({
     queryKey: ["evidence", attemptId, issue],
     queryFn: async () => {
+      // Browser-only violations have no image evidence — return nothing.
+      if (isBrowser) return [];
+
       if (isAudio) {
         const { data, error } = await supabase
           .from("audio_monitoring_logs")
@@ -375,7 +381,7 @@ function EvidenceModal({
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>{name} — {issue}</div>
             <div style={{ fontSize: 12, color: "#888" }}>
-              {isAudio ? "Logged noise events" : "Flagged snapshots"}
+              {isAudio ? "Logged noise events" : isBrowser ? "Browser activity events" : "Flagged snapshots"}
             </div>
           </div>
           <button
@@ -395,8 +401,14 @@ function EvidenceModal({
           </div>
         ) : !rows?.length ? (
           <div className="empty-state" style={{ padding: "30px 0" }}>
-            <i className="ti ti-photo-off" style={{ fontSize: 26, marginBottom: 6 }} />
-            No {isAudio ? "noise events" : "snapshots"} found for this issue
+            <i
+              className={isBrowser ? "ti ti-layout-navbar" : "ti ti-photo-off"}
+              style={{ fontSize: 26, marginBottom: 6 }}
+            />
+            {isBrowser
+              ? `${issue} is a browser activity event — no camera snapshots are captured for this violation.`
+              : `No ${isAudio ? "noise events" : "snapshots"} found for this issue`
+            }
           </div>
         ) : isAudio ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
