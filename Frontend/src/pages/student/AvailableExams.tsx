@@ -6,6 +6,23 @@ import { usePortalAction, useStudentPortal } from "../../features/student/hooks"
 import { studentApi } from "../../features/student/api";
 import type { StudentSchedule } from "../../features/student/types";
 
+const DISMISSED_KEY = "dismissed_exam_ids";
+
+function loadDismissed(): Set<string> {
+  try {
+    const stored = localStorage.getItem(DISMISSED_KEY);
+    return stored ? new Set(JSON.parse(stored)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDismissed(ids: Set<string>) {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(Array.from(ids)));
+  } catch {}
+}
+
 export default function AvailableExams() {
   const portal = useStudentPortal();
   const register = usePortalAction(studentApi.register);
@@ -14,7 +31,7 @@ export default function AvailableExams() {
   const [selected, setSelected] = useState<StudentSchedule | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const exams = useMemo(() => (portal.data?.schedules ?? []).filter((item) => {
@@ -26,7 +43,11 @@ export default function AvailableExams() {
   }), [portal.data?.schedules, search, status, dismissed]);
 
   const handleDismiss = (id: string) => {
-    setDismissed((prev) => new Set(prev).add(id));
+    setDismissed((prev) => {
+      const next = new Set(prev).add(id);
+      saveDismissed(next);
+      return next;
+    });
   };
 
   const handleRegister = async (schedule: StudentSchedule) => {
