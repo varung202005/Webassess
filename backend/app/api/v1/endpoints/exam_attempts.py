@@ -301,6 +301,8 @@ async def log_submission_event(
     valid_events = {
         "TAB_SWITCH_WARNING", "FULLSCREEN_EXIT", "CONNECTION_LOST",
         "CONNECTION_RESTORED", "TIME_WARNING", "ANSWER_SAVED",
+        "FOCUS_LOST_WARNING", "CLIPBOARD_ATTEMPT_WARNING", 
+        "SCREENSHOT_ATTEMPT_WARNING", "PRINT_ATTEMPT_WARNING",
     }
     if event_type not in valid_events:
         raise HTTPException(status_code=400, detail=f"Invalid event_type. Use one of: {valid_events}")

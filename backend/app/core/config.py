@@ -43,6 +43,11 @@ class Settings(BaseSettings):
         "phone_detected": 0.10,
         "tab_switch": 0.03,
         "fullscreen_exit": 0.02,
+        "noise_event": 0.02,
+        "focus_loss": 0.02,
+        "clipboard": 0.05,
+        "screenshot": 0.10,
+        "print": 0.10,
     }
 
     # Grade thresholds (percentage)

@@ -249,6 +249,10 @@ class BrowserActivityLog(BaseModel):
     attempt_id: UUID
     tab_switch_count: int
     fullscreen_exit_count: int
+    focus_loss_count: int = 0
+    clipboard_violation_count: int = 0
+    screenshot_violation_count: int = 0
+    print_violation_count: int = 0
     session_conflict_detected: bool = False
 
 
@@ -416,6 +420,10 @@ async def log_browser_activity(
             "attempt_id":                aid,
             "tab_switch_count":          body.tab_switch_count,
             "fullscreen_exit_count":     body.fullscreen_exit_count,
+            "focus_loss_count":          body.focus_loss_count,
+            "clipboard_violation_count": body.clipboard_violation_count,
+            "screenshot_violation_count":body.screenshot_violation_count,
+            "print_violation_count":     body.print_violation_count,
             "session_conflict_detected": body.session_conflict_detected,
         },
         on_conflict="attempt_id",
@@ -430,6 +438,10 @@ async def log_browser_activity(
                 "attempt_id":            aid,
                 "tab_switch_count":      body.tab_switch_count,
                 "fullscreen_exit_count": body.fullscreen_exit_count,
+                "focus_loss_count":          body.focus_loss_count,
+                "clipboard_violation_count": body.clipboard_violation_count,
+                "screenshot_violation_count":body.screenshot_violation_count,
+                "print_violation_count":     body.print_violation_count,
             },
             on_conflict="attempt_id",
         ).execute()
@@ -460,6 +472,42 @@ async def log_browser_activity(
             "session_conflict_detected": body.session_conflict_detected,
         }).execute()
 
+    if body.focus_loss_count > 0:
+        supabase.table("browser_activity_logs").insert({
+            "attempt_id":                aid,
+            "event_type":                "FOCUS_LOST",
+            "tab_switch_count":          body.tab_switch_count,
+            "fullscreen_exit_count":     body.fullscreen_exit_count,
+            "session_conflict_detected": body.session_conflict_detected,
+        }).execute()
+
+    if body.clipboard_violation_count > 0:
+        supabase.table("browser_activity_logs").insert({
+            "attempt_id":                aid,
+            "event_type":                "CLIPBOARD",
+            "tab_switch_count":          body.tab_switch_count,
+            "fullscreen_exit_count":     body.fullscreen_exit_count,
+            "session_conflict_detected": body.session_conflict_detected,
+        }).execute()
+
+    if body.screenshot_violation_count > 0:
+        supabase.table("browser_activity_logs").insert({
+            "attempt_id":                aid,
+            "event_type":                "SCREENSHOT",
+            "tab_switch_count":          body.tab_switch_count,
+            "fullscreen_exit_count":     body.fullscreen_exit_count,
+            "session_conflict_detected": body.session_conflict_detected,
+        }).execute()
+
+    if body.print_violation_count > 0:
+        supabase.table("browser_activity_logs").insert({
+            "attempt_id":                aid,
+            "event_type":                "PRINT",
+            "tab_switch_count":          body.tab_switch_count,
+            "fullscreen_exit_count":     body.fullscreen_exit_count,
+            "session_conflict_detected": body.session_conflict_detected,
+        }).execute()
+
     if body.session_conflict_detected:
         supabase.table("browser_activity_logs").insert({
             "attempt_id":                aid,
@@ -475,7 +523,13 @@ async def log_browser_activity(
     #    overwrite this with the full score including face + audio.
     tab_penalty = body.tab_switch_count      * p.get("tab_switch",      0.03)
     fs_penalty  = body.fullscreen_exit_count * p.get("fullscreen_exit", 0.02)
-    partial_integrity = round(max(0.0, 1.0 - tab_penalty - fs_penalty), 4)
+    focus_penalty     = body.focus_loss_count          * p.get("focus_loss", 0.02)
+    clipboard_penalty = body.clipboard_violation_count * p.get("clipboard",  0.05)
+    screenshot_penalty= body.screenshot_violation_count* p.get("screenshot", 0.10)
+    print_penalty     = body.print_violation_count     * p.get("print",      0.10)
+    
+    total_browser_penalty = tab_penalty + fs_penalty + focus_penalty + clipboard_penalty + screenshot_penalty + print_penalty
+    partial_integrity = round(max(0.0, 1.0 - total_browser_penalty), 4)
     tab_limit = _get_tab_switch_limit(supabase, aid)
     hard_violation = _hard_violation(body.tab_switch_count, tab_limit, body.session_conflict_detected)
     # A student is flagged either once their integrity score drops below 50%,
@@ -509,7 +563,7 @@ async def log_browser_activity(
             phone_detect * p.get("phone_detected", 0.10)
         )
         full_integrity = round(
-            max(0.0, 1.0 - tab_penalty - fs_penalty - face_penalty - noise_penalty),
+            max(0.0, 1.0 - total_browser_penalty - face_penalty - noise_penalty),
             4,
         )
         full_flagged = full_integrity < 0.5 or hard_violation
@@ -517,6 +571,10 @@ async def log_browser_activity(
         supabase.table("proctoring_summary").update({
             "tab_switch_count":      body.tab_switch_count,
             "fullscreen_exit_count": body.fullscreen_exit_count,
+            "focus_loss_count":          body.focus_loss_count,
+            "clipboard_violation_count": body.clipboard_violation_count,
+            "screenshot_violation_count":body.screenshot_violation_count,
+            "print_violation_count":     body.print_violation_count,
             "integrity_score":       full_integrity,
             "flagged_for_review":    full_flagged,
             # Keep proctor_verdict as-is — don't overwrite a proctor decision
@@ -528,8 +586,12 @@ async def log_browser_activity(
             "attempt_id":            aid,
             "tab_switch_count":      body.tab_switch_count,
             "fullscreen_exit_count": body.fullscreen_exit_count,
+            "focus_loss_count":          body.focus_loss_count,
+            "clipboard_violation_count": body.clipboard_violation_count,
+            "screenshot_violation_count":body.screenshot_violation_count,
+            "print_violation_count":     body.print_violation_count,
             "integrity_score":       partial_integrity,
-            "total_incidents":       body.tab_switch_count + body.fullscreen_exit_count,
+            "total_incidents":       body.tab_switch_count + body.fullscreen_exit_count + body.focus_loss_count + body.clipboard_violation_count + body.screenshot_violation_count + body.print_violation_count,
             "face_absence_count":    0,
             "multi_person_count":    0,
             "phone_detection_count": 0,
@@ -657,15 +719,19 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
     # ── Browser logs ──────────────────────────────────────────────────────────
     browser = (
         supabase.table("browser_activity_logs")
-        .select("tab_switch_count,fullscreen_exit_count,session_conflict_detected")
+        .select("tab_switch_count,fullscreen_exit_count,focus_loss_count,clipboard_violation_count,screenshot_violation_count,print_violation_count,session_conflict_detected")
         .eq("attempt_id", aid)
         .order("tab_switch_count", desc=True)
         .limit(1)
         .execute()
         .data
     ) or []
-    tab_switches     = browser[0]["tab_switch_count"]          if browser else 0
-    fs_exits         = browser[0]["fullscreen_exit_count"]     if browser else 0
+    tab_switches     = browser[0].get("tab_switch_count", 0) if browser else 0
+    fs_exits         = browser[0].get("fullscreen_exit_count", 0) if browser else 0
+    focus_loss       = browser[0].get("focus_loss_count", 0) if browser else 0
+    clipboard        = browser[0].get("clipboard_violation_count", 0) if browser else 0
+    screenshot       = browser[0].get("screenshot_violation_count", 0) if browser else 0
+    print_count      = browser[0].get("print_violation_count", 0) if browser else 0
     session_conflict = browser[0].get("session_conflict_detected", False) if browser else False
 
     # ── Audio logs ────────────────────────────────────────────────────────────
@@ -675,15 +741,19 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
     # ── Integrity score ───────────────────────────────────────────────────────
     noise_penalty = p.get("noise_event", 0.02)
     penalty = (
-        face_absence * p["face_absence"]    +
-        multi_person * p["multi_person"]    +
-        phone_detect * p["phone_detected"]  +
-        tab_switches * p["tab_switch"]      +
-        fs_exits     * p["fullscreen_exit"] +
+        face_absence * p.get("face_absence", 0.05)    +
+        multi_person * p.get("multi_person", 0.10)    +
+        phone_detect * p.get("phone_detected", 0.10)  +
+        tab_switches * p.get("tab_switch", 0.03)      +
+        fs_exits     * p.get("fullscreen_exit", 0.02) +
+        focus_loss   * p.get("focus_loss", 0.02)      +
+        clipboard    * p.get("clipboard", 0.05)       +
+        screenshot   * p.get("screenshot", 0.10)      +
+        print_count  * p.get("print", 0.10)           +
         noise_events * noise_penalty
     )
     integrity_score = round(max(0.0, 1.0 - penalty), 4)
-    total_incidents = face_absence + multi_person + phone_detect + tab_switches + fs_exits + noise_events
+    total_incidents = face_absence + multi_person + phone_detect + tab_switches + fs_exits + focus_loss + clipboard + screenshot + print_count + noise_events
     tab_limit = _get_tab_switch_limit(supabase, aid)
     hard_violation = _hard_violation(tab_switches, tab_limit, session_conflict)
     # Flag threshold: a student shows up in "Flagged Attempts" once their
@@ -715,6 +785,10 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
             "phone_detection_count": phone_detect,
             "tab_switch_count":      tab_switches,
             "fullscreen_exit_count": fs_exits,
+            "focus_loss_count":          focus_loss,
+            "clipboard_violation_count": clipboard,
+            "screenshot_violation_count":screenshot,
+            "print_violation_count":     print_count,
             "noise_event_count":     noise_events,
             "flagged_for_review":    flagged,
             "proctor_verdict":       proctor_verdict,

@@ -152,7 +152,9 @@ async def get_proctor_dashboard(current_user: dict = Depends(require_proctor)):
             .select(
                 "integrity_score,flagged_for_review,"
                 "face_absence_count,multi_person_count,"
-                "phone_detection_count"
+                "phone_detection_count,"
+                "focus_loss_count,clipboard_violation_count,"
+                "screenshot_violation_count,print_violation_count"
             )
             .in_("attempt_id", session_attempt_ids)
             .execute()
@@ -185,7 +187,7 @@ async def get_proctor_dashboard(current_user: dict = Depends(require_proctor)):
             # Cumulative rows: event_type IS NULL (one row per attempt, always current)
             browser_rows = (
                 supabase.table("browser_activity_logs")
-                .select("attempt_id,tab_switch_count,fullscreen_exit_count,updated_at")
+                .select("attempt_id,tab_switch_count,fullscreen_exit_count,focus_loss_count,clipboard_violation_count,screenshot_violation_count,print_violation_count,updated_at")
                 .in_("attempt_id", session_attempt_ids)
                 .is_("event_type", "null")
                 .execute()
@@ -195,7 +197,7 @@ async def get_proctor_dashboard(current_user: dict = Depends(require_proctor)):
             # event_type column not yet added (migration pending) — read all rows
             browser_rows = (
                 supabase.table("browser_activity_logs")
-                .select("attempt_id,tab_switch_count,fullscreen_exit_count,updated_at")
+                .select("attempt_id,tab_switch_count,fullscreen_exit_count,focus_loss_count,clipboard_violation_count,screenshot_violation_count,print_violation_count,updated_at")
                 .in_("attempt_id", session_attempt_ids)
                 .execute()
                 .data
@@ -241,9 +243,13 @@ async def get_proctor_dashboard(current_user: dict = Depends(require_proctor)):
                 "name":                  meta["name"],
                 "tab_switch_count":      row.get("tab_switch_count", 0) or 0,
                 "fullscreen_exit_count": row.get("fullscreen_exit_count", 0) or 0,
+                "focus_loss_count":          row.get("focus_loss_count", 0) or 0,
+                "clipboard_violation_count": row.get("clipboard_violation_count", 0) or 0,
+                "screenshot_violation_count":row.get("screenshot_violation_count", 0) or 0,
+                "print_violation_count":     row.get("print_violation_count", 0) or 0,
             })
         student_browser_stats.sort(
-            key=lambda r: r["tab_switch_count"] + r["fullscreen_exit_count"],
+            key=lambda r: r["tab_switch_count"] + r["fullscreen_exit_count"] + r["focus_loss_count"] + r["clipboard_violation_count"] + r["screenshot_violation_count"] + r["print_violation_count"],
             reverse=True,
         )
 

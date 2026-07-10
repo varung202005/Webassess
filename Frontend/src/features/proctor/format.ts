@@ -113,6 +113,10 @@ export function issueList(attempt: FlaggedAttempt): string[] {
   if (attempt.face_absence_count    > 0) issues.push("Face Absent");
   if (attempt.tab_switch_count      >= 3) issues.push("Tab Limit");
   if (attempt.fullscreen_exit_count > 0) issues.push("Fullscreen Exit");
+  if (attempt.focus_loss_count      > 0) issues.push("Focus Lost");
+  if (attempt.clipboard_violation_count > 0) issues.push("Clipboard");
+  if (attempt.screenshot_violation_count > 0) issues.push("Screenshot");
+  if (attempt.print_violation_count     > 0) issues.push("Print");
   if ((attempt.noise_event_count ?? 0) > 0) issues.push("Audio Noise");
   return issues;
 }

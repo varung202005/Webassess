@@ -38,7 +38,7 @@ interface AnswerState {
   time_spent_sec: number;
 }
 
-type ViolationType = "tab" | "fullscreen" | "conflict";
+type ViolationType = "tab" | "fullscreen" | "conflict" | "focus" | "clipboard" | "screenshot" | "print";
 
 interface ViolationWarning {
   id: number;
@@ -102,6 +102,7 @@ export default function LiveExam() {
   const [error,         setError]         = useState<string | null>(null);
   const [cameraCleared, setCameraCleared] = useState(false);
   const [isFullscreen,  setIsFullscreen]  = useState(() => Boolean(document.fullscreenElement));
+  const [isOnline,      setIsOnline]      = useState(navigator.onLine);
 
   // Violation state
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
@@ -209,31 +210,39 @@ export default function LiveExam() {
   // ── Connection events ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) return;
-    const online  = () => void studentApi.logEvent(session.attempt.id, "CONNECTION_RESTORED").catch(() => undefined);
-    const offline = () => void studentApi.logEvent(session.attempt.id, "CONNECTION_LOST").catch(() => undefined);
+    const online  = () => {
+      setIsOnline(true);
+      void studentApi.logEvent(session.attempt.id, "CONNECTION_RESTORED").catch(() => undefined);
+      void flushAnswers(); // flush cached answers to backend
+    };
+    const offline = () => {
+      setIsOnline(false);
+      void studentApi.logEvent(session.attempt.id, "CONNECTION_LOST").catch(() => undefined);
+    };
     window.addEventListener("online",  online);
     window.addEventListener("offline", offline);
     return () => {
       window.removeEventListener("online",  online);
       window.removeEventListener("offline", offline);
     };
-  }, [session]);
+  }, [session, flushAnswers]);
 
   // ── Violation handler ────────────────────────────────────────────────────────
   const handleViolation = useCallback((
     _message: string,
     type: ViolationType,
   ) => {
-    if (type === "tab") {
+    // Treat focus loss and tab switches equivalently for enforcement
+    if (type === "tab" || type === "focus") {
       tabCountRef.current += 1;
       const newCount = tabCountRef.current;
       setTabCount(newCount);
       const max = rule.max_tab_switches;
 
-      void studentApi.logEvent(session?.attempt.id ?? "", "TAB_SWITCH_WARNING").catch(() => undefined);
+      void studentApi.logEvent(session?.attempt.id ?? "", type === "focus" ? "FOCUS_LOST_WARNING" : "TAB_SWITCH_WARNING").catch(() => undefined);
 
       if (max > 0 && newCount >= max) {
-        const reason = `You switched tabs ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
+        const reason = `You switched tabs or lost focus ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
         setForceReason(reason);
         setForceSubmitting(true);
         setTimeout(async () => {
@@ -247,17 +256,17 @@ export default function LiveExam() {
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
-        type: "tab" as ViolationType,
+        type: type,
         message: max <= 0
-          ? `⚠ Tab switch detected (${newCount} total). This has been logged.`
+          ? `⚠ ${_message}`
           : remaining_switches === 1
-          ? `⚠ Tab switch ${newCount}/${max} — ONE MORE switch will automatically submit your exam.`
-          : `⚠ Tab switch ${newCount}/${max} — ${remaining_switches} more allowed before your exam is auto-submitted.`,
+          ? `⚠ Switch ${newCount}/${max} — ONE MORE switch will automatically submit your exam.`
+          : `⚠ Switch ${newCount}/${max} — ${remaining_switches} more allowed before your exam is auto-submitted.`,
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 10_000);
 
     } else if (type === "fullscreen") {
-      // ── UPDATED: enforce max_fullscreen_exits ────────────────────────────────
+      // ── Enforce max_fullscreen_exits ────────────────────────────────
       fullscreenCountRef.current += 1;
       const newCount = fullscreenCountRef.current;
       setFsCount(newCount);
@@ -298,13 +307,41 @@ export default function LiveExam() {
         type: "conflict" as ViolationType,
         message: "🚨 Another tab with this exam was detected. Close it immediately — this is a violation.",
       }, ...prev].slice(0, 5));
+    } else if (type === "clipboard" || type === "screenshot" || type === "print") {
+      // Passive warnings for clipboard/screenshot/print attempts
+      const id = ++warnCounter;
+      void studentApi.logEvent(session?.attempt.id ?? "", `${type.toUpperCase()}_ATTEMPT_WARNING`).catch(() => undefined);
+      
+      setWarnings((prev) => [{
+        id,
+        type: type,
+        message: _message,
+      }, ...prev].slice(0, 5));
+      setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 8_000);
     }
   }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, submit]);
 
   const handleConflict = useCallback(() => handleViolation("", "conflict"), [handleViolation]);
 
   // ── Answer helpers ───────────────────────────────────────────────────────────
-  const questions     = session?.questions ?? [];
+  const questions = useMemo(() => {
+    if (!session?.questions) return [];
+    
+    // Create a deterministic seed based on the attempt ID
+    const seedGen = xmur3(session.attempt.id);
+    const rand = mulberry32(seedGen());
+
+    // Deep copy and shuffle questions
+    const shuffledQuestions = [...session.questions].map(q => ({
+      ...q,
+      questions: {
+        ...q.questions,
+        question_options: seededShuffle([...q.questions.question_options], rand)
+      }
+    }));
+
+    return seededShuffle(shuffledQuestions, rand);
+  }, [session?.attempt.id, session?.questions]);
   const row           = questions[index];
   const question      = row?.questions;
   const currentAnswer = question ? answers[question.id] ?? emptyAnswer() : emptyAnswer();
@@ -413,9 +450,40 @@ export default function LiveExam() {
     );
   }
 
+  // ── Offline lockdown overlay ─────────────────────────────────────────────────
+  if (!isOnline) {
+    return (
+      <div className="force-submit-overlay offline-overlay">
+        <div className="force-submit-card">
+          <div className="force-submit-icon" style={{ color: "#d97706", background: "#fef3c7" }}>
+            <i className="ti ti-wifi-off" />
+          </div>
+          <h2>Connection Lost</h2>
+          <p>Your internet connection has dropped. The exam is paused and questions are hidden.</p>
+          <div className="force-submit-note">
+            Any answers you selected have been saved locally. Please reconnect to the internet to resume your exam.
+          </div>
+          <div className="force-submit-spinner">
+            <span className="spinner" />
+            Waiting for connection...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Main exam UI ─────────────────────────────────────────────────────────────
   return (
     <div className="live-exam">
+      
+      {/* ── Anti-Camera Watermark ── */}
+      {session && currentUser && (
+        <div className="exam-watermark" aria-hidden="true">
+          {Array.from({ length: 150 }).map((_, i) => (
+            <span key={i}>{currentUser.email}</span>
+          ))}
+        </div>
+      )}
 
       {/* Fullscreen nag bar */}
       {rule.fullscreen_required && !isFullscreen && (
@@ -552,7 +620,7 @@ export default function LiveExam() {
                 <b>{question.question_type.replace("_", " ")}</b>
               </div>
             </div>
-            <h1>{question.question_text}</h1>
+            <h1>{obfuscateText(question.question_text)}</h1>
             <AnswerInput question={row} answer={currentAnswer} onChange={changeAnswer} />
             <div className="question-tools">
               <button
@@ -760,7 +828,7 @@ function AnswerInput({ question: row, answer, onChange }: {
                 ? selected ? "square-check-filled" : "square"
                 : selected ? "circle-dot-filled"  : "circle"
               }`} />
-              <p>{option.option_text}</p>
+              <p>{obfuscateText(option.option_text)}</p>
             </button>
           );
         })}
@@ -791,4 +859,46 @@ function formatRemaining(seconds: number) {
   const m = Math.floor(seconds / 60) % 60;
   const s = seconds % 60;
   return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
+}
+
+function obfuscateText(text: string | null | undefined): string {
+  if (!text) return "";
+  // Injects a zero-width space (\u200B) between every character to break 
+  // LLM extensions and DOM scrapers without affecting human readability.
+  return text.split("").join("\u200B");
+}
+
+// ── PRNG & Shuffling Utilities ───────────────────────────────────────────────
+
+function xmur3(str: string) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  return function() {
+    h = Math.imul(h ^ h >>> 16, 2246822507);
+    h = Math.imul(h ^ h >>> 13, 3266489909);
+    return (h ^= h >>> 16) >>> 0;
+  }
+}
+
+function mulberry32(a: number) {
+  return function() {
+    let t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+}
+
+function seededShuffle<T>(array: T[], rand: () => number): T[] {
+  let m = array.length, t, i;
+  while (m) {
+    i = Math.floor(rand() * m--);
+    t = array[m];
+    array[m] = array[i];
+    array[i] = t;
+  }
+  return array;
 }

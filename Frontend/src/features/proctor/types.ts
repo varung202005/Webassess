@@ -11,6 +11,10 @@ export interface FlaggedAttempt {
   phone_detection_count: number;
   tab_switch_count: number;
   fullscreen_exit_count: number;
+  focus_loss_count: number;
+  clipboard_violation_count: number;
+  screenshot_violation_count: number;
+  print_violation_count: number;
   noise_event_count: number;      // from audio_monitoring_logs
   flagged_for_review: boolean;
   proctor_verdict: ProctoringVerdict;
@@ -60,6 +64,10 @@ export interface StudentBrowserStat {
   name: string;
   tab_switch_count: number;
   fullscreen_exit_count: number;
+  focus_loss_count: number;
+  clipboard_violation_count: number;
+  screenshot_violation_count: number;
+  print_violation_count: number;
 }
 
 export interface ProctoringDashboard {

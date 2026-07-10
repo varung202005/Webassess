@@ -481,7 +481,10 @@ export function StudentsPanel({
           <tr>
             <th>Student</th>
             <th>Tab Switches</th>
+            <th>Focus Loss</th>
             <th>Fullscreen Exits</th>
+            <th>Clipboard / Print</th>
+            <th>Screenshots</th>
             {onRecompute && <th>Actions</th>}
           </tr>
         </thead>
@@ -512,11 +515,47 @@ export function StudentsPanel({
               </td>
               <td>
                 <span
+                  className={`issue-chip${s.focus_loss_count > 0 ? " audio" : ""}`}
+                  style={s.focus_loss_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
+                >
+                  <i className="ti ti-focus-2" style={{ fontSize: 9, marginRight: 3 }} />
+                  {s.focus_loss_count}
+                </span>
+              </td>
+              <td>
+                <span
                   className={`issue-chip${s.fullscreen_exit_count > 0 ? " audio" : ""}`}
                   style={s.fullscreen_exit_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
                 >
                   <i className="ti ti-arrows-diagonal-minimize" style={{ fontSize: 9, marginRight: 3 }} />
                   {s.fullscreen_exit_count}
+                </span>
+              </td>
+              <td>
+                <span
+                  className={`issue-chip${s.clipboard_violation_count > 0 ? " audio" : ""}`}
+                  style={s.clipboard_violation_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
+                  title="Clipboard Violations"
+                >
+                  <i className="ti ti-copy" style={{ fontSize: 9, marginRight: 3 }} />
+                  {s.clipboard_violation_count}
+                </span>
+                <span
+                  className={`issue-chip${s.print_violation_count > 0 ? " audio" : ""}`}
+                  style={s.print_violation_count === 0 ? { background: "#f3f4f6", color: "#999", marginLeft: 4 } : { marginLeft: 4 }}
+                  title="Print Violations"
+                >
+                  <i className="ti ti-printer" style={{ fontSize: 9, marginRight: 3 }} />
+                  {s.print_violation_count}
+                </span>
+              </td>
+              <td>
+                <span
+                  className={`issue-chip${s.screenshot_violation_count > 0 ? " audio" : ""}`}
+                  style={s.screenshot_violation_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
+                >
+                  <i className="ti ti-camera" style={{ fontSize: 9, marginRight: 3 }} />
+                  {s.screenshot_violation_count}
                 </span>
               </td>
               {onRecompute && (
