@@ -27,6 +27,7 @@ interface BrowserMonitorProps {
   fullscreenRequired?: boolean;
   onWarning?: (message: string, type: ViolationType) => void;
   onConflict?: () => void;
+  onHeartbeatFailure?: () => void;
 }
 
 /** How often (ms) to push a cumulative sync to the backend even if quiet */
@@ -40,6 +41,7 @@ export default function BrowserMonitor({
   fullscreenRequired = true,
   onWarning,
   onConflict,
+  onHeartbeatFailure,
 }: BrowserMonitorProps) {
   const tabSwitches     = useRef(0);
   const fullscreenExits = useRef(0);
@@ -50,6 +52,7 @@ export default function BrowserMonitor({
   const conflictRef     = useRef(false);
   const activeRef       = useRef(true);
   const syncTimerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncFailures    = useRef(0);
 
   // ── POST cumulative counts to backend ──────────────────────────────────────
   const syncToBackend = useCallback(async () => {
@@ -68,10 +71,17 @@ export default function BrowserMonitor({
       console.log(
         `[BrowserMonitor] ✓ synced — tabs:${tabSwitches.current} fs:${fullscreenExits.current} focus:${focusLoss.current} clip:${clipboardViolations.current} screen:${screenshotViolations.current} print:${printViolations.current} conflict:${conflictRef.current}`
       );
+      syncFailures.current = 0; // Reset on success
     } catch (err) {
       console.warn("[BrowserMonitor] ❌ sync failed:", err);
+      syncFailures.current += 1;
+      // If we fail 3 times consecutively while the browser still thinks it's online,
+      // it means the network request is being intentionally dropped (e.g. by an AdBlocker or Proxy).
+      if (syncFailures.current >= 3 && navigator.onLine) {
+        onHeartbeatFailure?.();
+      }
     }
-  }, [attemptId]);
+  }, [attemptId, onHeartbeatFailure]);
 
   useEffect(() => {
     activeRef.current = true;

@@ -153,6 +153,31 @@ export default function LiveExam() {
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
+  // ── Navigation Lockdown ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!session || submitting || forceSubmitting) return;
+
+    // 1. Trap the Back button
+    window.history.pushState(null, "", window.location.href);
+    const handlePopState = () => {
+      // Push state forward again to prevent leaving
+      window.history.pushState(null, "", window.location.href);
+    };
+    window.addEventListener("popstate", handlePopState);
+
+    // 2. Warn on Tab Close / Refresh
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = ""; // Required for Chrome
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [session, submitting, forceSubmitting]);
+
   // ── Flush answers to backend ─────────────────────────────────────────────────
   const flushAnswers = useCallback(async () => {
     if (!session || !dirty.current.size) return;
@@ -322,6 +347,17 @@ export default function LiveExam() {
   }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, submit]);
 
   const handleConflict = useCallback(() => handleViolation("", "conflict"), [handleViolation]);
+
+  // ── Heartbeat Failure ────────────────────────────────────────────────────────
+  const handleHeartbeatFailure = useCallback(() => {
+    const reason = "Proctoring telemetry has been blocked or dropped consecutively. This is a violation. Your exam is being submitted automatically.";
+    setForceReason(reason);
+    setForceSubmitting(true);
+    setTimeout(async () => {
+      await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
+      void submit("AUTO");
+    }, 4000);
+  }, [session?.attempt.id, submit]);
 
   // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions = useMemo(() => {
@@ -746,6 +782,7 @@ export default function LiveExam() {
             fullscreenRequired={rule.fullscreen_required}
             onWarning={handleViolation}
             onConflict={handleConflict}
+            onHeartbeatFailure={handleHeartbeatFailure}
           />
         </>
       )}
@@ -803,6 +840,8 @@ function AnswerInput({ question: row, answer, onChange }: {
         value={answer.answer_text ?? ""}
         onChange={(e) => onChange({ answer_text: e.target.value })}
         placeholder="Type your answer here..."
+        onPaste={(e) => e.preventDefault()}
+        onDrop={(e) => e.preventDefault()}
       />
     );
   }
