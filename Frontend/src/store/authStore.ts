@@ -11,7 +11,7 @@ export interface AuthUser {
 }
 
 export function preferredRole(roles: Role[]): Role | null {
-  const priority: Role[] = ["CANDIDATE", "STUDENT", "FACULTY", "PROCTOR", "ADMIN"];
+  const priority: Role[] = ["ADMIN", "PROCTOR", "FACULTY", "STUDENT", "CANDIDATE"];
   return priority.find((role) => roles.includes(role)) ?? roles[0] ?? null;
 }
 
