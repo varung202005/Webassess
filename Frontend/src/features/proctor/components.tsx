@@ -331,7 +331,7 @@ function EvidenceModal({
       if (isAudio) {
         const { data, error } = await supabase
           .from("audio_monitoring_logs")
-          .select("noise_level_db,notes,detected_at")
+          .select("noise_level_db,notes,detected_at,transcript,exam_relevant,matched_snippet,audio_url")
           .eq("attempt_id", attemptId)
           .eq("noise_detected", true)
           .order("detected_at", { ascending: false })
@@ -411,13 +411,80 @@ function EvidenceModal({
             }
           </div>
         ) : isAudio ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(rows as { noise_level_db: number | null; notes: string | null; detected_at: string }[]).map((r, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8f9fb", borderRadius: 8, fontSize: 13 }}>
-                <span>{r.notes ?? "Noise detected"}</span>
-                <span style={{ color: "#888", whiteSpace: "nowrap", marginLeft: 12 }}>
-                  {r.noise_level_db != null ? `${r.noise_level_db} dB · ` : ""}{relativeTime(r.detected_at)}
-                </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {(rows as {
+              noise_level_db: number | null;
+              notes: string | null;
+              detected_at: string;
+              transcript?: string | null;
+              exam_relevant?: boolean | null;
+              matched_snippet?: string | null;
+              audio_url?: string | null;
+            }[]).map((r, i) => (
+              <div
+                key={i}
+                style={{
+                  background: r.exam_relevant ? "#fff5f5" : "#f8f9fb",
+                  border: r.exam_relevant ? "1px solid #fecaca" : "1px solid #eee",
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                  fontSize: 13,
+                }}
+              >
+                {/* Top row: time + dB + exam-relevant badge */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: r.transcript || r.audio_url ? 8 : 0 }}>
+                  <span style={{ color: "#888", fontSize: 11, whiteSpace: "nowrap" }}>
+                    {relativeTime(r.detected_at)}
+                    {r.noise_level_db != null ? ` · ${r.noise_level_db} dB` : ""}
+                  </span>
+                  {r.exam_relevant && (
+                    <span
+                      className="issue-chip"
+                      style={{ background: "#fef2f2", color: "#b31234", fontSize: 10, padding: "2px 7px" }}
+                    >
+                      <i className="ti ti-alert-triangle" style={{ fontSize: 9, marginRight: 3 }} />
+                      Exam-relevant speech
+                    </span>
+                  )}
+                  {!r.transcript && !r.exam_relevant && (
+                    <span style={{ color: "#aaa", fontSize: 11 }}>{r.notes ?? "Noise detected"}</span>
+                  )}
+                </div>
+
+                {/* Transcript block */}
+                {r.transcript && (
+                  <div style={{
+                    background: "#fff",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 6,
+                    padding: "7px 10px",
+                    fontStyle: "italic",
+                    color: "#374151",
+                    marginBottom: r.matched_snippet || r.audio_url ? 8 : 0,
+                    lineHeight: 1.5,
+                  }}>
+                    <i className="ti ti-quote" style={{ fontSize: 10, marginRight: 4, color: "#9ca3af" }} />
+                    {r.transcript}
+                  </div>
+                )}
+
+                {/* Matched exam content snippet */}
+                {r.matched_snippet && (
+                  <div style={{ fontSize: 11, color: "#b31234", marginBottom: r.audio_url ? 8 : 0 }}>
+                    <i className="ti ti-file-text" style={{ marginRight: 4 }} />
+                    Matched question: <em>"{r.matched_snippet}"</em>
+                  </div>
+                )}
+
+                {/* Audio player — only shown when a clip URL exists */}
+                {r.audio_url && (
+                  <audio
+                    controls
+                    src={r.audio_url}
+                    style={{ width: "100%", height: 32, marginTop: 2 }}
+                    preload="none"
+                  />
+                )}
               </div>
             ))}
           </div>
@@ -614,7 +681,7 @@ export function AudioMonitorPanel({
       const { data, error } = await supabase
         .from("audio_monitoring_logs")
         .select(
-          "attempt_id,exam_relevant,exam_attempts!inner(exam_schedule_id,users(full_name))"
+          "attempt_id,exam_relevant,transcript,audio_url,notes,noise_level_db,detected_at,exam_attempts!inner(exam_schedule_id,users(full_name))"
         )
         .eq("noise_detected", true)
         .eq("exam_attempts.exam_schedule_id", scheduleId)
@@ -638,6 +705,8 @@ export function AudioMonitorPanel({
   const counts: Record<string, number> = {};
   const relevantCounts: Record<string, number> = {};
   const nameMap: Record<string, string> = {};
+  // Latest clip URL + transcript per student (rows come desc by detected_at so first wins)
+  const latestClip: Record<string, { url: string; transcript?: string | null } | null> = {};
 
   for (const row of audioRows ?? []) {
     counts[row.attempt_id] = (counts[row.attempt_id] ?? 0) + 1;
@@ -649,6 +718,11 @@ export function AudioMonitorPanel({
     const usersField = attempt?.users;
     const resolved = Array.isArray(usersField) ? usersField[0]?.full_name : usersField?.full_name;
     if (resolved) nameMap[row.attempt_id] = resolved;
+
+    // Keep the first (most recent) clip URL we see per student
+    if (row.audio_url && !(row.attempt_id in latestClip)) {
+      latestClip[row.attempt_id] = { url: row.audio_url, transcript: row.transcript ?? null };
+    }
   }
 
   const entries = Object.entries(counts)
@@ -657,9 +731,13 @@ export function AudioMonitorPanel({
       name: nameMap[id] ?? id.slice(0, 8).toUpperCase(),
       count,
       relevantCount: relevantCounts[id] ?? 0,
+      clip: latestClip[id] ?? null,
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
+
+  // Track which row has its player expanded
+  const [expandedClip, setExpandedClip] = useState<string | null>(null);
 
   const maxCount = entries[0]?.count ?? 1;
 
@@ -686,22 +764,76 @@ export function AudioMonitorPanel({
     <div className="audio-rows">
       {entries.map((a) => {
         const pct = Math.round((a.count / maxCount) * 100);
+        const isExpanded = expandedClip === a.id;
         return (
-          <div className="audio-row" key={a.id}>
-            <span className="audio-name" title={a.name}>{a.name}</span>
-            <div className="audio-bar-bg">
-              <div className="audio-bar-fill" style={{ width: `${pct}%` }} />
+          <div key={a.id} style={{ marginBottom: 6 }}>
+            <div className="audio-row">
+              <span className="audio-name" title={a.name}>{a.name}</span>
+              <div className="audio-bar-bg">
+                <div className="audio-bar-fill" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="audio-count">{a.count}×</span>
+
+              {a.relevantCount > 0 && (
+                <span
+                  className="issue-chip"
+                  style={{ background: "#fef2f2", color: "var(--c-danger-700, #b31234)", marginLeft: 6 }}
+                  title="Speech matched exam question/answer content"
+                >
+                  <i className="ti ti-alert-triangle" style={{ fontSize: 9, marginRight: 3 }} />
+                  exam-relevant ×{a.relevantCount}
+                </span>
+              )}
+
+              {/* Play button — only shown when a clip exists */}
+              {a.clip && (
+                <button
+                  type="button"
+                  title={isExpanded ? "Hide clip" : "Play latest clip"}
+                  onClick={() => setExpandedClip(isExpanded ? null : a.id)}
+                  style={{
+                    marginLeft: 6,
+                    border: "none",
+                    background: isExpanded ? "#ede9fe" : "#f3f4f6",
+                    color: isExpanded ? "#6d28d9" : "#555",
+                    borderRadius: 5,
+                    padding: "2px 7px",
+                    cursor: "pointer",
+                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                >
+                  <i className={`ti ti-${isExpanded ? "chevron-up" : "player-play"}`} style={{ fontSize: 10 }} />
+                  {isExpanded ? "Hide" : "Play"}
+                </button>
+              )}
             </div>
-            <span className="audio-count">{a.count}×</span>
-            {a.relevantCount > 0 && (
-              <span
-                className="issue-chip"
-                style={{ background: "#fef2f2", color: "var(--c-danger-700, #b31234)", marginLeft: 6 }}
-                title="Speech matched exam question/answer content"
-              >
-                <i className="ti ti-alert-triangle" style={{ fontSize: 9, marginRight: 3 }} />
-                exam-relevant ×{a.relevantCount}
-              </span>
+
+            {/* Expanded clip player + transcript */}
+            {isExpanded && a.clip && (
+              <div style={{
+                marginTop: 4,
+                background: "#faf5ff",
+                border: "1px solid #ddd6fe",
+                borderRadius: 7,
+                padding: "8px 10px",
+              }}>
+                <audio
+                  controls
+                  autoPlay
+                  src={a.clip.url}
+                  style={{ width: "100%", height: 32 }}
+                  preload="metadata"
+                />
+                {a.clip.transcript && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#374151", fontStyle: "italic", lineHeight: 1.5 }}>
+                    <i className="ti ti-quote" style={{ fontSize: 10, marginRight: 4, color: "#9ca3af" }} />
+                    {a.clip.transcript}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         );
