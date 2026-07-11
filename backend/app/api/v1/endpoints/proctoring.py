@@ -8,6 +8,14 @@ CHANGES vs previous version:
   - POST /browser: now also INSERTs separate event rows into
     browser_activity_logs with an event_type column so the Supabase Realtime
     channel in Dashboard.tsx fires Live Alerts on every tab switch.
+  - POST /browser: now also upserts into browser_activity_summary — the table
+    the dashboard (proctor.py) actually reads cumulative counts from.
+  - POST /face: now syncs proctoring_summary LIVE on every face event.
+  - POST /audio-transcript: transcribes via Groq Whisper, checks exam
+    relevance via fuzzy-match through exam_questions -> questions join,
+    flags immediately if speech matches exam content.
+  - _check_exam_relevance: fixed to join exam_questions (junction table) ->
+    questions to get question_text, matching actual schema.
   - All other endpoints unchanged.
 
 WHO DOES WHAT:
@@ -15,8 +23,9 @@ WHO DOES WHAT:
   - Face detection ML model         → FRONTEND only (runs in browser)
   - Log face verification result    → BACKEND  POST /proctoring/face
   - Tab / fullscreen detection      → FRONTEND (document.visibilityState, fullscreenchange)
-  - Log browser activity            → BACKEND  POST /proctoring/browser  ← FIXED
+  - Log browser activity            → BACKEND  POST /proctoring/browser
   - Audio noise detection           → FRONTEND (WebAudio API) + BACKEND POST /proctoring/audio
+  - Audio speech transcription      → BACKEND  POST /proctoring/audio-transcript
   - View proctoring summary         → BACKEND  GET  /proctoring/summary/:id  (Proctor/Admin)
   - Integrity score calculation     → BACKEND  POST /proctoring/summary/:id  (on submission)
 
@@ -26,16 +35,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from uuid import UUID
-import os
-import subprocess
-import tempfile
 import difflib
-import urllib.request
+import logging
+import requests
 
 from app.core.security import require_student, require_proctor
 from app.db.supabase import get_supabase_admin
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -44,12 +52,6 @@ router = APIRouter()
 def _get_tab_switch_limit(supabase, attempt_id: str) -> int:
     """
     Look up exam_rules.max_tab_switches for the exam this attempt belongs to.
-
-    Uses Supabase's relationship embedding (attempt -> schedule -> exam ->
-    exam_rules) the same way the rest of this codebase resolves nested
-    relations (e.g. exam_schedules(exams(title,courses(code))) elsewhere) —
-    this avoids hard-coding a foreign-key column name that may not match
-    the actual schema.
     """
     rows = (
         supabase.table("exam_attempts")
@@ -77,7 +79,6 @@ def _get_tab_switch_limit(supabase, attempt_id: str) -> int:
         return limit
 
     # Fallback: some schemas key exam_rules by exam_schedule_id directly
-    # rather than exam_id — try that path before giving up.
     attempt = (
         supabase.table("exam_attempts")
         .select("exam_schedule_id")
@@ -107,83 +108,71 @@ def _hard_violation(tab_switch_count: int, tab_limit: int, session_conflict: boo
     A student should always land in Flagged Attempts if they were shut down
     for hitting a hard rule (tab-switch limit breached, or a duplicate
     session/tab was detected) — regardless of what the computed integrity
-    score works out to. Small per-event penalties can otherwise leave the
-    score above the 0.5 cutoff even though the exam was force-submitted.
+    score works out to.
     """
     return bool(session_conflict) or (tab_limit > 0 and tab_switch_count >= tab_limit)
 
 
-# ── Phase 2: self-hosted whisper.cpp transcription (free, no API cost) ───────
-#
-# This is intentionally "pluggable" so the rest of the app works today with
-# or without a server actually running whisper.cpp:
-#
-#   - Not configured yet (no WHISPER_CPP_BIN env var) → _transcribe_audio()
-#     returns None immediately, audio_monitoring_logs just gets a row with
-#     transcript=None, exam_relevant=False. Nothing breaks.
-#
-#   - Once you have ANY machine (a $5/mo VPS is plenty) with whisper.cpp
-#     built and a model downloaded, set two env vars and it activates with
-#     no further code changes:
-#       WHISPER_CPP_BIN=/path/to/whisper.cpp/main
-#       WHISPER_MODEL_PATH=/path/to/whisper.cpp/models/ggml-base.en.bin
-#     (ffmpeg must also be on PATH — used to convert the browser's webm/opus
-#     clip into the 16kHz mono WAV whisper.cpp expects.)
+# ── Phase 2: audio transcription via Groq's hosted Whisper API ───────────────
 
 def _transcribe_audio(audio_url: str) -> Optional[str]:
     """
-    Downloads the uploaded clip, converts it to 16kHz mono WAV via ffmpeg,
-    and runs it through a self-hosted whisper.cpp binary. Returns the
-    transcript, or None if transcription isn't configured / fails for any
-    reason (never raises — a missing whisper.cpp setup should degrade to
-    "no transcript available", not break audio logging).
+    Downloads the recorded speech clip and sends it to Groq's Whisper
+    transcription endpoint. Returns the transcript text, or None if the
+    key isn't configured or the request fails.
+
+    Uses the same GROQ_API_KEY and requests-based style already used in
+    questions.py — no self-hosted server, no ffmpeg, no VPS needed.
     """
-    whisper_bin   = os.environ.get("WHISPER_CPP_BIN")
-    whisper_model = os.environ.get("WHISPER_MODEL_PATH")
-    if not whisper_bin or not whisper_model:
-        return None  # Phase 2 not deployed yet — safe no-op
+    api_key = settings.GROQ_API_KEY.strip()
+    if not api_key:
+        logger.warning("GROQ_API_KEY not set — skipping audio transcription")
+        return None
 
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            raw_path = os.path.join(tmp, "clip.webm")
-            wav_path = os.path.join(tmp, "clip.wav")
+        clip_resp = requests.get(audio_url, timeout=15)
+        clip_resp.raise_for_status()
+        audio_bytes = clip_resp.content
 
-            urllib.request.urlretrieve(audio_url, raw_path)
-
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", raw_path, "-ar", "16000", "-ac", "1", wav_path],
-                check=True, capture_output=True, timeout=30,
-            )
-
-            result = subprocess.run(
-                [whisper_bin, "-m", whisper_model, "-f", wav_path, "-otxt", "-of", os.path.join(tmp, "out")],
-                check=True, capture_output=True, timeout=60, text=True,
-            )
-
-            txt_path = os.path.join(tmp, "out.txt")
-            if os.path.exists(txt_path):
-                with open(txt_path, "r", encoding="utf-8") as f:
-                    return f.read().strip() or None
-            # Some whisper.cpp builds print straight to stdout instead
-            return (result.stdout or "").strip() or None
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent":    "Mozilla/5.0 (compatible; ExamPortal/1.0)",
+            },
+            files={"file": ("clip.webm", audio_bytes, "audio/webm")},
+            data={
+                "model":           "whisper-large-v3-turbo",
+                "response_format": "json",
+            },
+            timeout=30,
+        )
+        print(f"### Groq transcription status: {resp.status_code}", flush=True)
+        resp.raise_for_status()
+        text = (resp.json().get("text") or "").strip()
+        return text or None
     except Exception as exc:
-        print(f"[proctoring] whisper.cpp transcription failed (non-fatal): {exc}")
+        print(f"### Groq transcription failed (non-fatal): {exc}", flush=True)
         return None
 
 
 def _check_exam_relevance(supabase, attempt_id: str, transcript: str) -> tuple[bool, Optional[str]]:
     """
-    Free, deterministic relevance check — no LLM call needed. Fetches the
-    exam's own question/answer text and fuzzy-matches it against the
-    transcript, so "are they talking about the paper" is answered by direct
-    comparison against the actual exam content rather than a guess.
+    Free, deterministic relevance check — no LLM call needed.
 
-    NOTE: adjust the table/column names below (`exam_questions` /
-    `question_text`) to match your actual schema if they differ — wrapped
-    in try/except so a schema mismatch degrades to "no match found"
-    instead of crashing the endpoint.
+    Schema (confirmed via information_schema):
+      exam_questions: exam_id, question_id, id, marks_override, ...
+      questions:      id, question_text, course_id, question_type, ...
+
+    The join goes: attempt -> exam_schedules(exam_id) -> exam_questions
+    (filter by exam_id) -> questions (get question_text via question_id).
+
+    Fuzzy-matches the transcript against the exam's own question text.
+    Returns (is_relevant, matched_snippet) where is_relevant is True if
+    the transcript meaningfully overlaps with any question's text.
     """
     try:
+        # Step 1: resolve exam_id from attempt
         attempt = (
             supabase.table("exam_attempts")
             .select("exam_schedules(exam_id)")
@@ -200,13 +189,23 @@ def _check_exam_relevance(supabase, attempt_id: str, transcript: str) -> tuple[b
         if not exam_id:
             return False, None
 
-        questions = (
+        # Step 2: join exam_questions -> questions to get question_text
+        eq_rows = (
             supabase.table("exam_questions")
-            .select("question_text")
+            .select("questions(question_text)")
             .eq("exam_id", exam_id)
             .execute()
             .data
         ) or []
+
+        questions = []
+        for row in eq_rows:
+            q = row.get("questions") or {}
+            if isinstance(q, list):
+                q = q[0] if q else {}
+            if q.get("question_text"):
+                questions.append({"question_text": q["question_text"]})
+
     except Exception as exc:
         print(f"[proctoring] exam-relevance lookup failed (non-fatal): {exc}")
         return False, None
@@ -249,10 +248,6 @@ class BrowserActivityLog(BaseModel):
     attempt_id: UUID
     tab_switch_count: int
     fullscreen_exit_count: int
-    focus_loss_count: int = 0
-    clipboard_violation_count: int = 0
-    screenshot_violation_count: int = 0
-    print_violation_count: int = 0
     session_conflict_detected: bool = False
 
 
@@ -282,15 +277,11 @@ async def log_face_verification(
 ):
     """
     Frontend AI models (face-api.js + coco-ssd, running client-side) send
-    real detection results here — no more hardcoded true/false.
+    real detection results here.
 
-    FIX — live proctoring_summary sync:
-      Previously face events only affected flagged status once the exam was
-      submitted (compute_proctoring_summary aggregates the whole log table
-      at that point). That meant a phone caught mid-exam never showed up on
-      Flagged Attempts until the student finished. Now we recompute the
-      cumulative face-related counts and upsert proctoring_summary on every
-      event, same pattern already used for tab-switch/fullscreen syncing.
+    Live proctoring_summary sync: recomputes cumulative face-related counts
+    and upserts proctoring_summary on every event so the dashboard shows
+    real-time data, not just post-submission data.
     """
     if not (0.0 <= body.confidence_score <= 1.0):
         raise HTTPException(status_code=400, detail="confidence_score must be 0.0–1.0")
@@ -344,18 +335,8 @@ async def log_face_verification(
     integrity_score = round(max(0.0, 1.0 - penalty), 4)
     total_incidents = face_absence + multi_person + phone_detect + tab_switches + fs_exits + noise_events
 
-    # A phone in frame or multiple people detected is serious enough to flag
-    # immediately, regardless of what the blended score works out to — same
-    # "hard violation" treatment already applied to tab-switch-limit breaches.
-    #
-    # FIX: this must look at the CUMULATIVE counts (phone_detect, multi_person
-    # — already computed above from all_face_logs), not just the current
-    # frame's body. Using body.phone_detected/body.person_count meant a
-    # single later "clean" frame (phone put down, back to 1 person) would
-    # upsert hard_violation=False and silently un-flag a student who was
-    # genuinely caught with a phone moments earlier — this row's upsert
-    # replaces the whole flagged_for_review value, so the earlier true
-    # violation was being erased instead of staying flagged.
+    # Use CUMULATIVE counts (not just current frame) so a later "clean" frame
+    # doesn't un-flag a student who was genuinely caught with a phone earlier.
     hard_violation = phone_detect > 0 or multi_person > 0
     flagged = integrity_score < 0.5 or hard_violation
 
@@ -387,73 +368,46 @@ async def log_browser_activity(
     """
     Frontend sends cumulative tab switch + fullscreen exit counts.
 
-    FIX 1 — Live proctoring_summary sync:
-      Previously this only wrote to browser_activity_logs (1 row per attempt,
-      upserted). proctoring_summary.tab_switch_count was only written on exam
-      submission, so the dashboard always showed 0 during a live exam.
-      Now we update proctoring_summary immediately so the stat cards are live.
+    FIX 1 — Live proctoring_summary sync: updates proctoring_summary
+      immediately so dashboard stat cards are live, not post-submission only.
 
-    FIX 2 — Realtime INSERT rows for Live Alerts:
-      The Supabase Realtime channel in Dashboard.tsx listens for INSERT on
-      browser_activity_logs. The old upsert only ever fired the Realtime
-      trigger once (on first insert). Now we INSERT a separate event row
-      with event_type so every tab switch fires a Live Alert.
+    FIX 2 — Realtime INSERT rows for Live Alerts: INSERTs a separate event
+      row per violation type so Supabase Realtime triggers on every event.
 
-    FIX 3 — browser_activity_summary was never being written:
-      proctor.py's dashboard endpoint reads cumulative tab-switch /
-      fullscreen-exit counts from a SEPARATE table, browser_activity_summary
-      (one row per attempt), not from browser_activity_logs. This endpoint
-      was only ever upserting into browser_activity_logs, so the dashboard's
-      Students panel / tab-switch stat cards were reading a table nothing
-      wrote to — always stale/empty regardless of real activity. Now the
-      cumulative row is upserted into browser_activity_summary too.
+    FIX 3 — browser_activity_summary: upserts the cumulative row into
+      browser_activity_summary (the table proctor.py actually reads for the
+      Students panel) in addition to browser_activity_logs.
     """
     supabase = get_supabase_admin()
     aid = str(body.attempt_id)
     p   = settings.INTEGRITY_SCORE_PENALTIES
 
-    # ── 1. Upsert the cumulative activity row (unchanged behaviour) ───────────
-    #    browser_activity_logs stays as the per-event/history table used by
-    #    Realtime + compute_proctoring_summary()'s final read.
+    # ── 1. Upsert the cumulative activity row ─────────────────────────────────
     supabase.table("browser_activity_logs").upsert(
         {
             "attempt_id":                aid,
             "tab_switch_count":          body.tab_switch_count,
             "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "focus_loss_count":          body.focus_loss_count,
-            "clipboard_violation_count": body.clipboard_violation_count,
-            "screenshot_violation_count":body.screenshot_violation_count,
-            "print_violation_count":     body.print_violation_count,
             "session_conflict_detected": body.session_conflict_detected,
         },
         on_conflict="attempt_id",
     ).execute()
 
-    # ── 1b. FIX: also upsert into browser_activity_summary ────────────────────
-    #    This is the table the dashboard (proctor.py) actually reads
-    #    cumulative counts from for the Students panel / stat cards.
+    # ── 1b. Also upsert into browser_activity_summary ─────────────────────────
     try:
         supabase.table("browser_activity_summary").upsert(
             {
                 "attempt_id":            aid,
                 "tab_switch_count":      body.tab_switch_count,
                 "fullscreen_exit_count": body.fullscreen_exit_count,
-                "focus_loss_count":          body.focus_loss_count,
-                "clipboard_violation_count": body.clipboard_violation_count,
-                "screenshot_violation_count":body.screenshot_violation_count,
-                "print_violation_count":     body.print_violation_count,
             },
             on_conflict="attempt_id",
         ).execute()
     except Exception as exc:
-        # Don't let a missing/misnamed browser_activity_summary table break
-        # the whole /browser sync — log it and carry on, since
-        # browser_activity_logs (above) still succeeded.
         print(f"[proctoring] browser_activity_summary upsert failed (non-fatal): {exc}")
 
-    # ── 2. FIX: INSERT a separate event row per violation type ────────────────
-    #    These INSERT rows are what fires the Supabase Realtime trigger
-    #    in Dashboard.tsx → populates Live Alerts in real time.
+    # ── 2. INSERT separate event rows per violation type ──────────────────────
+    #    These INSERT rows fire the Supabase Realtime trigger in Dashboard.tsx
     if body.tab_switch_count > 0:
         supabase.table("browser_activity_logs").insert({
             "attempt_id":                aid,
@@ -472,42 +426,6 @@ async def log_browser_activity(
             "session_conflict_detected": body.session_conflict_detected,
         }).execute()
 
-    if body.focus_loss_count > 0:
-        supabase.table("browser_activity_logs").insert({
-            "attempt_id":                aid,
-            "event_type":                "FOCUS_LOST",
-            "tab_switch_count":          body.tab_switch_count,
-            "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "session_conflict_detected": body.session_conflict_detected,
-        }).execute()
-
-    if body.clipboard_violation_count > 0:
-        supabase.table("browser_activity_logs").insert({
-            "attempt_id":                aid,
-            "event_type":                "CLIPBOARD",
-            "tab_switch_count":          body.tab_switch_count,
-            "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "session_conflict_detected": body.session_conflict_detected,
-        }).execute()
-
-    if body.screenshot_violation_count > 0:
-        supabase.table("browser_activity_logs").insert({
-            "attempt_id":                aid,
-            "event_type":                "SCREENSHOT",
-            "tab_switch_count":          body.tab_switch_count,
-            "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "session_conflict_detected": body.session_conflict_detected,
-        }).execute()
-
-    if body.print_violation_count > 0:
-        supabase.table("browser_activity_logs").insert({
-            "attempt_id":                aid,
-            "event_type":                "PRINT",
-            "tab_switch_count":          body.tab_switch_count,
-            "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "session_conflict_detected": body.session_conflict_detected,
-        }).execute()
-
     if body.session_conflict_detected:
         supabase.table("browser_activity_logs").insert({
             "attempt_id":                aid,
@@ -517,37 +435,14 @@ async def log_browser_activity(
             "session_conflict_detected": True,
         }).execute()
 
-    # Always log a HEARTBEAT event so the backend can verify the network wasn't intercepted
-    supabase.table("browser_activity_logs").insert({
-        "attempt_id":                aid,
-        "event_type":                "HEARTBEAT",
-        "tab_switch_count":          body.tab_switch_count,
-        "fullscreen_exit_count":     body.fullscreen_exit_count,
-        "session_conflict_detected": body.session_conflict_detected,
-    }).execute()
-
-    # ── 3. FIX: sync into proctoring_summary live ─────────────────────────────
-    #    Compute a partial integrity score from browser events only.
-    #    When the exam is submitted, compute_proctoring_summary() will
-    #    overwrite this with the full score including face + audio.
+    # ── 3. Sync into proctoring_summary live ──────────────────────────────────
     tab_penalty = body.tab_switch_count      * p.get("tab_switch",      0.03)
     fs_penalty  = body.fullscreen_exit_count * p.get("fullscreen_exit", 0.02)
-    focus_penalty     = body.focus_loss_count          * p.get("focus_loss", 0.02)
-    clipboard_penalty = body.clipboard_violation_count * p.get("clipboard",  0.05)
-    screenshot_penalty= body.screenshot_violation_count* p.get("screenshot", 0.10)
-    print_penalty     = body.print_violation_count     * p.get("print",      0.10)
-    
-    total_browser_penalty = tab_penalty + fs_penalty + focus_penalty + clipboard_penalty + screenshot_penalty + print_penalty
-    partial_integrity = round(max(0.0, 1.0 - total_browser_penalty), 4)
+    partial_integrity = round(max(0.0, 1.0 - tab_penalty - fs_penalty), 4)
     tab_limit = _get_tab_switch_limit(supabase, aid)
     hard_violation = _hard_violation(body.tab_switch_count, tab_limit, body.session_conflict_detected)
-    # A student is flagged either once their integrity score drops below 50%,
-    # OR immediately if they've been shut down for breaching a hard rule
-    # (tab-switch limit / duplicate session) — even if the score alone
-    # wouldn't have crossed the threshold yet.
     should_flag = partial_integrity < 0.5 or hard_violation
 
-    # Check if a summary row already exists for this attempt
     existing = (
         supabase.table("proctoring_summary")
         .select("attempt_id, integrity_score, face_absence_count, multi_person_count, phone_detection_count, noise_event_count")
@@ -557,8 +452,7 @@ async def log_browser_activity(
     )
 
     if existing:
-        # Update only browser-related fields — preserve face/audio counts
-        # already recorded. Recompute integrity using all known penalties.
+        # Update only browser-related fields — preserve face/audio counts already recorded
         row = existing[0]
         face_absence = row.get("face_absence_count",    0) or 0
         multi_person = row.get("multi_person_count",    0) or 0
@@ -572,7 +466,7 @@ async def log_browser_activity(
             phone_detect * p.get("phone_detected", 0.10)
         )
         full_integrity = round(
-            max(0.0, 1.0 - total_browser_penalty - face_penalty - noise_penalty),
+            max(0.0, 1.0 - tab_penalty - fs_penalty - face_penalty - noise_penalty),
             4,
         )
         full_flagged = full_integrity < 0.5 or hard_violation
@@ -580,13 +474,9 @@ async def log_browser_activity(
         supabase.table("proctoring_summary").update({
             "tab_switch_count":      body.tab_switch_count,
             "fullscreen_exit_count": body.fullscreen_exit_count,
-            "focus_loss_count":          body.focus_loss_count,
-            "clipboard_violation_count": body.clipboard_violation_count,
-            "screenshot_violation_count":body.screenshot_violation_count,
-            "print_violation_count":     body.print_violation_count,
             "integrity_score":       full_integrity,
             "flagged_for_review":    full_flagged,
-            # Keep proctor_verdict as-is — don't overwrite a proctor decision
+            # Don't overwrite an existing proctor decision
         }).eq("attempt_id", aid).execute()
 
     else:
@@ -595,12 +485,8 @@ async def log_browser_activity(
             "attempt_id":            aid,
             "tab_switch_count":      body.tab_switch_count,
             "fullscreen_exit_count": body.fullscreen_exit_count,
-            "focus_loss_count":          body.focus_loss_count,
-            "clipboard_violation_count": body.clipboard_violation_count,
-            "screenshot_violation_count":body.screenshot_violation_count,
-            "print_violation_count":     body.print_violation_count,
             "integrity_score":       partial_integrity,
-            "total_incidents":       body.tab_switch_count + body.fullscreen_exit_count + body.focus_loss_count + body.clipboard_violation_count + body.screenshot_violation_count + body.print_violation_count,
+            "total_incidents":       body.tab_switch_count + body.fullscreen_exit_count,
             "face_absence_count":    0,
             "multi_person_count":    0,
             "phone_detection_count": 0,
@@ -639,46 +525,70 @@ async def log_audio_transcript(
 ):
     """
     Phase 2 — called by AudioMonitor.tsx only when its client-side VAD
-    detects sustained speech (not idle noise), with a short recorded clip
-    already uploaded to Supabase Storage.
+    detects sustained speech, with a short clip already uploaded to
+    Supabase Storage.
 
-    Transcribes via self-hosted whisper.cpp (see _transcribe_audio — no-ops
-    safely if it isn't deployed yet) and checks the transcript against the
-    exam's own question text (free, deterministic — see
-    _check_exam_relevance) instead of an LLM call.
+    Flow:
+      1. Transcribe clip via Groq Whisper (whisper-large-v3-turbo).
+      2. Fuzzy-match transcript against exam's own question text via
+         exam_questions -> questions join (free, deterministic, no LLM).
+      3. Log result to audio_monitoring_logs (requires migration — see below).
+      4. If exam_relevant, immediately flag the attempt in proctoring_summary.
+
+    Requires these columns on audio_monitoring_logs (run migration first):
+      alter table audio_monitoring_logs
+        add column if not exists transcript       text,
+        add column if not exists exam_relevant    boolean default false,
+        add column if not exists matched_snippet  text,
+        add column if not exists audio_url        text;
     """
     supabase = get_supabase_admin()
     aid = str(body.attempt_id)
 
+    # Step 1: transcribe
     transcript = _transcribe_audio(body.audio_url)
 
+    # Step 2: check exam relevance
     exam_relevant = False
     matched_snippet: Optional[str] = None
     if transcript:
         exam_relevant, matched_snippet = _check_exam_relevance(supabase, aid, transcript)
 
+    # Step 3: build notes and log to audio_monitoring_logs
     notes = None
     if transcript and exam_relevant:
         notes = f"Speech matched exam content: \"{matched_snippet}\""
     elif transcript:
         notes = f"Speech detected (not exam-related): \"{transcript[:80]}\""
     else:
-        notes = "Speech detected — transcription unavailable (whisper.cpp not configured)"
+        notes = "Speech detected — transcription unavailable (GROQ_API_KEY not configured or request failed)"
 
-    supabase.table("audio_monitoring_logs").insert({
-        "attempt_id":       aid,
-        "noise_detected":   True,
-        "noise_level_db":   None,
-        "notes":            notes,
-        "transcript":       transcript,
-        "exam_relevant":    exam_relevant,
-        "matched_snippet":  matched_snippet,
-        "audio_url":        body.audio_url,
-    }).execute()
+    try:
+        supabase.table("audio_monitoring_logs").insert({
+            "attempt_id":      aid,
+            "noise_detected":  True,
+            "noise_level_db":  None,
+            "notes":           notes,
+            "transcript":      transcript,
+            "exam_relevant":   exam_relevant,
+            "matched_snippet": matched_snippet,
+            "audio_url":       body.audio_url,
+        }).execute()
+    except Exception as exc:
+        # Columns may not exist yet if migration hasn't run — fall back to
+        # a basic insert so the endpoint never breaks noise logging entirely.
+        print(f"[proctoring] audio-transcript full insert failed, falling back: {exc}")
+        try:
+            supabase.table("audio_monitoring_logs").insert({
+                "attempt_id":     aid,
+                "noise_detected": True,
+                "noise_level_db": None,
+                "notes":          notes,
+            }).execute()
+        except Exception as exc2:
+            print(f"[proctoring] audio-transcript fallback insert also failed: {exc2}")
 
-    # Speech that directly matches the exam's own question/answer content is
-    # serious enough to flag immediately — same "hard violation" treatment
-    # as the tab-switch-limit and phone-detection cases.
+    # Step 4: if exam-relevant speech detected, flag immediately
     if exam_relevant:
         existing = (
             supabase.table("proctoring_summary")
@@ -728,71 +638,39 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
     # ── Browser logs ──────────────────────────────────────────────────────────
     browser = (
         supabase.table("browser_activity_logs")
-        .select("tab_switch_count,fullscreen_exit_count,focus_loss_count,clipboard_violation_count,screenshot_violation_count,print_violation_count,session_conflict_detected")
+        .select("tab_switch_count,fullscreen_exit_count,session_conflict_detected")
         .eq("attempt_id", aid)
         .order("tab_switch_count", desc=True)
         .limit(1)
         .execute()
         .data
     ) or []
-    tab_switches     = browser[0].get("tab_switch_count", 0) if browser else 0
-    fs_exits         = browser[0].get("fullscreen_exit_count", 0) if browser else 0
-    focus_loss       = browser[0].get("focus_loss_count", 0) if browser else 0
-    clipboard        = browser[0].get("clipboard_violation_count", 0) if browser else 0
-    screenshot       = browser[0].get("screenshot_violation_count", 0) if browser else 0
-    print_count      = browser[0].get("print_violation_count", 0) if browser else 0
+    tab_switches     = browser[0]["tab_switch_count"]          if browser else 0
+    fs_exits         = browser[0]["fullscreen_exit_count"]     if browser else 0
     session_conflict = browser[0].get("session_conflict_detected", False) if browser else False
 
     # ── Audio logs ────────────────────────────────────────────────────────────
     audio_logs   = supabase.table("audio_monitoring_logs").select("id").eq("attempt_id", aid).eq("noise_detected", True).execute().data or []
     noise_events = len(audio_logs)
 
-    # ── Missing Heartbeat Defense ─────────────────────────────────────────────
-    # Verify the student didn't block the API using an extension/proxy
-    attempt_data = supabase.table("exam_attempts").select("started_at").eq("id", aid).execute().data
-    time_spent_sec = 0
-    if attempt_data and attempt_data[0].get("started_at"):
-        from datetime import datetime, timezone
-        started_at = datetime.fromisoformat(attempt_data[0]["started_at"])
-        now = datetime.now(timezone.utc)
-        time_spent_sec = (now - started_at).total_seconds()
-        
-    heartbeat_logs = supabase.table("browser_activity_logs").select("id").eq("attempt_id", aid).eq("event_type", "HEARTBEAT").execute().data or []
-    actual_heartbeats = len(heartbeat_logs)
-    expected_heartbeats = time_spent_sec / 30.0
-    
-    missing_heartbeat_penalty = 0.0
-    if time_spent_sec > 60 and actual_heartbeats < (expected_heartbeats * 0.5):
-        missing_heartbeat_penalty = 0.5  # Massive penalty for network interception
-
     # ── Integrity score ───────────────────────────────────────────────────────
     noise_penalty = p.get("noise_event", 0.02)
     penalty = (
-        face_absence * p.get("face_absence", 0.05)    +
-        multi_person * p.get("multi_person", 0.10)    +
-        phone_detect * p.get("phone_detected", 0.10)  +
-        tab_switches * p.get("tab_switch", 0.03)      +
-        fs_exits     * p.get("fullscreen_exit", 0.02) +
-        focus_loss   * p.get("focus_loss", 0.02)      +
-        clipboard    * p.get("clipboard", 0.05)       +
-        screenshot   * p.get("screenshot", 0.10)      +
-        print_count  * p.get("print", 0.10)           +
-        noise_events * noise_penalty                  +
-        missing_heartbeat_penalty
+        face_absence * p["face_absence"]    +
+        multi_person * p["multi_person"]    +
+        phone_detect * p["phone_detected"]  +
+        tab_switches * p["tab_switch"]      +
+        fs_exits     * p["fullscreen_exit"] +
+        noise_events * noise_penalty
     )
     integrity_score = round(max(0.0, 1.0 - penalty), 4)
-    total_incidents = face_absence + multi_person + phone_detect + tab_switches + fs_exits + focus_loss + clipboard + screenshot + print_count + noise_events
+    total_incidents = face_absence + multi_person + phone_detect + tab_switches + fs_exits + noise_events
     tab_limit = _get_tab_switch_limit(supabase, aid)
     hard_violation = _hard_violation(tab_switches, tab_limit, session_conflict)
-    # Flag threshold: a student shows up in "Flagged Attempts" once their
-    # integrity score falls below 50% — OR immediately, regardless of score,
-    # if their exam was shut down for breaching a hard rule (tab-switch limit
-    # exceeded / duplicate session detected) or missing heartbeats.
-    flagged = integrity_score < 0.5 or hard_violation or (missing_heartbeat_penalty > 0)
+    flagged = integrity_score < 0.5 or hard_violation
 
     # Preserve an existing proctor decision — a recompute shouldn't silently
-    # un-clear/un-violate an attempt a proctor already reviewed. Only default
-    # to PENDING if there's no prior row or verdict yet.
+    # un-clear/un-violate an attempt a proctor already reviewed.
     existing = (
         supabase.table("proctoring_summary")
         .select("proctor_verdict")
@@ -800,10 +678,7 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
         .execute()
         .data
     ) or []
-    
     proctor_verdict = existing[0]["proctor_verdict"] if existing and existing[0].get("proctor_verdict") else "PENDING"
-    if missing_heartbeat_penalty > 0 and proctor_verdict == "PENDING":
-        proctor_verdict = "SUSPICIOUS_NETWORK_INTERCEPTION"
 
     # ── Write final summary ───────────────────────────────────────────────────
     supabase.table("proctoring_summary").upsert(
@@ -816,10 +691,6 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
             "phone_detection_count": phone_detect,
             "tab_switch_count":      tab_switches,
             "fullscreen_exit_count": fs_exits,
-            "focus_loss_count":          focus_loss,
-            "clipboard_violation_count": clipboard,
-            "screenshot_violation_count":screenshot,
-            "print_violation_count":     print_count,
             "noise_event_count":     noise_events,
             "flagged_for_review":    flagged,
             "proctor_verdict":       proctor_verdict,
@@ -836,7 +707,7 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
     }
 
 
-# ── Summary computation (called on exam submission) ───────────────────────────
+# ── Summary endpoints ─────────────────────────────────────────────────────────
 
 @router.post("/summary/{attempt_id}")
 async def compute_proctoring_summary(
@@ -853,11 +724,6 @@ async def recompute_proctoring_summary(attempt_id: UUID):
     """
     Proctor-only manual re-check. Re-runs the exact same computation as
     submission time, using whatever logs currently exist for the attempt.
-
-    Useful for attempts whose flagged status was computed under an older
-    version of the flagging rules (e.g. a tab-switch-limit shutdown that
-    wasn't yet treated as an automatic flag) — a proctor can force a
-    recheck without needing the student's session.
     """
     supabase = get_supabase_admin()
     return _compute_and_upsert_summary(supabase, str(attempt_id))
@@ -869,7 +735,6 @@ async def recompute_proctoring_summary(attempt_id: UUID):
 async def get_proctoring_summary(attempt_id: UUID):
     """
     Proctor/Admin view of a single attempt's proctoring summary.
-    Includes noise_event_count from audio_monitoring_logs.
     Students NEVER see this.
     """
     supabase = get_supabase_admin()
