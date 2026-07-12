@@ -1,17 +1,19 @@
 /**
  * LiveExam.tsx — patched
  *
- * Changes vs original:
+ * Changes vs previous version:
+ *   • Force-submit now explicitly flushes browser counts to
+ *     browser_activity_logs BEFORE calling computeProctoringsSummary,
+ *     so tab_switch_count / fullscreen_exit_count are never 0 in the
+ *     summary row. Previously the summary was computed before BrowserMonitor's
+ *     async syncToBackend() had a chance to POST, leaving proctoring_summary
+ *     with integrity_score=0.98 and flagged_for_review=false even after a
+ *     tab-switch-limit breach.
+ *   • navigator.sendBeacon fallback added to the force-submit flush so the
+ *     browser log POST survives even if the page is already unloading.
  *   • max_fullscreen_exits added to ExamRule interface and getRule().
- *     When max_fullscreen_exits > 0 and the student exits fullscreen that
- *     many times, the exam is force-submitted (same flow as max_tab_switches).
- *     0 = unlimited / log-only (original behaviour).
  *   • fullscreenCountRef added to track exits across the session.
- *   • handleViolation "fullscreen" branch updated to enforce the limit and
- *     show graduated warnings ("1 more exit = auto-submit") matching the
- *     tab-switch UX pattern.
- *
- * Everything else is unchanged.
+ *   • handleViolation "fullscreen" branch updated to enforce the limit.
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -52,7 +54,7 @@ interface ExamRule {
   camera_required: boolean;
   microphone_required: boolean;
   max_tab_switches: number;
-  max_fullscreen_exits: number;  // 0 = unlimited/log-only; >0 = force-submit on limit
+  max_fullscreen_exits: number;
   auto_save_interval_sec: number;
 }
 
@@ -63,14 +65,51 @@ function getRule(session: any): ExamRule {
     ? session.exam.exam_rules[0]
     : session?.exam?.exam_rules;
   return {
-    fullscreen_required:    raw?.require_fullscreen     ?? true,   // always true at platform level
+    fullscreen_required:    raw?.require_fullscreen     ?? true,
     proctoring_enabled:     raw?.enable_proctoring      ?? false,
     camera_required:        raw?.camera_required        ?? false,
     microphone_required:    raw?.microphone_required    ?? false,
     max_tab_switches:       raw?.max_tab_switches       ?? 3,
-    max_fullscreen_exits:   raw?.max_fullscreen_exits   ?? 3,      // ← NEW
+    max_fullscreen_exits:   raw?.max_fullscreen_exits   ?? 3,
     auto_save_interval_sec: raw?.auto_save_interval_sec ?? 30,
   };
+}
+
+// ── Beacon flush — survives page unload ───────────────────────────────────────
+//
+// Called right before force-submit so browser counts are guaranteed to reach
+// the backend even if the page is already tearing down. navigator.sendBeacon
+// is fire-and-forget and survives navigation/unload where fetch() does not.
+// Falls back to a normal fetch if Beacon isn't available (e.g. some older
+// mobile browsers).
+
+function flushBrowserCountsBeacon(
+  attemptId: string,
+  tabCount: number,
+  fsCount: number,
+  sessionConflict = false,
+) {
+  const body = JSON.stringify({
+    attempt_id:                attemptId,
+    tab_switch_count:          tabCount,
+    fullscreen_exit_count:     fsCount,
+    session_conflict_detected: sessionConflict,
+  });
+
+  // Try Beacon first (survives unload)
+  if (navigator.sendBeacon) {
+    const blob = new Blob([body], { type: "application/json" });
+    const sent = navigator.sendBeacon("/api/v1/proctoring/browser", blob);
+    if (sent) return Promise.resolve();
+  }
+
+  // Fallback: keepalive fetch (also survives short unloads)
+  return fetch("/api/v1/proctoring/browser", {
+    method:      "POST",
+    headers:     { "Content-Type": "application/json" },
+    body,
+    keepalive:   true,
+  }).catch(() => undefined);
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -107,7 +146,7 @@ export default function LiveExam() {
   // Violation state
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
   const [tabCount,        setTabCount]        = useState(0);
-  const [fsCount,         setFsCount]         = useState(0);   // ← NEW: fullscreen exit display count
+  const [fsCount,         setFsCount]         = useState(0);
   const [forceSubmitting, setForceSubmitting] = useState(false);
   const [forceReason,     setForceReason]     = useState("");
 
@@ -115,7 +154,7 @@ export default function LiveExam() {
   const submitted          = useRef(false);
   const enteredAt          = useRef(Date.now());
   const tabCountRef        = useRef(0);
-  const fullscreenCountRef = useRef(0);   // ← NEW
+  const fullscreenCountRef = useRef(0);
 
   const session     = sessionQuery.data;
   const currentUser = useAuthStore((s) => s.user);
@@ -156,22 +195,16 @@ export default function LiveExam() {
   // ── Navigation Lockdown ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!session || submitting || forceSubmitting) return;
-
-    // 1. Trap the Back button
     window.history.pushState(null, "", window.location.href);
     const handlePopState = () => {
-      // Push state forward again to prevent leaving
       window.history.pushState(null, "", window.location.href);
     };
     window.addEventListener("popstate", handlePopState);
-
-    // 2. Warn on Tab Close / Refresh
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
-      e.returnValue = ""; // Required for Chrome
+      e.returnValue = "";
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
-
     return () => {
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -238,7 +271,7 @@ export default function LiveExam() {
     const online  = () => {
       setIsOnline(true);
       void studentApi.logEvent(session.attempt.id, "CONNECTION_RESTORED").catch(() => undefined);
-      void flushAnswers(); // flush cached answers to backend
+      void flushAnswers();
     };
     const offline = () => {
       setIsOnline(false);
@@ -252,24 +285,77 @@ export default function LiveExam() {
     };
   }, [session, flushAnswers]);
 
+  // ── Force-submit helper ───────────────────────────────────────────────────────
+  //
+  // THE FIX: before computing the proctoring summary we explicitly POST the
+  // current browser counts so browser_activity_logs has a row. Previously
+  // we relied on BrowserMonitor's own async sync which raced against this
+  // 4-second timeout and often lost — leaving tab_switch_count=0 in the
+  // summary and flagged_for_review=false even after a limit breach.
+  //
+  // We use flushBrowserCountsBeacon() (sendBeacon / keepalive fetch) so the
+  // POST survives even if the page starts tearing down during the 4s wait.
+
+  const triggerForceSubmit = useCallback((
+    reason: string,
+    finalTabCount: number,
+    finalFsCount: number,
+    sessionConflict = false,
+  ) => {
+    setForceReason(reason);
+    setForceSubmitting(true);
+
+    const attemptId = session?.attempt.id ?? "";
+
+    setTimeout(async () => {
+      // 1. Flush browser counts first — this is what was missing.
+      //    We do it here with the exact counts we know right now, not
+      //    whatever BrowserMonitor may or may not have sent already.
+      await flushBrowserCountsBeacon(attemptId, finalTabCount, finalFsCount, sessionConflict);
+
+      // 2. Small pause so the beacon/fetch lands before the summary read.
+      await new Promise((r) => setTimeout(r, 600));
+
+      // 3. Now compute summary — browser_activity_logs row exists, so
+      //    tab_switch_count and flagged_for_review will be correct.
+      await studentApi.computeProctoringsSummary(attemptId).catch(() => undefined);
+
+      // 4. Submit the exam.
+      void submit("AUTO");
+    }, 4000);
+  }, [session?.attempt.id, submit]);
+
   // ── Violation handler ────────────────────────────────────────────────────────
   const handleViolation = useCallback((
     _message: string,
     type: ViolationType,
   ) => {
-    // Treat focus loss and tab switches equivalently for enforcement
     if (type === "tab" || type === "focus") {
       tabCountRef.current += 1;
       const newCount = tabCountRef.current;
       setTabCount(newCount);
       const max = rule.max_tab_switches;
 
-      void studentApi.logEvent(session?.attempt.id ?? "", type === "focus" ? "FOCUS_LOST_WARNING" : "TAB_SWITCH_WARNING").catch(() => undefined);
+      void studentApi.logEvent(
+        session?.attempt.id ?? "",
+        type === "focus" ? "FOCUS_LOST_WARNING" : "TAB_SWITCH_WARNING"
+      ).catch(() => undefined);
 
+<<<<<<< HEAD
+=======
+      if (max > 0 && newCount >= max) {
+        const reason = `You switched tabs or lost focus ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
+        // Pass the exact counts we know right now so the beacon flush is accurate
+        triggerForceSubmit(reason, newCount, fullscreenCountRef.current);
+        return;
+      }
+
+      const remaining_switches = max - newCount;
+>>>>>>> refs/remotes/origin/main
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
-        type: type,
+        type,
         message: max <= 0
           ? `⚠ ${_message}`
           : newCount >= max
@@ -279,7 +365,6 @@ export default function LiveExam() {
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 10_000);
 
     } else if (type === "fullscreen") {
-      // ── Enforce max_fullscreen_exits ────────────────────────────────
       fullscreenCountRef.current += 1;
       const newCount = fullscreenCountRef.current;
       setFsCount(newCount);
@@ -287,6 +372,16 @@ export default function LiveExam() {
 
       void studentApi.logEvent(session?.attempt.id ?? "", "FULLSCREEN_EXIT").catch(() => undefined);
 
+<<<<<<< HEAD
+=======
+      if (max > 0 && newCount >= max) {
+        const reason = `You exited fullscreen ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
+        triggerForceSubmit(reason, tabCountRef.current, newCount);
+        return;
+      }
+
+      const remaining_exits = max > 0 ? max - newCount : null;
+>>>>>>> refs/remotes/origin/main
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
@@ -306,24 +401,36 @@ export default function LiveExam() {
         type: "conflict" as ViolationType,
         message: "🚨 Another tab with this exam was detected. Close it immediately — this is a violation.",
       }, ...prev].slice(0, 5));
+
     } else if (type === "clipboard" || type === "screenshot" || type === "print") {
-      // Passive warnings for clipboard/screenshot/print attempts
       const id = ++warnCounter;
-      void studentApi.logEvent(session?.attempt.id ?? "", `${type.toUpperCase()}_ATTEMPT_WARNING`).catch(() => undefined);
-      
+      void studentApi.logEvent(
+        session?.attempt.id ?? "",
+        `${type.toUpperCase()}_ATTEMPT_WARNING`
+      ).catch(() => undefined);
       setWarnings((prev) => [{
         id,
-        type: type,
+        type,
         message: _message,
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 8_000);
     }
-  }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, submit]);
+  }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, triggerForceSubmit]);
 
-  const handleConflict = useCallback(() => handleViolation("", "conflict"), [handleViolation]);
+  const handleConflict = useCallback(() => {
+    // Session conflict: pass current counts + conflict=true so the beacon
+    // also sets session_conflict_detected on the browser log row.
+    triggerForceSubmit(
+      "🚨 Another tab with this exam was detected. This is a violation. Your exam is being submitted automatically.",
+      tabCountRef.current,
+      fullscreenCountRef.current,
+      true,
+    );
+  }, [triggerForceSubmit]);
 
   // ── Heartbeat Failure ────────────────────────────────────────────────────────
   const handleHeartbeatFailure = useCallback(() => {
+<<<<<<< HEAD
     const id = ++warnCounter;
     setWarnings((prev) => [{
       id,
@@ -331,16 +438,20 @@ export default function LiveExam() {
       message: "🚨 Proctoring telemetry sync is failing. Please check your connection or disable AdBlockers. This has been logged.",
     }, ...prev].slice(0, 5));
   }, []);
+=======
+    triggerForceSubmit(
+      "Proctoring telemetry has been blocked or dropped consecutively. This is a violation. Your exam is being submitted automatically.",
+      tabCountRef.current,
+      fullscreenCountRef.current,
+    );
+  }, [triggerForceSubmit]);
+>>>>>>> refs/remotes/origin/main
 
   // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions = useMemo(() => {
     if (!session?.questions) return [];
-    
-    // Create a deterministic seed based on the attempt ID
     const seedGen = xmur3(session.attempt.id);
     const rand = mulberry32(seedGen());
-
-    // Deep copy and shuffle questions
     const shuffledQuestions = [...session.questions].map(q => ({
       ...q,
       questions: {
@@ -348,9 +459,9 @@ export default function LiveExam() {
         question_options: seededShuffle([...q.questions.question_options], rand)
       }
     }));
-
     return seededShuffle(shuffledQuestions, rand);
   }, [session?.attempt.id, session?.questions]);
+
   const row           = questions[index];
   const question      = row?.questions;
   const currentAnswer = question ? answers[question.id] ?? emptyAnswer() : emptyAnswer();
@@ -484,8 +595,8 @@ export default function LiveExam() {
   // ── Main exam UI ─────────────────────────────────────────────────────────────
   return (
     <div className="live-exam">
-      
-      {/* ── Anti-Camera Watermark ── */}
+
+      {/* Anti-Camera Watermark */}
       {session && currentUser && (
         <div className="exam-watermark" aria-hidden="true">
           {Array.from({ length: 150 }).map((_, i) => (
@@ -534,7 +645,7 @@ export default function LiveExam() {
         </div>
       )}
 
-      {/* Fullscreen exit progress bar (mirrors tab-switch bar style) */}
+      {/* Fullscreen exit progress bar */}
       {rule.max_fullscreen_exits > 0 && fsCount > 0 && (
         <div className="tab-switch-bar">
           <i className="ti ti-maximize-off" />
@@ -708,7 +819,7 @@ export default function LiveExam() {
             </div>
           )}
 
-          {/* Fullscreen exit counter — NEW */}
+          {/* Fullscreen exit counter */}
           {rule.max_fullscreen_exits > 0 && (
             <div className={`palette-integrity${fsCount >= rule.max_fullscreen_exits - 1 && fsCount > 0 ? " danger" : ""}`}>
               <i className="ti ti-maximize-off" />
@@ -875,12 +986,10 @@ function formatRemaining(seconds: number) {
 
 function obfuscateText(text: string | null | undefined): string {
   if (!text) return "";
-  // Injects a zero-width space (\u200B) between every character to break 
-  // LLM extensions and DOM scrapers without affecting human readability.
   return text.split("").join("\u200B");
 }
 
-// ── PRNG & Shuffling Utilities ───────────────────────────────────────────────
+// ── PRNG & Shuffling Utilities ────────────────────────────────────────────────
 
 function xmur3(str: string) {
   let h = 1779033703 ^ str.length;

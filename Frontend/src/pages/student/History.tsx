@@ -25,11 +25,10 @@ export default function History() {
       <input className="field" style={{ flex: "0 1 190px" }} type="date" value={date} onChange={(event) => setDate(event.target.value)} />
     </div>
     {!history.length ? <EmptyState icon="ti-history-off" title="No attempts found" body="Completed and in-progress exam attempts will appear here." /> :
-      <div className="data-panel"><table className="data-table"><thead><tr><th>Exam</th><th>Attempted</th><th>Score</th><th>Percentage</th><th>Status</th><th>Submission</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}>
+      <div className="data-panel"><table className="data-table"><thead><tr><th>Exam</th><th>Attempted</th><th>Result</th><th>Status</th><th>Submission</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}>
         <td><strong>{item.schedule?.exam?.title || "Exam unavailable"}</strong><small>{item.schedule?.course?.code} · {item.schedule?.course?.name}</small></td>
         <td>{formatDate(item.submitted_at || item.started_at, true)}</td>
-        <td className="score">{item.result ? `${item.result.total_score} / ${item.result.max_score}` : item.total_score ?? "Pending"}</td>
-        <td>{item.result ? `${item.result.percentage.toFixed(2)}%` : "Not published"}</td>
+        <td>{item.result ? "Published" : "Not published"}</td>
         <td><span className={`status-pill ${item.status.toLowerCase()}`}>{item.status.replace(/_/g, " ")}</span></td>
         <td>{item.submission_type || "—"}</td>
       </tr>)}</tbody></table></div>}
