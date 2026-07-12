@@ -96,19 +96,26 @@ function flushBrowserCountsBeacon(
     session_conflict_detected: sessionConflict,
   });
 
-  // Try Beacon first (survives unload)
-  if (navigator.sendBeacon) {
-    const blob = new Blob([body], { type: "application/json" });
-    const sent = navigator.sendBeacon("/api/v1/proctoring/browser", blob);
-    if (sent) return Promise.resolve();
-  }
+  // Get token from wherever your authStore persists it
+  const token = (() => {
+    try {
+      // Supabase stores session in localStorage under this key
+      const raw = localStorage.getItem("sb-clagdndeswnnacybvilh-auth-token");
+      if (raw) return JSON.parse(raw)?.access_token ?? "";
+    } catch { /* ignore */ }
+    return "";
+  })();
 
-  // Fallback: keepalive fetch (also survives short unloads)
-  return fetch("/api/v1/proctoring/browser", {
-    method:      "POST",
-    headers:     { "Content-Type": "application/json" },
+  const BACKEND = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+  return fetch(`${BACKEND}/api/v1/proctoring/browser`, {
+    method:    "POST",
+    headers:   {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
     body,
-    keepalive:   true,
+    keepalive: true,
   }).catch(() => undefined);
 }
 
