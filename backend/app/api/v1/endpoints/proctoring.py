@@ -412,22 +412,35 @@ async def log_browser_activity(
     aid = str(body.attempt_id)
     p   = settings.INTEGRITY_SCORE_PENALTIES
 
-    # ── 1. Upsert the cumulative activity row (unchanged behaviour) ───────────
+    # ── 1. Update/Insert the cumulative activity row (unchanged behaviour) ────
     #    browser_activity_logs stays as the per-event/history table used by
     #    Realtime + compute_proctoring_summary()'s final read.
-    supabase.table("browser_activity_logs").upsert(
-        {
-            "attempt_id":                aid,
-            "tab_switch_count":          body.tab_switch_count,
-            "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "focus_loss_count":          body.focus_loss_count,
-            "clipboard_violation_count": body.clipboard_violation_count,
-            "screenshot_violation_count":body.screenshot_violation_count,
-            "print_violation_count":     body.print_violation_count,
-            "session_conflict_detected": body.session_conflict_detected,
-        },
-        on_conflict="attempt_id",
-    ).execute()
+    #    Since there is no unique constraint on attempt_id for this history table,
+    #    we query for the cumulative row (event_type is NULL) and update it, or insert it.
+    existing_cumulative = (
+        supabase.table("browser_activity_logs")
+        .select("id")
+        .eq("attempt_id", aid)
+        .is_("event_type", "null")
+        .execute()
+        .data
+    )
+
+    row_data = {
+        "attempt_id":                aid,
+        "tab_switch_count":          body.tab_switch_count,
+        "fullscreen_exit_count":     body.fullscreen_exit_count,
+        "focus_loss_count":          body.focus_loss_count,
+        "clipboard_violation_count": body.clipboard_violation_count,
+        "screenshot_violation_count":body.screenshot_violation_count,
+        "print_violation_count":     body.print_violation_count,
+        "session_conflict_detected": body.session_conflict_detected,
+    }
+
+    if existing_cumulative:
+        supabase.table("browser_activity_logs").update(row_data).eq("id", existing_cumulative[0]["id"]).execute()
+    else:
+        supabase.table("browser_activity_logs").insert(row_data).execute()
 
     # ── 1b. FIX: also upsert into browser_activity_summary ────────────────────
     #    This is the table the dashboard (proctor.py) actually reads

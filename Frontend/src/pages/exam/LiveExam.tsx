@@ -266,27 +266,15 @@ export default function LiveExam() {
 
       void studentApi.logEvent(session?.attempt.id ?? "", type === "focus" ? "FOCUS_LOST_WARNING" : "TAB_SWITCH_WARNING").catch(() => undefined);
 
-      if (max > 0 && newCount >= max) {
-        const reason = `You switched tabs or lost focus ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
-        setForceReason(reason);
-        setForceSubmitting(true);
-        setTimeout(async () => {
-          await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
-          void submit("AUTO");
-        }, 4000);
-        return;
-      }
-
-      const remaining_switches = max - newCount;
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
         type: type,
         message: max <= 0
           ? `⚠ ${_message}`
-          : remaining_switches === 1
-          ? `⚠ Switch ${newCount}/${max} — ONE MORE switch will automatically submit your exam.`
-          : `⚠ Switch ${newCount}/${max} — ${remaining_switches} more allowed before your exam is auto-submitted.`,
+          : newCount >= max
+          ? `🚨 Switch ${newCount}/${max} — You have exceeded the limit of allowed switches! This violation has been flagged for review.`
+          : `⚠ Switch ${newCount}/${max} — This violation has been logged and flagged for review.`,
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 10_000);
 
@@ -299,29 +287,15 @@ export default function LiveExam() {
 
       void studentApi.logEvent(session?.attempt.id ?? "", "FULLSCREEN_EXIT").catch(() => undefined);
 
-      // Limit reached → force-submit
-      if (max > 0 && newCount >= max) {
-        const reason = `You exited fullscreen ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
-        setForceReason(reason);
-        setForceSubmitting(true);
-        setTimeout(async () => {
-          await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
-          void submit("AUTO");
-        }, 4000);
-        return;
-      }
-
-      // Under limit → graduated warning
-      const remaining_exits = max > 0 ? max - newCount : null;
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
         type: "fullscreen" as ViolationType,
-        message: remaining_exits === null
-          ? `⚠ You exited fullscreen (${newCount} total). This has been logged. Return immediately.`
-          : remaining_exits === 1
-          ? `⚠ Fullscreen exit ${newCount}/${max} — ONE MORE exit will automatically submit your exam.`
-          : `⚠ Fullscreen exit ${newCount}/${max} — ${remaining_exits} more allowed before your exam is auto-submitted.`,
+        message: max <= 0
+          ? `⚠ You exited fullscreen (${newCount} total). This has been logged.`
+          : newCount >= max
+          ? `🚨 Fullscreen exit ${newCount}/${max} — You have exceeded the limit of allowed exits! This violation has been flagged for review.`
+          : `⚠ Fullscreen exit ${newCount}/${max} — This violation has been logged and flagged for review.`,
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 12_000);
 
@@ -350,14 +324,13 @@ export default function LiveExam() {
 
   // ── Heartbeat Failure ────────────────────────────────────────────────────────
   const handleHeartbeatFailure = useCallback(() => {
-    const reason = "Proctoring telemetry has been blocked or dropped consecutively. This is a violation. Your exam is being submitted automatically.";
-    setForceReason(reason);
-    setForceSubmitting(true);
-    setTimeout(async () => {
-      await studentApi.computeProctoringsSummary(session?.attempt.id ?? "").catch(() => undefined);
-      void submit("AUTO");
-    }, 4000);
-  }, [session?.attempt.id, submit]);
+    const id = ++warnCounter;
+    setWarnings((prev) => [{
+      id,
+      type: "conflict" as ViolationType,
+      message: "🚨 Proctoring telemetry sync is failing. Please check your connection or disable AdBlockers. This has been logged.",
+    }, ...prev].slice(0, 5));
+  }, []);
 
   // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions = useMemo(() => {
