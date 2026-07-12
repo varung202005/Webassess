@@ -77,7 +77,7 @@ async def auto_grade_attempt(attempt_id: str) -> int:
         if is_correct:
             marks_awarded = effective_marks
         else:
-            marks_awarded = max(0, -negative)  # Never go negative per-question in total
+            marks_awarded = -negative
 
         total_score += marks_awarded
 
@@ -86,7 +86,7 @@ async def auto_grade_attempt(attempt_id: str) -> int:
             "marks_awarded": marks_awarded,
         }).eq("id", ans["id"]).execute()
 
-    return total_score
+    return max(0, total_score)
 
 
 def calculate_grade(percentage: float) -> str:

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # JWT — Supabase signs JWTs with this secret
     SUPABASE_JWT_SECRET: str
 
+    # Groq API Key for transcription/proctoring checks
+    GROQ_API_KEY: Optional[str] = None
+
     # Frontend / invitation links
     FRONTEND_URL: str = "http://localhost:5173"
 

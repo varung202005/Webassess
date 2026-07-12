@@ -109,6 +109,28 @@ async def review_request(
     }
     if body.updated_score is not None:
         update["updated_score"] = body.updated_score
+        req_data = supabase.table("re_evaluation_requests").select("result_id").eq("id", str(request_id)).single().execute().data
+        if req_data:
+            res_id = req_data["result_id"]
+            res_data = supabase.table("results").select("max_score, exam_id").eq("id", str(res_id)).single().execute().data
+            if res_data:
+                max_score = res_data["max_score"]
+                exam_id = res_data["exam_id"]
+                exam_data = supabase.table("exams").select("pass_marks").eq("id", str(exam_id)).single().execute().data
+                pass_marks = exam_data["pass_marks"] if exam_data else 0
+
+                percentage = round((body.updated_score / max_score) * 100, 2) if max_score > 0 else 0.0
+                from app.services.grading_service import calculate_grade
+                grade = calculate_grade(percentage)
+                is_passed = body.updated_score >= pass_marks
+
+                supabase.table("results").update({
+                    "total_score": body.updated_score,
+                    "percentage": percentage,
+                    "grade": grade,
+                    "is_passed": is_passed
+                }).eq("id", str(res_id)).execute()
+
     result = supabase.table("re_evaluation_requests").update(update).eq("id", str(request_id)).execute()
 
     # Notify student

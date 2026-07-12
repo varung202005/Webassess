@@ -341,8 +341,6 @@ export default function LiveExam() {
         type === "focus" ? "FOCUS_LOST_WARNING" : "TAB_SWITCH_WARNING"
       ).catch(() => undefined);
 
-<<<<<<< HEAD
-=======
       if (max > 0 && newCount >= max) {
         const reason = `You switched tabs or lost focus ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
         // Pass the exact counts we know right now so the beacon flush is accurate
@@ -350,8 +348,6 @@ export default function LiveExam() {
         return;
       }
 
-      const remaining_switches = max - newCount;
->>>>>>> refs/remotes/origin/main
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
@@ -372,16 +368,12 @@ export default function LiveExam() {
 
       void studentApi.logEvent(session?.attempt.id ?? "", "FULLSCREEN_EXIT").catch(() => undefined);
 
-<<<<<<< HEAD
-=======
       if (max > 0 && newCount >= max) {
         const reason = `You exited fullscreen ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
         triggerForceSubmit(reason, tabCountRef.current, newCount);
         return;
       }
 
-      const remaining_exits = max > 0 ? max - newCount : null;
->>>>>>> refs/remotes/origin/main
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
@@ -430,22 +422,12 @@ export default function LiveExam() {
 
   // ── Heartbeat Failure ────────────────────────────────────────────────────────
   const handleHeartbeatFailure = useCallback(() => {
-<<<<<<< HEAD
-    const id = ++warnCounter;
-    setWarnings((prev) => [{
-      id,
-      type: "conflict" as ViolationType,
-      message: "🚨 Proctoring telemetry sync is failing. Please check your connection or disable AdBlockers. This has been logged.",
-    }, ...prev].slice(0, 5));
-  }, []);
-=======
     triggerForceSubmit(
       "Proctoring telemetry has been blocked or dropped consecutively. This is a violation. Your exam is being submitted automatically.",
       tabCountRef.current,
       fullscreenCountRef.current,
     );
   }, [triggerForceSubmit]);
->>>>>>> refs/remotes/origin/main
 
   // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions = useMemo(() => {

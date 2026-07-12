@@ -39,7 +39,7 @@ import difflib
 import logging
 import requests
 
-from app.core.security import require_student, require_proctor
+from app.core.security import require_student, require_proctor, require_exam_taker
 from app.db.supabase import get_supabase_admin
 from app.core.config import settings
 
@@ -249,6 +249,10 @@ class BrowserActivityLog(BaseModel):
     tab_switch_count: int
     fullscreen_exit_count: int
     session_conflict_detected: bool = False
+    focus_loss_count: int = 0
+    clipboard_violation_count: int = 0
+    screenshot_violation_count: int = 0
+    print_violation_count: int = 0
 
 
 class AudioLog(BaseModel):
@@ -273,7 +277,7 @@ class ProctoringVerdictBody(BaseModel):
 @router.post("/face")
 async def log_face_verification(
     body: FaceVerificationLog,
-    _: dict = Depends(require_student),
+    _: dict = Depends(require_exam_taker),
 ):
     """
     Frontend AI models (face-api.js + coco-ssd, running client-side) send
@@ -363,10 +367,10 @@ async def log_face_verification(
 @router.post("/browser")
 async def log_browser_activity(
     body: BrowserActivityLog,
-    _: dict = Depends(require_student),
+    _: dict = Depends(require_exam_taker),
 ):
     """
-    Frontend sends cumulative tab switch + fullscreen exit counts.
+    Frontend sends cumulative tab switch + fullscreen exit + other browser violation counts.
 
     FIX 1 — Live proctoring_summary sync: updates proctoring_summary
       immediately so dashboard stat cards are live, not post-submission only.
@@ -382,8 +386,7 @@ async def log_browser_activity(
     aid = str(body.attempt_id)
     p   = settings.INTEGRITY_SCORE_PENALTIES
 
-<<<<<<< HEAD
-    # ── 1. Update/Insert the cumulative activity row (unchanged behaviour) ────
+    # ── 1. Update/Insert the cumulative activity row ──────────────────────────
     #    browser_activity_logs stays as the per-event/history table used by
     #    Realtime + compute_proctoring_summary()'s final read.
     #    Since there is no unique constraint on attempt_id for this history table,
@@ -398,45 +401,37 @@ async def log_browser_activity(
     )
 
     row_data = {
-        "attempt_id":                aid,
-        "tab_switch_count":          body.tab_switch_count,
-        "fullscreen_exit_count":     body.fullscreen_exit_count,
-        "focus_loss_count":          body.focus_loss_count,
-        "clipboard_violation_count": body.clipboard_violation_count,
-        "screenshot_violation_count":body.screenshot_violation_count,
-        "print_violation_count":     body.print_violation_count,
-        "session_conflict_detected": body.session_conflict_detected,
+        "attempt_id":                 aid,
+        "tab_switch_count":           body.tab_switch_count,
+        "fullscreen_exit_count":      body.fullscreen_exit_count,
+        "focus_loss_count":           body.focus_loss_count,
+        "clipboard_violation_count":  body.clipboard_violation_count,
+        "screenshot_violation_count": body.screenshot_violation_count,
+        "print_violation_count":      body.print_violation_count,
+        "session_conflict_detected":  body.session_conflict_detected,
     }
 
     if existing_cumulative:
         supabase.table("browser_activity_logs").update(row_data).eq("id", existing_cumulative[0]["id"]).execute()
     else:
         supabase.table("browser_activity_logs").insert(row_data).execute()
-=======
-    # ── 1. Upsert the cumulative activity row ─────────────────────────────────
-    supabase.table("browser_activity_logs").upsert(
-        {
-            "attempt_id":                aid,
-            "tab_switch_count":          body.tab_switch_count,
-            "fullscreen_exit_count":     body.fullscreen_exit_count,
-            "session_conflict_detected": body.session_conflict_detected,
-        },
-        on_conflict="attempt_id",
-    ).execute()
->>>>>>> refs/remotes/origin/main
 
     # ── 1b. Also upsert into browser_activity_summary ─────────────────────────
     try:
         supabase.table("browser_activity_summary").upsert(
             {
-                "attempt_id":            aid,
-                "tab_switch_count":      body.tab_switch_count,
-                "fullscreen_exit_count": body.fullscreen_exit_count,
+                "attempt_id":                 aid,
+                "tab_switch_count":           body.tab_switch_count,
+                "fullscreen_exit_count":      body.fullscreen_exit_count,
+                "focus_loss_count":           body.focus_loss_count,
+                "clipboard_violation_count":  body.clipboard_violation_count,
+                "screenshot_violation_count": body.screenshot_violation_count,
+                "print_violation_count":      body.print_violation_count,
             },
             on_conflict="attempt_id",
         ).execute()
     except Exception as exc:
-        print(f"[proctoring] browser_activity_summary upsert failed (non-fatal): {exc}")
+        logger.error(f"[proctoring] browser_activity_summary upsert failed (non-fatal): {exc}")
 
     # ── 2. INSERT separate event rows per violation type ──────────────────────
     #    These INSERT rows fire the Supabase Realtime trigger in Dashboard.tsx
@@ -468,9 +463,15 @@ async def log_browser_activity(
         }).execute()
 
     # ── 3. Sync into proctoring_summary live ──────────────────────────────────
-    tab_penalty = body.tab_switch_count      * p.get("tab_switch",      0.03)
-    fs_penalty  = body.fullscreen_exit_count * p.get("fullscreen_exit", 0.02)
-    partial_integrity = round(max(0.0, 1.0 - tab_penalty - fs_penalty), 4)
+    browser_penalty = (
+        body.tab_switch_count          * p.get("tab_switch",      0.03) +
+        body.fullscreen_exit_count     * p.get("fullscreen_exit", 0.02) +
+        body.focus_loss_count          * p.get("focus_loss",      0.02) +
+        body.clipboard_violation_count * p.get("clipboard",      0.05) +
+        body.screenshot_violation_count* p.get("screenshot",     0.10) +
+        body.print_violation_count     * p.get("print",          0.10)
+    )
+    partial_integrity = round(max(0.0, 1.0 - browser_penalty), 4)
     tab_limit = _get_tab_switch_limit(supabase, aid)
     hard_violation = _hard_violation(body.tab_switch_count, tab_limit, body.session_conflict_detected)
     should_flag = partial_integrity < 0.5 or hard_violation
@@ -498,33 +499,48 @@ async def log_browser_activity(
             phone_detect * p.get("phone_detected", 0.10)
         )
         full_integrity = round(
-            max(0.0, 1.0 - tab_penalty - fs_penalty - face_penalty - noise_penalty),
+            max(0.0, 1.0 - browser_penalty - face_penalty - noise_penalty),
             4,
         )
         full_flagged = full_integrity < 0.5 or hard_violation
 
         supabase.table("proctoring_summary").update({
-            "tab_switch_count":      body.tab_switch_count,
-            "fullscreen_exit_count": body.fullscreen_exit_count,
-            "integrity_score":       full_integrity,
-            "flagged_for_review":    full_flagged,
-            # Don't overwrite an existing proctor decision
+            "tab_switch_count":           body.tab_switch_count,
+            "fullscreen_exit_count":      body.fullscreen_exit_count,
+            "focus_loss_count":           body.focus_loss_count,
+            "clipboard_violation_count":  body.clipboard_violation_count,
+            "screenshot_violation_count": body.screenshot_violation_count,
+            "print_violation_count":      body.print_violation_count,
+            "integrity_score":            full_integrity,
+            "flagged_for_review":         full_flagged,
         }).eq("attempt_id", aid).execute()
 
     else:
         # First browser sync for this attempt — create the summary row
+        total_incidents = (
+            body.tab_switch_count +
+            body.fullscreen_exit_count +
+            body.focus_loss_count +
+            body.clipboard_violation_count +
+            body.screenshot_violation_count +
+            body.print_violation_count
+        )
         supabase.table("proctoring_summary").insert({
-            "attempt_id":            aid,
-            "tab_switch_count":      body.tab_switch_count,
-            "fullscreen_exit_count": body.fullscreen_exit_count,
-            "integrity_score":       partial_integrity,
-            "total_incidents":       body.tab_switch_count + body.fullscreen_exit_count,
-            "face_absence_count":    0,
-            "multi_person_count":    0,
-            "phone_detection_count": 0,
-            "noise_event_count":     0,
-            "flagged_for_review":    should_flag,
-            "proctor_verdict":       "PENDING",
+            "attempt_id":                 aid,
+            "tab_switch_count":           body.tab_switch_count,
+            "fullscreen_exit_count":      body.fullscreen_exit_count,
+            "focus_loss_count":           body.focus_loss_count,
+            "clipboard_violation_count":  body.clipboard_violation_count,
+            "screenshot_violation_count": body.screenshot_violation_count,
+            "print_violation_count":      body.print_violation_count,
+            "integrity_score":            partial_integrity,
+            "total_incidents":            total_incidents,
+            "face_absence_count":         0,
+            "multi_person_count":         0,
+            "phone_detection_count":      0,
+            "noise_event_count":          0,
+            "flagged_for_review":         should_flag,
+            "proctor_verdict":            "PENDING",
         }).execute()
 
     return {"logged": True}
@@ -533,7 +549,7 @@ async def log_browser_activity(
 @router.post("/audio")
 async def log_audio(
     body: AudioLog,
-    _: dict = Depends(require_student),
+    _: dict = Depends(require_exam_taker),
 ):
     """
     Frontend WebAudio API detects noise → sends each event here.
@@ -553,7 +569,7 @@ async def log_audio(
 @router.post("/audio-transcript")
 async def log_audio_transcript(
     body: AudioTranscriptRequest,
-    _: dict = Depends(require_student),
+    _: dict = Depends(require_exam_taker),
 ):
     """
     Phase 2 — called by AudioMonitor.tsx only when its client-side VAD
@@ -744,7 +760,7 @@ def _compute_and_upsert_summary(supabase, attempt_id: str) -> dict:
 @router.post("/summary/{attempt_id}")
 async def compute_proctoring_summary(
     attempt_id: UUID,
-    _: dict = Depends(require_student),
+    _: dict = Depends(require_exam_taker),
 ):
     """Called by the frontend on exam submission."""
     supabase = get_supabase_admin()

@@ -11,12 +11,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Literal
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from app.core.security import require_student, require_faculty, get_current_user_with_roles
 from app.db.supabase import get_supabase_admin
 
 router = APIRouter()
+
+def _dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
 
 RegistrationStatus = Literal["REGISTERED", "APPEARED", "ABSENT", "CANCELLED"]
 
@@ -83,7 +90,7 @@ async def register_for_exam(
         raise HTTPException(status_code=403, detail="Entrance tests are assigned through the candidate portal")
 
     deadline_value = sched.data.get("registration_deadline") or sched.data["start_time"]
-    registration_deadline = datetime.fromisoformat(deadline_value)
+    registration_deadline = _dt(deadline_value)
     if registration_deadline < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Exam registration window has closed")
 
@@ -150,7 +157,7 @@ async def cancel_registration(
     if registration.data["status"] != "REGISTERED":
         raise HTTPException(status_code=400, detail="Only active registrations can be cancelled")
     schedule = registration.data["exam_schedules"]
-    deadline = datetime.fromisoformat(
+    deadline = _dt(
         schedule.get("registration_deadline") or schedule["start_time"]
     )
     if datetime.now(timezone.utc) > deadline:
@@ -226,8 +233,8 @@ async def check_eligibility(
         return {"eligible": False, "reason": "Exam not yet published"}
 
     now = datetime.now(timezone.utc)
-    start = datetime.fromisoformat(sched["start_time"])
-    end = datetime.fromisoformat(sched["end_time"])
+    start = _dt(sched["start_time"])
+    end = _dt(sched["end_time"])
 
     if now < start:
         return {"eligible": False, "reason": "Exam has not started yet"}

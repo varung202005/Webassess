@@ -1,7 +1,6 @@
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from uuid import UUID
 
 from app.core.config import settings
 from app.db.supabase import get_supabase_admin
@@ -13,7 +12,8 @@ def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(
             token,
-            options={"verify_signature": False},
+            key=settings.SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
             audience="authenticated",
         )
         return payload

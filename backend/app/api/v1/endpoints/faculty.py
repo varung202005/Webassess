@@ -305,7 +305,7 @@ async def get_exam_attempts(exam_id: UUID, _: dict = Depends(require_faculty)):
 
     # Step 2: fetch student profiles by user_id (roll_number, semester, section).
     # Wrapped in try/except — table name may differ per schema.
-    user_ids = list({a["user_id"] for a in attempts if a.get("user_id")})
+    user_ids = list({a["student_id"] for a in attempts if a.get("student_id")})
     student_map: dict = {}
     if user_ids:
         try:
@@ -327,7 +327,7 @@ async def get_exam_attempts(exam_id: UUID, _: dict = Depends(require_faculty)):
         for s in schedules
     }
     for attempt in attempts:
-        attempt["students"] = student_map.get(attempt.get("user_id"), {})
+        attempt["students"] = student_map.get(attempt.get("student_id"), {})
         attempt["schedule"] = schedule_map.get(attempt.get("exam_schedule_id"), {})
 
     return attempts
@@ -352,15 +352,15 @@ async def get_attempt_detail(attempt_id: UUID, _: dict = Depends(require_faculty
     if not attempt:
         raise HTTPException(status_code=404, detail="Attempt not found")
 
-    # Step 2: fetch student profile separately via user_id.
+    # Step 2: fetch student profile separately via student_id.
     # Wrapped in try/except — table name may differ per schema.
     student_info = {}
-    if attempt.get("user_id"):
+    if attempt.get("student_id"):
         try:
             student_info = _single_or_none(
                 supabase.table("students")
                 .select("user_id,roll_number,semester,section")
-                .eq("user_id", attempt["user_id"])
+                .eq("user_id", attempt["student_id"])
             ) or {}
         except Exception:
             student_info = {}

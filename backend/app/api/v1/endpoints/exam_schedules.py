@@ -33,19 +33,8 @@ async def list_schedules(
     is_published: Optional[bool] = None,
     current_user: dict = Depends(require_faculty),
 ):
-    """List all schedules for exams created by this faculty member."""
+    """List all schedules. Scoped to faculty member's exams unless Admin."""
     supabase = get_supabase_admin()
-
-    # Scope to this faculty's exams only
-    exams_result = (
-        supabase.table("exams")
-        .select("id")
-        .eq("created_by", current_user["user_id"])
-        .execute()
-    )
-    faculty_exam_ids = [row["id"] for row in (exams_result.data or [])]
-    if not faculty_exam_ids:
-        return []
 
     query = (
         supabase.table("exam_schedules")
@@ -53,9 +42,23 @@ async def list_schedules(
             "*, "
             "exams(id,title,status,duration_minutes,courses(name,code))"
         )
-        .in_("exam_id", faculty_exam_ids)
         .order("start_time", desc=True)
     )
+
+    is_admin = "admin" in [role.lower() for role in current_user.get("roles", [])]
+    if not is_admin:
+        # Scope to this faculty's exams only
+        exams_result = (
+            supabase.table("exams")
+            .select("id")
+            .eq("created_by", current_user["user_id"])
+            .execute()
+        )
+        faculty_exam_ids = [row["id"] for row in (exams_result.data or [])]
+        if not faculty_exam_ids:
+            return []
+        query = query.in_("exam_id", faculty_exam_ids)
+
     if exam_id:
         query = query.eq("exam_id", exam_id)
     if is_published is not None:

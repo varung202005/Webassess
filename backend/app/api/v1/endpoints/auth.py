@@ -80,7 +80,7 @@ async def remove_role(user_id: UUID4, role_id: int):
     return {"message": "Role removed"}
 
 
-@router.get("/roles")
+@router.get("/roles", dependencies=[Depends(require_admin)])
 async def list_roles():
     """
     Returns all available roles. Used by Admin UI dropdowns.

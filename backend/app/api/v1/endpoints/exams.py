@@ -62,9 +62,9 @@ class QuestionAdd(BaseModel):
 class ExamRulesUpsert(BaseModel):
     exam_id: str
     allow_backtrack: bool = True
-    mark_for_review: bool = True
-    fullscreen_required: bool = False
-    proctoring_enabled: bool = False
+    allow_review_flag: bool = True
+    require_fullscreen: bool = False
+    enable_proctoring: bool = False
     camera_required: bool = False
     microphone_required: bool = False
     max_tab_switches: int = 3
@@ -151,7 +151,8 @@ async def create_exam(
 
     # If publish_immediately was used (legacy path), auto-create a published schedule
     if status == "PUBLISHED" and body.publish_immediately:
-        now = datetime.utcnow()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         start = (
             datetime.fromisoformat(body.start_time.replace("Z", ""))
             if body.start_time

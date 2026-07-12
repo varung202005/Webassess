@@ -1,17 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import contextlib
+import logging
 
 from app.core.config import settings
 from app.api.v1.router import api_router
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Online Exam Portal API starting up...")
+    logger.info("🚀 Online Exam Portal API starting up...")
     async def deadline_sweeper():
         from app.api.v1.endpoints.exam_attempts import auto_submit_expired_attempts
         while True:
@@ -19,14 +21,14 @@ async def lifespan(app: FastAPI):
             try:
                 await auto_submit_expired_attempts()
             except Exception as exc:
-                print(f"Attempt deadline sweep failed: {exc}")
+                logger.error(f"Attempt deadline sweep failed: {exc}")
 
     sweep_task = asyncio.create_task(deadline_sweeper())
     yield
     sweep_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await sweep_task
-    print("🛑 Online Exam Portal API shutting down...")
+    logger.info("🛑 Online Exam Portal API shutting down...")
 
 
 app = FastAPI(

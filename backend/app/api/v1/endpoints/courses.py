@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 from uuid import UUID
 
-from app.core.security import require_admin, require_faculty, get_current_user_with_roles
+from app.core.security import require_admin, get_current_user_with_roles
 from app.db.supabase import get_supabase_admin
 
 router = APIRouter()

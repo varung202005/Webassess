@@ -34,6 +34,13 @@ class SubmitAttemptRequest(BaseModel):
     submission_type: SubmissionType = "MANUAL"
 
 
+def _dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _effective_deadline(supabase, attempt: dict) -> datetime:
     schedule = (
         supabase.table("exam_schedules")
@@ -43,11 +50,11 @@ def _effective_deadline(supabase, attempt: dict) -> datetime:
         .execute()
         .data
     )
-    started_at = datetime.fromisoformat(attempt["started_at"])
+    started_at = _dt(attempt["started_at"])
     duration_deadline = started_at + timedelta(
         minutes=schedule["exams"]["duration_minutes"]
     )
-    return min(duration_deadline, datetime.fromisoformat(schedule["end_time"]))
+    return min(duration_deadline, _dt(schedule["end_time"]))
 
 
 async def _finalize_attempt(supabase, attempt: dict, submission_type: SubmissionType):
@@ -55,7 +62,7 @@ async def _finalize_attempt(supabase, attempt: dict, submission_type: Submission
 
     attempt_id = attempt["id"]
     now = datetime.now(timezone.utc)
-    started_at = datetime.fromisoformat(attempt["started_at"])
+    started_at = _dt(attempt["started_at"])
     time_spent = int((now - started_at).total_seconds())
     effective_deadline = _effective_deadline(supabase, attempt)
     
@@ -151,8 +158,8 @@ async def start_attempt(
 
     sched = reg.data[0]["exam_schedules"]
     now = datetime.now(timezone.utc)
-    start = datetime.fromisoformat(sched["start_time"])
-    end = datetime.fromisoformat(sched["end_time"])
+    start = _dt(sched["start_time"])
+    end = _dt(sched["end_time"])
     if not (start <= now <= end):
         raise HTTPException(status_code=403, detail="Outside exam time window")
 
