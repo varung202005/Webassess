@@ -331,7 +331,7 @@ function EvidenceModal({
       if (isAudio) {
         const { data, error } = await supabase
           .from("audio_monitoring_logs")
-          .select("noise_level_db,notes,detected_at,transcript,exam_relevant,matched_snippet,audio_url")
+          .select("noise_level_db,notes,detected_at")
           .eq("attempt_id", attemptId)
           .eq("noise_detected", true)
           .order("detected_at", { ascending: false })
@@ -411,80 +411,13 @@ function EvidenceModal({
             }
           </div>
         ) : isAudio ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {(rows as {
-              noise_level_db: number | null;
-              notes: string | null;
-              detected_at: string;
-              transcript?: string | null;
-              exam_relevant?: boolean | null;
-              matched_snippet?: string | null;
-              audio_url?: string | null;
-            }[]).map((r, i) => (
-              <div
-                key={i}
-                style={{
-                  background: r.exam_relevant ? "#fff5f5" : "#f8f9fb",
-                  border: r.exam_relevant ? "1px solid #fecaca" : "1px solid #eee",
-                  borderRadius: 8,
-                  padding: "10px 14px",
-                  fontSize: 13,
-                }}
-              >
-                {/* Top row: time + dB + exam-relevant badge */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: r.transcript || r.audio_url ? 8 : 0 }}>
-                  <span style={{ color: "#888", fontSize: 11, whiteSpace: "nowrap" }}>
-                    {relativeTime(r.detected_at)}
-                    {r.noise_level_db != null ? ` · ${r.noise_level_db} dB` : ""}
-                  </span>
-                  {r.exam_relevant && (
-                    <span
-                      className="issue-chip"
-                      style={{ background: "#fef2f2", color: "#b31234", fontSize: 10, padding: "2px 7px" }}
-                    >
-                      <i className="ti ti-alert-triangle" style={{ fontSize: 9, marginRight: 3 }} />
-                      Exam-relevant speech
-                    </span>
-                  )}
-                  {!r.transcript && !r.exam_relevant && (
-                    <span style={{ color: "#aaa", fontSize: 11 }}>{r.notes ?? "Noise detected"}</span>
-                  )}
-                </div>
-
-                {/* Transcript block */}
-                {r.transcript && (
-                  <div style={{
-                    background: "#fff",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 6,
-                    padding: "7px 10px",
-                    fontStyle: "italic",
-                    color: "#374151",
-                    marginBottom: r.matched_snippet || r.audio_url ? 8 : 0,
-                    lineHeight: 1.5,
-                  }}>
-                    <i className="ti ti-quote" style={{ fontSize: 10, marginRight: 4, color: "#9ca3af" }} />
-                    {r.transcript}
-                  </div>
-                )}
-
-                {/* Matched exam content snippet */}
-                {r.matched_snippet && (
-                  <div style={{ fontSize: 11, color: "#b31234", marginBottom: r.audio_url ? 8 : 0 }}>
-                    <i className="ti ti-file-text" style={{ marginRight: 4 }} />
-                    Matched question: <em>"{r.matched_snippet}"</em>
-                  </div>
-                )}
-
-                {/* Audio player — only shown when a clip URL exists */}
-                {r.audio_url && (
-                  <audio
-                    controls
-                    src={r.audio_url}
-                    style={{ width: "100%", height: 32, marginTop: 2 }}
-                    preload="none"
-                  />
-                )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(rows as { noise_level_db: number | null; notes: string | null; detected_at: string }[]).map((r, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8f9fb", borderRadius: 8, fontSize: 13 }}>
+                <span>{r.notes ?? "Noise detected"}</span>
+                <span style={{ color: "#888", whiteSpace: "nowrap", marginLeft: 12 }}>
+                  {r.noise_level_db != null ? `${r.noise_level_db} dB · ` : ""}{relativeTime(r.detected_at)}
+                </span>
               </div>
             ))}
           </div>
@@ -667,61 +600,84 @@ export function AudioMonitorPanel({
 }: {
   scheduleId?: string;
 }) {
+  const [expandedClip, setExpandedClip] = useState<string | null>(null);
+
   const { data: audioRows, isLoading } = useQuery({
     queryKey: ["audio-monitor-panel", scheduleId],
     queryFn: async () => {
       if (!scheduleId) return [];
 
-      // Join through to the attempt's schedule + student name, so we can
-      // (a) filter strictly to the selected exam at the DB level instead
-      //     of relying on a client-side "active attempts" list that may
-      //     be empty or incomplete, and
-      // (b) always have a real name available, even for students who've
-      //     already submitted and are no longer "active" or flagged.
+      // ── FIX: PostgREST does NOT support .eq("joined_table.column", val).
+      // The old single-query approach returned 0 rows because the filter on
+      // exam_attempts.exam_schedule_id was silently ignored.
+      // Use a two-step query instead:
+      //   Step 1 — get all attempt IDs for this schedule (plain table filter).
+      //   Step 2 — get audio logs filtered by those attempt IDs + student names.
+
+      // Step 1: resolve attempt IDs for this schedule
+      const { data: attempts, error: attErr } = await supabase
+        .from("exam_attempts")
+        .select("id, users(full_name)")
+        .eq("exam_schedule_id", scheduleId);
+
+      if (attErr) {
+        console.error("[AudioMonitorPanel] attempts query error:", attErr.message);
+        return [];
+      }
+      if (!attempts?.length) {
+        console.log("[AudioMonitorPanel] no attempts for scheduleId:", scheduleId);
+        return [];
+      }
+
+      const attemptIds = attempts.map((a: any) => a.id);
+      // Build name map from Step 1 so we always have names even if the
+      // audio_monitoring_logs join returns a null users field.
+      const nameMapFromAttempts: Record<string, string> = {};
+      for (const a of attempts as any[]) {
+        const u = Array.isArray(a.users) ? a.users[0] : a.users;
+        if (u?.full_name) nameMapFromAttempts[a.id] = u.full_name;
+      }
+
+      // Step 2: fetch audio logs for those attempt IDs
       const { data, error } = await supabase
         .from("audio_monitoring_logs")
-        .select(
-          "attempt_id,exam_relevant,transcript,audio_url,notes,noise_level_db,detected_at,exam_attempts!inner(exam_schedule_id,users(full_name))"
-        )
+        .select("attempt_id, exam_relevant, transcript, audio_url, notes, noise_level_db, detected_at")
         .eq("noise_detected", true)
-        .eq("exam_attempts.exam_schedule_id", scheduleId)
+        .in("attempt_id", attemptIds)
+        .order("detected_at", { ascending: false })
         .limit(500);
 
       if (error) {
-        console.error("[AudioMonitorPanel] query error:", error.message);
+        console.error("[AudioMonitorPanel] audio query error:", error.message);
         return [];
       }
-      console.log("[AudioMonitorPanel] rows fetched:", data?.length, "scheduleId:", scheduleId);
-      return data ?? [];
+
+      console.log("[AudioMonitorPanel] rows fetched:", data?.length, "for scheduleId:", scheduleId);
+      // Attach name to each row from the Step 1 map
+      return (data ?? []).map((row: any) => ({
+        ...row,
+        _studentName: nameMapFromAttempts[row.attempt_id] ?? null,
+      }));
     },
     enabled: !!scheduleId,
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
 
-  // Count noise events per attempt, and separately flag any exam-relevant speech.
-  // Resolve the name straight from the joined row — no more falling back to a
-  // partial activeAttempts/flagged list.
-  const counts: Record<string, number> = {};
+  // Aggregate per student
+  const counts:        Record<string, number> = {};
   const relevantCounts: Record<string, number> = {};
-  const nameMap: Record<string, string> = {};
-  // Latest clip URL + transcript per student (rows come desc by detected_at so first wins)
-  const latestClip: Record<string, { url: string; transcript?: string | null } | null> = {};
+  const nameMap:       Record<string, string> = {};
+  const latestClip:    Record<string, { url: string; transcript?: string | null }> = {};
 
-  for (const row of audioRows ?? []) {
-    counts[row.attempt_id] = (counts[row.attempt_id] ?? 0) + 1;
-    if (row.exam_relevant) relevantCounts[row.attempt_id] = (relevantCounts[row.attempt_id] ?? 0) + 1;
-
-    const attempt = row.exam_attempts as
-      | { users?: { full_name: string } | { full_name: string }[] | null }
-      | null;
-    const usersField = attempt?.users;
-    const resolved = Array.isArray(usersField) ? usersField[0]?.full_name : usersField?.full_name;
-    if (resolved) nameMap[row.attempt_id] = resolved;
-
-    // Keep the first (most recent) clip URL we see per student
-    if (row.audio_url && !(row.attempt_id in latestClip)) {
-      latestClip[row.attempt_id] = { url: row.audio_url, transcript: row.transcript ?? null };
+  for (const row of (audioRows ?? []) as any[]) {
+    const aid = row.attempt_id;
+    counts[aid] = (counts[aid] ?? 0) + 1;
+    if (row.exam_relevant) relevantCounts[aid] = (relevantCounts[aid] ?? 0) + 1;
+    if (row._studentName) nameMap[aid] = row._studentName;
+    // rows are desc by detected_at so first one we see is the most recent
+    if (row.audio_url && !latestClip[aid]) {
+      latestClip[aid] = { url: row.audio_url, transcript: row.transcript ?? null };
     }
   }
 
@@ -735,9 +691,6 @@ export function AudioMonitorPanel({
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
-
-  // Track which row has its player expanded
-  const [expandedClip, setExpandedClip] = useState<string | null>(null);
 
   const maxCount = entries[0]?.count ?? 1;
 
@@ -785,7 +738,6 @@ export function AudioMonitorPanel({
                 </span>
               )}
 
-              {/* Play button — only shown when a clip exists */}
               {a.clip && (
                 <button
                   type="button"
@@ -811,7 +763,6 @@ export function AudioMonitorPanel({
               )}
             </div>
 
-            {/* Expanded clip player + transcript */}
             {isExpanded && a.clip && (
               <div style={{
                 marginTop: 4,
