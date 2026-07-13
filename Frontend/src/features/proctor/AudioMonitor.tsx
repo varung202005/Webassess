@@ -30,14 +30,13 @@ interface AudioMonitorProps {
 }
 
 const NOISE_THRESHOLD     = 60;    // dB — "loud noise" logging threshold (unchanged)
-const SPEECH_DB_THRESHOLD = 42;    // dB — much quieter than "loud noise"; normal talking level
+const SPEECH_DB_THRESHOLD = 52;    // dB — much quieter than "loud noise"; normal talking level
 const CHECK_INTERVAL      = 10_000;
 const LOG_QUIET_EVERY     = 6;
 const FFT_SIZE            = 2048;
-
-const VAD_WINDOW_MS       = 1_200; // how long a sustained energy run must last
+const VAD_WINDOW_MS       = 1_500; // how long a sustained energy run must last
 const VAD_SUBSAMPLE_MS    = 200;   // resolution of the sustained-energy check
-const VAD_HIT_RATIO       = 0.6;   // fraction of sub-samples that must clear SPEECH_DB_THRESHOLD
+const VAD_HIT_RATIO       = 0.7;   // fraction of sub-samples that must clear SPEECH_DB_THRESHOLD
 const CLIP_DURATION_MS    = 6_000; // length of the recorded clip once speech is confirmed
 const CLIP_COOLDOWN_MS    = 20_000; // don't fire another clip within this window of the last one
 
