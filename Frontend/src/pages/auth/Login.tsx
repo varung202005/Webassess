@@ -15,17 +15,18 @@ button,input,select{font:inherit}
 .auth-hero-bg{position:absolute;inset:-18px;background-image:linear-gradient(90deg,rgba(255,255,255,.92) 0%,rgba(255,255,255,.76) 36%,rgba(255,255,255,.26) 100%),url('/auth-assets/campus-building.png');background-size:cover;background-position:center;transform:scale(1.04);animation:authDrift 18s ease-in-out infinite alternate}
 .auth-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.74));backdrop-filter:blur(1.5px);pointer-events:none}
 .hero-top,.hero-main,.hero-bottom{position:relative;z-index:1}
+.hero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
 .brand-mark{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid rgba(255,255,255,.76);border-radius:999px;background:rgba(255,255,255,.54);backdrop-filter:blur(18px);box-shadow:0 10px 34px rgba(16,24,40,.07);font-size:13px;font-weight:700;color:#621426}
 .brand-dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,#b31234,#d8a63a);box-shadow:0 0 0 5px rgba(179,18,52,.1)}
 .hero-main{max-width:720px;padding:42px 0 24px}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:18px;color:#245481;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .hero-title{font-size:clamp(52px,6.4vw,86px);line-height:.92;letter-spacing:0;font-weight:850;color:#151927;margin:0 0 22px;max-width:100%;overflow-wrap:break-word}
 .hero-copy{max-width:590px;font-size:clamp(17px,1.7vw,22px);line-height:1.5;color:#344054;margin:0 0 28px}
-.hero-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
-.logo-strip{display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid rgba(255,255,255,.72);border-radius:22px;background:rgba(255,255,255,.62);backdrop-filter:blur(20px);box-shadow:0 12px 34px rgba(16,24,40,.08)}
-.logo-strip img{display:block;max-height:38px;width:auto;object-fit:contain;filter:saturate(.96)}
-.logo-strip img:nth-child(2){max-height:52px}
-.security-note{max-width:230px;color:#475467;font-size:13px;line-height:1.5;text-align:right}
+.hero-bottom{display:flex;align-items:flex-end;justify-content:flex-end;gap:24px}
+.logo-strip{display:flex;align-items:center;gap:22px;padding:16px 20px;border:1px solid rgba(255,255,255,.72);border-radius:24px;background:rgba(255,255,255,.7);backdrop-filter:blur(20px);box-shadow:0 12px 34px rgba(16,24,40,.08)}
+.logo-strip img{display:block;max-height:56px;width:auto;object-fit:contain;filter:saturate(.96)}
+.logo-strip img:nth-child(2){max-height:68px}
+.security-note{max-width:250px;color:#475467;font-size:13px;line-height:1.5;text-align:right}
 .auth-panel{display:flex;align-items:center;justify-content:center;padding:22px clamp(18px,3vw,42px);min-width:0}
 .auth-card{width:100%;max-width:440px;max-height:calc(100vh - 44px);overflow:auto;border:1px solid rgba(226,232,240,.9);border-radius:22px;background:rgba(255,255,255,.92);backdrop-filter:blur(24px);box-shadow:0 22px 70px rgba(16,24,40,.14),0 1px 0 rgba(255,255,255,.9) inset;padding:24px;animation:cardIn .36s cubic-bezier(.2,.9,.2,1) both}
 .card-head{margin-bottom:18px}
@@ -82,8 +83,8 @@ button,input,select{font:inherit}
 @keyframes modalIn{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @media(max-width:1280px){.auth-shell{grid-template-columns:minmax(0,1fr) minmax(380px,.82fr)}.auth-card{padding:22px}.hero-title{font-size:clamp(46px,5.4vw,72px)}}
-@media(max-width:1100px){.auth-shell{grid-template-columns:1fr;padding:14px}.auth-hero{min-height:auto;padding:30px;border-radius:26px}.hero-main{padding:34px 0 24px}.auth-panel{padding:18px 0 10px}.auth-card{max-width:480px;max-height:none}.security-note{text-align:left}.hero-bottom{align-items:flex-start}}
-@media(max-width:680px){.auth-shell{padding:0}.auth-hero{border-radius:0;padding:22px;min-height:350px}.hero-title{font-size:44px}.hero-copy{font-size:15px}.hero-bottom{display:grid}.logo-strip{width:100%;justify-content:space-between}.logo-strip img{max-width:44%;height:auto}.auth-panel{padding:14px 12px 24px}.auth-card{padding:18px;border-radius:20px}.form-options{align-items:flex-start;flex-direction:column}.card-title{font-size:24px}.card-subtitle{font-size:13px}}
+@media(max-width:1100px){.auth-shell{grid-template-columns:1fr;padding:14px}.auth-hero{min-height:auto;padding:30px;border-radius:26px}.hero-main{padding:34px 0 24px}.auth-panel{padding:18px 0 10px}.auth-card{max-width:480px;max-height:none}.security-note{text-align:left}.hero-bottom{align-items:flex-start;justify-content:flex-start}}
+@media(max-width:680px){.auth-shell{padding:0}.auth-hero{border-radius:0;padding:22px;min-height:350px}.hero-top{display:grid}.hero-title{font-size:44px}.hero-copy{font-size:15px}.hero-bottom{display:grid}.logo-strip{width:100%;justify-content:space-between;gap:14px;padding:12px 14px}.logo-strip img{max-width:48%;max-height:48px;height:auto}.logo-strip img:nth-child(2){max-height:58px}.auth-panel{padding:14px 12px 24px}.auth-card{padding:18px;border-radius:20px}.form-options{align-items:flex-start;flex-direction:column}.card-title{font-size:24px}.card-subtitle{font-size:13px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;
 
@@ -282,6 +283,10 @@ export default function Login() {
           <div className="auth-hero-bg" aria-hidden="true" />
           <div className="hero-top">
             <div className="brand-mark"><span className="brand-dot" /> TIET Secure Assessment Cloud</div>
+            <div className="logo-strip" aria-label="TIET and TSLAS logos">
+              <img src="/auth-assets/tiet-logo.png" alt="Thapar Institute of Engineering and Technology" />
+              <img src="/auth-assets/tslas-logo.png" alt="Thapar School of Liberal Arts and Sciences" />
+            </div>
           </div>
 
           <div className="hero-main">
@@ -291,10 +296,6 @@ export default function Login() {
           </div>
 
           <div className="hero-bottom">
-            <div className="logo-strip" aria-label="TIET and TSLAS logos">
-              <img src="/auth-assets/tiet-logo.png" alt="Thapar Institute of Engineering and Technology" />
-              <img src="/auth-assets/tslas-logo.png" alt="Thapar School of Liberal Arts and Sciences" />
-            </div>
             <p className="security-note">Encrypted sessions, role-aware access, and assessment workflows designed for university scale.</p>
           </div>
         </aside>
