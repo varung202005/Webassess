@@ -42,17 +42,17 @@ button,input,select{font:inherit}
 .banner.error{background:#fff1f2;color:#9f1239;border-color:#fecdd3}
 .banner.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
 .field-grid{display:flex;flex-direction:column;gap:14px}
-.field{position:relative;display:flex;flex-direction:column;gap:0;min-width:0}
+.auth-card .field{position:relative;display:flex;flex-direction:column;gap:0;min-width:0;height:auto;border:0;padding:0;background:transparent;border-radius:0;box-shadow:none;flex:unset;color:inherit;outline:0}
 .field-row{display:flex;flex-direction:column;gap:14px;min-width:0}
 .label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .input-wrap{position:relative;min-width:0}
-.input,.select{display:block;width:100%;min-width:0;height:44px;border:1.5px solid rgba(179,18,52,.28);border-radius:999px;background:#fff;padding:0 18px;color:#7a0d24;outline:0;font-size:14px;font-weight:700;line-height:42px;box-shadow:none;transition:border-color .18s ease,background .18s ease}
-.input::placeholder{color:rgba(122,13,36,.52)}
-.select{appearance:none;background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#b31234 50%),linear-gradient(135deg,#b31234 50%,transparent 50%);background-position:calc(100% - 18px) 19px,calc(100% - 12px) 19px;background-size:6px 6px,6px 6px;background-repeat:no-repeat}
+.auth-card .input,.auth-card .select{display:block;width:100%;min-width:0;height:44px;border:1.5px solid rgba(179,18,52,.28);border-radius:999px;background:#fff;padding:0 18px;color:#7a0d24;outline:0;font-size:14px;font-weight:700;line-height:42px;box-shadow:none;transition:border-color .18s ease,background .18s ease}
+.auth-card .input::placeholder{color:rgba(122,13,36,.52)}
+.auth-card .select{appearance:none;background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#b31234 50%),linear-gradient(135deg,#b31234 50%,transparent 50%);background-position:calc(100% - 18px) 19px,calc(100% - 12px) 19px;background-size:6px 6px,6px 6px;background-repeat:no-repeat}
 .select option{color:#101828;background:#fff}
-.input.has-action{padding-right:46px}
-.input:focus,.select:focus{border-color:#b31234;background:#fff}
-.input.error{border-color:#b31234}
+.auth-card .input.has-action{padding-right:46px}
+.auth-card .input:focus,.auth-card .select:focus{border-color:#b31234;background:#fff}
+.auth-card .input.error{border-color:#b31234}
 .icon-button{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border:0;border-radius:999px;background:#fff;color:#b31234;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
 .icon-button:hover{background:#fef4f6;color:#7a0d24}
 .helper-error{font-size:11px;color:#be123c;margin-top:0}
