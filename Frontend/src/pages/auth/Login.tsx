@@ -147,6 +147,12 @@ export default function Login() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetSent, setResetSent] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [newConfirmPassword, setNewConfirmPassword] = useState("");
+  const [showNewPwd, setShowNewPwd] = useState(false);
+  const [showNewConfirmPwd, setShowNewConfirmPwd] = useState(false);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [invitationBanner, setInvitationBanner] = useState<string | null>(null);
@@ -161,6 +167,21 @@ export default function Login() {
     if (params.get("token")) {
       setInvitationBanner("You've been invited to take an assessment. Sign in below to proceed.");
     }
+    if (params.get("password_recovery") === "1" || params.get("type") === "recovery") {
+      setRecoveryOpen(true);
+    }
+    if (window.location.hash.includes("type=recovery")) {
+      setRecoveryOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryOpen(true);
+      }
+    });
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -288,7 +309,7 @@ export default function Login() {
     e.preventDefault();
     setResetLoading(true);
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-      redirectTo: `${window.location.origin}/login`,
+      redirectTo: `${window.location.origin}/login?password_recovery=1`,
     });
     setResetLoading(false);
     if (resetError) {
@@ -298,6 +319,37 @@ export default function Login() {
     }
     setResetSent(true);
     setToast("We've sent a password reset link to your email.");
+  };
+
+  const handlePasswordUpdate = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (newPassword.length < 8) {
+      setError("Use at least 8 characters for your new password.");
+      return;
+    }
+    if (newPassword !== newConfirmPassword) {
+      setError("New passwords do not match.");
+      return;
+    }
+
+    setUpdatingPassword(true);
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    setUpdatingPassword(false);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+
+    setRecoveryOpen(false);
+    setNewPassword("");
+    setNewConfirmPassword("");
+    setToast("Your password has been updated. You can now sign in.");
+    setSuccess("Your password has been updated. You can now sign in.");
+    await supabase.auth.signOut();
+    window.history.replaceState({}, document.title, "/login");
   };
 
   return (
@@ -457,6 +509,39 @@ export default function Login() {
             ) : (
               <button className="primary-btn" type="button" onClick={() => setResetOpen(false)}>Done</button>
             )}
+          </section>
+        </div>
+      )}
+
+      {recoveryOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="update-password-title">
+            <div className="modal-top">
+              <div>
+                <div className="modal-icon"><MailIcon /></div>
+                <h2 id="update-password-title">Set New Password</h2>
+                <p>Enter a new password for your WebAssess account.</p>
+              </div>
+              <button className="close-btn" type="button" aria-label="Close password update modal" onClick={() => setRecoveryOpen(false)}><CloseIcon /></button>
+            </div>
+
+            <form className="field-grid" onSubmit={handlePasswordUpdate}>
+              <div className="field">
+                <label className="label" htmlFor="newPassword">New Password</label>
+                <div className="input-wrap">
+                  <input id="newPassword" className="input has-action" type={showNewPwd ? "text" : "password"} placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} autoComplete="new-password" autoFocus />
+                  <button className="icon-button" type="button" aria-label={showNewPwd ? "Hide new password" : "Show new password"} onClick={() => setShowNewPwd((shown) => !shown)}><EyeIcon off={showNewPwd} /></button>
+                </div>
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="newConfirmPassword">Confirm New Password</label>
+                <div className="input-wrap">
+                  <input id="newConfirmPassword" className="input has-action" type={showNewConfirmPwd ? "text" : "password"} placeholder="Confirm new password" value={newConfirmPassword} onChange={(e) => setNewConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+                  <button className="icon-button" type="button" aria-label={showNewConfirmPwd ? "Hide confirm new password" : "Show confirm new password"} onClick={() => setShowNewConfirmPwd((shown) => !shown)}><EyeIcon off={showNewConfirmPwd} /></button>
+                </div>
+              </div>
+              <button className="primary-btn" type="submit" disabled={updatingPassword}>{updatingPassword ? <SpinnerIcon /> : null}{updatingPassword ? "Updating..." : "Update Password"}</button>
+            </form>
           </section>
         </div>
       )}
