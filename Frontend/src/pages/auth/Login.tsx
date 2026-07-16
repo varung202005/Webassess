@@ -60,11 +60,23 @@ button,input,select{font:inherit}
 .check input{width:16px;height:16px;accent-color:#b31234}
 .link-button{border:0;background:transparent;color:#9d102d;font-weight:800;font-size:13px;padding:0}
 .link-button:hover{text-decoration:underline}
-.strength{display:grid;gap:6px}
+.strength{display:grid;gap:8px;border-radius:14px;background:rgba(255,255,255,.54);border:1px solid rgba(148,163,184,.18);padding:10px 11px}
 .strength-bars{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
-.strength-bars span{height:4px;border-radius:999px;background:#e4e7ec}
-.strength-bars span.on{background:linear-gradient(90deg,#b31234,#d8a63a)}
+.strength-bars span{height:5px;border-radius:999px;background:#e4e7ec;transition:background .18s ease}
+.strength-bars span.on.weak{background:#ef4444}
+.strength-bars span.on.fair{background:#f59e0b}
+.strength-bars span.on.good{background:#2563eb}
+.strength-bars span.on.strong{background:#059669}
+.strength-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .strength-text{font-size:12px;color:#667085}
+.strength-badge{font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}
+.strength-badge.weak{color:#dc2626}
+.strength-badge.fair{color:#b45309}
+.strength-badge.good{color:#1d4ed8}
+.strength-badge.strong{color:#047857}
+.strength-checks{display:grid;grid-template-columns:1fr 1fr;gap:5px 10px}
+.strength-check{font-size:11px;color:#667085}
+.strength-check.met{color:#047857;font-weight:700}
 .primary-btn,.ghost-btn{height:44px;width:100%;border-radius:13px;font-size:14px;font-weight:850;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease}
 .primary-btn{border:0;background:linear-gradient(135deg,#9d102d,#b31234 58%,#245481);color:#fff;box-shadow:0 16px 34px rgba(179,18,52,.24)}
 .primary-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 20px 42px rgba(179,18,52,.28)}
@@ -163,6 +175,16 @@ export default function Login() {
     if (/[^A-Za-z0-9]/.test(password)) score += 1;
     return score;
   }, [password]);
+
+  const passwordChecks = useMemo(() => [
+    { label: "8+ characters", met: password.length >= 8 },
+    { label: "Upper & lower", met: /[A-Z]/.test(password) && /[a-z]/.test(password) },
+    { label: "Number", met: /\d/.test(password) },
+    { label: "Symbol", met: /[^A-Za-z0-9]/.test(password) },
+  ], [password]);
+
+  const strengthTone = passwordScore <= 1 ? "weak" : passwordScore === 2 ? "fair" : passwordScore === 3 ? "good" : "strong";
+  const strengthLabel = password ? ({ weak: "Weak", fair: "Fair", good: "Good", strong: "Strong" }[strengthTone]) : "Not started";
 
   const fieldErrors = useMemo(() => {
     const errors: Record<string, string> = {};
@@ -368,8 +390,18 @@ export default function Login() {
                       {fieldErrors.confirmPassword && <div className="helper-error">{fieldErrors.confirmPassword}</div>}
                     </div>
                     <div className="strength" aria-label="Password strength">
-                      <div className="strength-bars">{[1, 2, 3, 4].map((bar) => <span key={bar} className={passwordScore >= bar ? "on" : ""} />)}</div>
-                      <div className="strength-text">{password ? ["Very weak", "Getting there", "Good", "Strong"][Math.max(passwordScore - 1, 0)] : "Use 8+ characters with a number and symbol."}</div>
+                      <div className="strength-bars">{[1, 2, 3, 4].map((bar) => <span key={bar} className={passwordScore >= bar ? `on ${strengthTone}` : ""} />)}</div>
+                      <div className="strength-row">
+                        <div className="strength-text">Password strength</div>
+                        <div className={`strength-badge ${strengthTone}`}>{strengthLabel}</div>
+                      </div>
+                      <div className="strength-checks">
+                        {passwordChecks.map((check) => (
+                          <span className={`strength-check ${check.met ? "met" : ""}`} key={check.label}>
+                            {check.met ? "✓" : "•"} {check.label}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </>
                 )}
