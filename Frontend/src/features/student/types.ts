@@ -131,6 +131,7 @@ export interface ExamQuestion {
     marks: number;
     negative_marks: number;
     question_options: Array<{ id: string; option_text: string; order_index: number }>;
+    image_url?: string | null;   // ← NEW: optional image attached to this question
   };
   exam_sections?: { id: string; title: string } | null;
 }
