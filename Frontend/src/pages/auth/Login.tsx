@@ -41,18 +41,19 @@ button,input,select{font:inherit}
 .banner{display:flex;gap:9px;align-items:flex-start;margin-bottom:16px;border-radius:16px;padding:12px 13px;font-size:13px;line-height:1.45;border:1px solid}
 .banner.error{background:#fff1f2;color:#9f1239;border-color:#fecdd3}
 .banner.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
-.field-grid{display:flex;flex-direction:column;gap:13px}
-.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field-grid{display:flex;flex-direction:column;gap:14px}
+.field{position:relative;display:flex;flex-direction:column;gap:7px;min-width:0}
 .field-row{display:flex;flex-direction:column;gap:13px;min-width:0}
-.label{display:block;font-size:12px;line-height:1.2;font-weight:760;color:#344054}
+.label{display:block;font-size:12px;line-height:1.2;font-weight:780;color:#3a4558;padding-left:2px}
 .input-wrap{position:relative;min-width:0}
-.input,.select{display:block;width:100%;min-width:0;height:42px;border:1px solid #d9dee8;border-radius:12px;background:rgba(255,255,255,.9);padding:0 12px;color:#101828;outline:0;font-size:14px;line-height:42px;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
-.select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#667085 50%),linear-gradient(135deg,#667085 50%,transparent 50%);background-position:calc(100% - 18px) 20px,calc(100% - 12px) 20px;background-size:6px 6px,6px 6px;background-repeat:no-repeat}
+.input,.select{display:block;width:100%;min-width:0;height:44px;border:1px solid rgba(148,163,184,.42);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(255,255,255,.84));padding:0 14px;color:#101828;outline:0;font-size:14px;line-height:44px;box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 10px 24px rgba(15,23,42,.04);transition:border-color .18s ease,box-shadow .18s ease,background .18s ease,transform .18s ease}
+.input::placeholder{color:#8a93a3}
+.select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#667085 50%),linear-gradient(135deg,#667085 50%,transparent 50%),linear-gradient(180deg,rgba(255,255,255,.96),rgba(255,255,255,.84));background-position:calc(100% - 18px) 20px,calc(100% - 12px) 20px,0 0;background-size:6px 6px,6px 6px,100% 100%;background-repeat:no-repeat}
 .input.has-action{padding-right:46px}
-.input:focus,.select:focus{border-color:#b31234;background:#fff;box-shadow:0 0 0 4px rgba(179,18,52,.1)}
-.input.error{border-color:#f43f5e}
-.icon-button{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:11px;background:transparent;color:#667085;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
-.icon-button:hover{background:#f2f4f7;color:#101828}
+.input:focus,.select:focus{border-color:rgba(179,18,52,.7);background:#fff;box-shadow:0 0 0 4px rgba(179,18,52,.1),0 14px 30px rgba(179,18,52,.08);transform:translateY(-1px)}
+.input.error{border-color:#f43f5e;box-shadow:0 0 0 4px rgba(244,63,94,.08)}
+.icon-button{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:11px;background:transparent;color:#667085;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
+.icon-button:hover{background:#fff1f3;color:#9d102d}
 .helper-error{font-size:11px;color:#be123c;margin-top:0}
 .form-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0}
 .check{display:inline-flex;align-items:center;gap:8px;color:#475467;font-size:13px;font-weight:650}
