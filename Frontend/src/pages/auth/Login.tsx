@@ -41,19 +41,20 @@ button,input,select{font:inherit}
 .banner{display:flex;gap:9px;align-items:flex-start;margin-bottom:16px;border-radius:16px;padding:12px 13px;font-size:13px;line-height:1.45;border:1px solid}
 .banner.error{background:#fff1f2;color:#9f1239;border-color:#fecdd3}
 .banner.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
-.field-grid{display:flex;flex-direction:column;gap:16px}
-.field{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0}
-.field-row{display:flex;flex-direction:column;gap:16px;min-width:0}
-.label{display:block;font-size:12px;line-height:1.2;font-weight:800;color:#263244;padding-left:1px;letter-spacing:.01em}
+.field-grid{display:flex;flex-direction:column;gap:14px}
+.field{position:relative;display:flex;flex-direction:column;gap:0;min-width:0}
+.field-row{display:flex;flex-direction:column;gap:14px;min-width:0}
+.label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .input-wrap{position:relative;min-width:0}
-.input,.select{display:block;width:100%;min-width:0;height:46px;border:1px solid rgba(148,163,184,.32);border-radius:16px;background:linear-gradient(180deg,#ffffff,#f8fafc);padding:0 16px;color:#111827;outline:0;font-size:15px;line-height:44px;box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 10px 28px rgba(15,23,42,.045);transition:border-color .18s ease,box-shadow .18s ease,background .18s ease,transform .18s ease}
-.input::placeholder{color:#7d8796}
-.select{appearance:none;background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#667085 50%),linear-gradient(135deg,#667085 50%,transparent 50%),linear-gradient(180deg,#ffffff,#f8fafc);background-position:calc(100% - 18px) 20px,calc(100% - 12px) 20px,0 0;background-size:6px 6px,6px 6px,100% 100%;background-repeat:no-repeat}
+.input,.select{display:block;width:100%;min-width:0;height:42px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:linear-gradient(135deg,rgba(115,38,205,.94) 0%,rgba(139,43,210,.88) 42%,rgba(157,16,45,.9) 100%);padding:0 18px;color:#fff;outline:0;font-size:14px;font-weight:700;line-height:40px;box-shadow:0 1px 0 rgba(255,255,255,.22) inset,0 12px 28px rgba(96,28,150,.2);transition:border-color .18s ease,box-shadow .18s ease,background .18s ease,transform .18s ease}
+.input::placeholder{color:rgba(255,255,255,.88)}
+.select{appearance:none;background-color:#7c2bd1;background-image:linear-gradient(45deg,transparent 50%,rgba(255,255,255,.9) 50%),linear-gradient(135deg,rgba(255,255,255,.9) 50%,transparent 50%),linear-gradient(135deg,rgba(115,38,205,.94) 0%,rgba(139,43,210,.88) 42%,rgba(157,16,45,.9) 100%);background-position:calc(100% - 18px) 18px,calc(100% - 12px) 18px,0 0;background-size:6px 6px,6px 6px,100% 100%;background-repeat:no-repeat}
+.select option{color:#101828;background:#fff}
 .input.has-action{padding-right:46px}
-.input:focus,.select:focus{border-color:rgba(179,18,52,.64);background:#fff;box-shadow:0 0 0 3px rgba(179,18,52,.12),0 16px 34px rgba(179,18,52,.1);transform:translateY(-1px)}
-.input.error{border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.1)}
-.icon-button{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:11px;background:transparent;color:#667085;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
-.icon-button:hover{background:#fff1f3;color:#9d102d}
+.input:focus,.select:focus{border-color:rgba(255,255,255,.68);background:linear-gradient(135deg,rgba(126,48,218,.98) 0%,rgba(151,48,221,.92) 42%,rgba(179,18,52,.94) 100%);box-shadow:0 0 0 3px rgba(139,43,210,.18),0 16px 34px rgba(96,28,150,.22);transform:translateY(-1px)}
+.input.error{border-color:rgba(255,255,255,.75);box-shadow:0 0 0 3px rgba(244,63,94,.18),0 14px 30px rgba(157,16,45,.18)}
+.icon-button{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border:0;border-radius:999px;background:rgba(255,255,255,.1);color:#fff;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
+.icon-button:hover{background:rgba(255,255,255,.22);color:#fff}
 .helper-error{font-size:11px;color:#be123c;margin-top:0}
 .form-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0}
 .check{display:inline-flex;align-items:center;gap:8px;color:#475467;font-size:13px;font-weight:650}
