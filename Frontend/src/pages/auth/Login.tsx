@@ -1,138 +1,189 @@
-import { useState, FormEvent, useEffect } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { preferredRole, useAuthStore, type Role } from "../../store/authStore";
 
-const css = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-.auth-page{display:flex;min-height:100vh;width:100%;font-family:var(--font);background:#F7F8FA;}
-button{font-family:var(--font);cursor:pointer;}
+type AuthMode = "login" | "signup";
+type SignupRole = "student" | "faculty";
 
-/* ── SPLIT LAYOUT ── */
-.auth-left {
-  width: 480px; flex-shrink: 0;
-  background: var(--c-primary-700);
-  display: flex; flex-direction: column;
-  padding: 48px 52px;
-  position: relative; overflow: hidden;
-}
-.auth-left::before {
-  content: ''; position: absolute; top: -80px; right: -80px;
-  width: 320px; height: 320px; border-radius: 50%;
-  background: rgba(255,255,255,0.05);
-}
-.auth-left::after {
-  content: ''; position: absolute; bottom: -120px; left: -60px;
-  width: 400px; height: 400px; border-radius: 50%;
-  background: rgba(0,0,0,0.08);
-}
-.auth-left-content { position: relative; z-index: 1; }
-.auth-logo { font-size: 28px; font-weight: 800; color: #fff; letter-spacing: -0.5px; margin-bottom: 6px; }
-.auth-logo span { color: rgba(255,255,255,0.6); }
-.auth-institution { font-size: 13px; color: rgba(255,255,255,0.65); font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 56px; }
-.auth-left-headline { font-size: 32px; font-weight: 700; color: #fff; line-height: 1.25; margin-bottom: 16px; letter-spacing: -0.5px; }
-.auth-left-sub { font-size: 14px; color: rgba(255,255,255,0.7); line-height: 1.7; margin-bottom: 40px; }
+const css = `
+*,*::before,*::after{box-sizing:border-box}
+button,input,select{font:inherit}
+.auth-page{min-height:100vh;width:100%;font-family:var(--font);color:#101828;background:radial-gradient(circle at 8% 0%,rgba(179,18,52,.1),transparent 34%),linear-gradient(135deg,#fff 0%,#f7f8fb 54%,#eef4fb 100%);overflow:hidden}
+.auth-shell{min-height:100vh;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(420px,.9fr);padding:18px}
+.auth-hero{position:relative;min-height:calc(100vh - 36px);border-radius:32px;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;padding:42px;background:#f5f7fb;box-shadow:inset 0 0 0 1px rgba(255,255,255,.7)}
+.auth-hero-bg{position:absolute;inset:-18px;background-image:linear-gradient(90deg,rgba(255,255,255,.92) 0%,rgba(255,255,255,.76) 36%,rgba(255,255,255,.26) 100%),url('/auth-assets/campus-building.png');background-size:cover;background-position:center;transform:scale(1.04);animation:authDrift 18s ease-in-out infinite alternate}
+.auth-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.1),rgba(255,255,255,.74));backdrop-filter:blur(1.5px);pointer-events:none}
+.hero-top,.hero-main,.hero-bottom{position:relative;z-index:1}
+.brand-mark{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid rgba(255,255,255,.76);border-radius:999px;background:rgba(255,255,255,.54);backdrop-filter:blur(18px);box-shadow:0 10px 34px rgba(16,24,40,.07);font-size:13px;font-weight:700;color:#621426}
+.brand-dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,#b31234,#d8a63a);box-shadow:0 0 0 5px rgba(179,18,52,.1)}
+.hero-main{max-width:720px;padding:42px 0 24px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:18px;color:#245481;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.hero-title{font-size:clamp(52px,6.4vw,86px);line-height:.92;letter-spacing:0;font-weight:850;color:#151927;margin:0 0 22px;max-width:100%;overflow-wrap:break-word}
+.hero-copy{max-width:590px;font-size:clamp(17px,1.7vw,22px);line-height:1.5;color:#344054;margin:0 0 28px}
+.feature-cloud{display:flex;flex-wrap:wrap;gap:10px;max-width:560px}
+.feature-chip{display:inline-flex;align-items:center;gap:8px;padding:10px 13px;border:1px solid rgba(255,255,255,.78);border-radius:999px;background:rgba(255,255,255,.62);backdrop-filter:blur(18px);box-shadow:0 12px 30px rgba(16,24,40,.08);font-size:13px;font-weight:750;color:#182230}
+.feature-chip svg{width:16px;height:16px;color:#0d6b4d}
+.hero-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
+.logo-strip{display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid rgba(255,255,255,.72);border-radius:22px;background:rgba(255,255,255,.62);backdrop-filter:blur(20px);box-shadow:0 12px 34px rgba(16,24,40,.08)}
+.logo-strip img{display:block;max-height:38px;width:auto;object-fit:contain;filter:saturate(.96)}
+.logo-strip img:nth-child(2){max-height:52px}
+.security-note{max-width:230px;color:#475467;font-size:13px;line-height:1.5;text-align:right}
+.auth-panel{display:flex;align-items:center;justify-content:center;padding:28px clamp(22px,4vw,58px)}
+.auth-card{width:100%;max-width:472px;border:1px solid rgba(255,255,255,.72);border-radius:24px;background:rgba(255,255,255,.78);backdrop-filter:blur(28px);box-shadow:0 24px 80px rgba(16,24,40,.16),0 1px 0 rgba(255,255,255,.9) inset;padding:30px;animation:cardIn .36s cubic-bezier(.2,.9,.2,1) both}
+.card-head{margin-bottom:22px}
+.card-kicker{color:#b31234;font-weight:800;font-size:12px;letter-spacing:.09em;text-transform:uppercase;margin-bottom:9px}
+.card-title{font-size:30px;line-height:1.1;letter-spacing:0;font-weight:820;color:#101828;margin:0 0 8px}
+.card-subtitle{font-size:14px;line-height:1.55;color:#667085;margin:0}
+.tabs{position:relative;display:grid;grid-template-columns:1fr 1fr;margin:0 0 24px;padding:4px;border-radius:999px;background:#f1f4f8;border:1px solid #e7ebf0}
+.tabs::before{content:"";position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:999px;background:#fff;box-shadow:0 8px 20px rgba(16,24,40,.08);transition:transform .22s ease}
+.tabs.signup::before{transform:translateX(100%)}
+.tab{position:relative;z-index:1;border:0;background:transparent;border-radius:999px;padding:10px 12px;color:#667085;font-weight:800;font-size:14px;transition:color .18s ease}
+.tab.active{color:#101828}
+.banner{display:flex;gap:9px;align-items:flex-start;margin-bottom:16px;border-radius:16px;padding:12px 13px;font-size:13px;line-height:1.45;border:1px solid}
+.banner.error{background:#fff1f2;color:#9f1239;border-color:#fecdd3}
+.banner.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+.field-grid{display:grid;gap:15px}
+.field{display:grid;gap:7px}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.label{font-size:13px;font-weight:760;color:#344054}
+.input-wrap{position:relative}
+.input,.select{width:100%;height:48px;border:1px solid #d9dee8;border-radius:15px;background:rgba(255,255,255,.82);padding:0 14px;color:#101828;outline:0;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
+.select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#667085 50%),linear-gradient(135deg,#667085 50%,transparent 50%);background-position:calc(100% - 18px) 20px,calc(100% - 12px) 20px;background-size:6px 6px,6px 6px;background-repeat:no-repeat}
+.input.has-action{padding-right:46px}
+.input:focus,.select:focus{border-color:#b31234;background:#fff;box-shadow:0 0 0 4px rgba(179,18,52,.1)}
+.input.error{border-color:#f43f5e}
+.icon-button{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:11px;background:transparent;color:#667085;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
+.icon-button:hover{background:#f2f4f7;color:#101828}
+.helper-error{font-size:12px;color:#be123c;margin-top:-1px}
+.form-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 2px}
+.check{display:inline-flex;align-items:center;gap:8px;color:#475467;font-size:13px;font-weight:650}
+.check input{width:16px;height:16px;accent-color:#b31234}
+.link-button{border:0;background:transparent;color:#9d102d;font-weight:800;font-size:13px;padding:0}
+.link-button:hover{text-decoration:underline}
+.strength{display:grid;gap:7px}
+.strength-bars{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.strength-bars span{height:4px;border-radius:999px;background:#e4e7ec}
+.strength-bars span.on{background:linear-gradient(90deg,#b31234,#d8a63a)}
+.strength-text{font-size:12px;color:#667085}
+.primary-btn,.ghost-btn{height:48px;width:100%;border-radius:15px;font-weight:850;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease}
+.primary-btn{border:0;background:linear-gradient(135deg,#9d102d,#b31234 58%,#245481);color:#fff;box-shadow:0 16px 34px rgba(179,18,52,.24)}
+.primary-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 20px 42px rgba(179,18,52,.28)}
+.primary-btn:disabled,.ghost-btn:disabled{opacity:.62;cursor:not-allowed}
+.divider{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;color:#98a2b3;font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em;margin:18px 0}
+.divider::before,.divider::after{content:"";height:1px;background:#e4e7ec}
+.ghost-btn{border:1px solid #d9dee8;background:rgba(255,255,255,.65);color:#344054}
+.ghost-btn:hover{background:#fff;border-color:#cbd5e1;transform:translateY(-1px)}
+.card-foot{margin-top:18px;text-align:center;color:#667085;font-size:13px}
+.modal-backdrop{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:18px;background:rgba(15,23,42,.36);backdrop-filter:blur(10px);animation:fadeIn .18s ease both}
+.modal{width:min(100%,430px);border-radius:24px;background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.82);box-shadow:0 24px 80px rgba(15,23,42,.22);padding:26px;animation:modalIn .22s ease both}
+.modal-top{display:flex;justify-content:space-between;gap:18px;margin-bottom:16px}
+.modal-icon{width:44px;height:44px;border-radius:15px;display:grid;place-items:center;background:#fef4f6;color:#b31234;margin-bottom:14px}
+.modal h2{font-size:24px;margin:0 0 8px;color:#101828}
+.modal p{margin:0;color:#667085;line-height:1.55;font-size:14px}
+.close-btn{width:34px;height:34px;border:0;border-radius:11px;background:#f2f4f7;color:#475467;display:grid;place-items:center}
+.toast{position:fixed;right:20px;bottom:20px;z-index:60;max-width:360px;border-radius:18px;border:1px solid #a7f3d0;background:rgba(236,253,245,.94);backdrop-filter:blur(16px);color:#047857;box-shadow:0 16px 50px rgba(16,24,40,.16);padding:13px 14px;font-size:14px;animation:toastIn .22s ease both}
+@keyframes authDrift{from{transform:scale(1.04) translate3d(0,0,0)}to{transform:scale(1.09) translate3d(-14px,-8px,0)}}
+@keyframes cardIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalIn{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media(max-width:1060px){.auth-shell{grid-template-columns:1fr;padding:14px}.auth-hero{min-height:auto;padding:34px;border-radius:28px}.hero-main{padding:56px 0 38px}.auth-panel{padding:24px 0 10px}.auth-card{max-width:620px}.security-note{text-align:left}.hero-bottom{align-items:flex-start}}
+@media(max-width:680px){.auth-shell{padding:0}.auth-hero{border-radius:0;padding:24px;min-height:430px}.hero-title{font-size:54px}.hero-copy{font-size:16px}.hero-bottom{display:grid}.logo-strip{width:100%;justify-content:space-between}.logo-strip img{max-width:44%;height:auto}.auth-panel{padding:18px 14px 28px}.auth-card{padding:22px;border-radius:22px}.field-row{grid-template-columns:1fr}.form-options{align-items:flex-start;flex-direction:column}.card-title{font-size:26px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+`;
 
-.auth-stats { display: flex; gap: 28px; margin-bottom: 40px; }
-.auth-stat-num { font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
-.auth-stat-label { font-size: 11.5px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+const CheckIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-.auth-features { display: flex; flex-direction: column; gap: 14px; }
-.auth-feature { display: flex; align-items: center; gap: 12px; }
-.auth-feature-icon { width: 32px; height: 32px; border-radius: var(--radius-lg); background: rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; font-size: 16px; color: rgba(255,255,255,0.9); flex-shrink: 0; }
-.auth-feature-text { font-size: 13px; color: rgba(255,255,255,0.75); }
-.auth-left-footer { margin-top: auto; padding-top: 40px; font-size: 11px; color: rgba(255,255,255,0.35); }
+const EyeIcon = ({ off }: { off?: boolean }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    {off ? <path d="m3 3 18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /> : null}
+    <path d="M2.1 12.4s3.6-6.3 9.9-6.3 9.9 6.3 9.9 6.3-3.6 6.3-9.9 6.3-9.9-6.3-9.9-6.3Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" strokeWidth="2" />
+  </svg>
+);
 
-/* ── RIGHT PANEL ── */
-.auth-right {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  padding: 48px 40px; background: #F7F8FA;
-}
-.auth-form-box {
-  width: 100%; max-width: 420px;
-  background: #fff; border: 1px solid var(--c-gray-200);
-  border-radius: 12px; padding: 36px 36px;
-  box-shadow: var(--shadow-lg);
-}
-.auth-form-title { font-size: 22px; font-weight: 700; color: var(--c-gray-900); margin-bottom: 4px; letter-spacing: -0.3px; }
-.auth-form-sub { font-size: 13px; color: var(--c-gray-600); margin-bottom: 24px; }
+const SpinnerIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M21 12a9 9 0 1 1-6.2-8.56" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+  </svg>
+);
 
-/* Sign in / Create account tabs */
-.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 24px; background: var(--c-gray-50); border: 1px solid var(--c-gray-200); border-radius: var(--radius-lg); padding: 4px; }
-.auth-tab {
-  padding: 8px 10px; border: none; border-radius: calc(var(--radius-lg) - 2px);
-  background: transparent; font-size: 13px; font-weight: 600; color: var(--c-gray-600);
-  cursor: pointer; transition: all .12s; text-align: center;
-}
-.auth-tab.active { background: #fff; color: var(--c-primary-700); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.06)); }
+const MailIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M4 6h16v12H4z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    <path d="m4 7 8 6 8-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-.form-group { margin-bottom: 16px; }
-.form-label { font-size: 12.5px; font-weight: 600; color: var(--c-gray-700); margin-bottom: 5px; display: block; }
-.form-control {
-  width: 100%; padding: 9px 12px;
-  border: 1px solid var(--c-gray-200); border-radius: var(--radius-lg);
-  font-size: 14px; font-family: var(--font); color: var(--c-gray-800);
-  outline: none; transition: border-color .12s;
-  background: var(--c-gray-50);
-}
-.form-control:focus { border-color: var(--c-primary-600); background: #fff; box-shadow: 0 0 0 3px rgba(196,30,58,.08); }
-.form-control-wrap { position: relative; }
-.form-control-wrap i { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 16px; color: var(--c-gray-400); cursor: pointer; }
-.form-control-wrap .form-control { padding-right: 36px; }
-
-.form-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.remember-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--c-gray-600); cursor: pointer; }
-.forgot-link { font-size: 13px; color: var(--c-primary-700); font-weight: 500; cursor: pointer; background: none; border: none; padding: 0; }
-.forgot-link:hover { text-decoration: underline; }
-
-.btn-login {
-  width: 100%; padding: 11px;
-  background: var(--c-primary-700); color: #fff;
-  border: none; border-radius: var(--radius-lg);
-  font-size: 14px; font-weight: 600; cursor: pointer;
-  transition: background .12s; font-family: var(--font);
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-}
-.btn-login:hover { background: var(--c-primary-800); }
-.btn-login:disabled { opacity: .65; cursor: not-allowed; }
-
-.auth-signup-row { text-align: center; font-size: 13px; color: var(--c-gray-600); margin-top: 16px; }
-.auth-signup-row button { color: var(--c-primary-700); font-weight: 600; cursor: pointer; background: none; border: none; padding: 0; font-size: 13px; }
-.auth-role-note { display:flex; gap:10px; padding:11px 12px; border:1px solid var(--c-gray-200); border-radius:var(--radius-xl); background:var(--c-gray-50); margin:0 0 16px; color:var(--c-gray-600); font-size:12.5px; line-height:1.45; }
-.auth-role-note i { color:var(--c-primary-700); font-size:17px; margin-top:1px; }
-.auth-role-note strong { display:block; color:var(--c-gray-800); font-size:12.5px; margin-bottom:2px; }
-
-/* Banners */
-.error-banner { background: var(--c-danger-100); border: 1px solid #FCA5A5; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: var(--c-danger-700); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-.success-banner { background: #ECFDF5; border: 1px solid #6EE7B7; border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #047857; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-@media(max-width:900px){.auth-left{width:360px;padding:38px 32px}.auth-right{padding:32px 24px}}
-@media(max-width:680px){.auth-page{display:block;background:#f7f8fa}.auth-left{display:none}.auth-right{min-height:100vh;width:100%;padding:22px 16px}.auth-form-box{max-width:440px;padding:26px 20px;border-radius:18px}.auth-form-title{font-size:21px}.form-row-2{justify-content:flex-end}}
-@media(max-width:380px){.auth-right{padding:12px}.auth-form-box{padding:22px 16px}.auth-tabs{gap:3px}}`;
+const CloseIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
 
 export default function Login() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<AuthMode>("login");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [rollNumber, setRollNumber] = useState("");
+  const [role, setRole] = useState<SignupRole>("student");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [terms, setTerms] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetSent, setResetSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [invitationBanner, setInvitationBanner] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveRole = useAuthStore((s) => s.setActiveRole);
   const apiUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
-  // If arriving via invitation link (?token=xxx), show a welcome banner
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    if (token) {
+    if (params.get("token")) {
       setInvitationBanner("You've been invited to take an assessment. Sign in below to proceed.");
     }
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 4200);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  const passwordScore = useMemo(() => {
+    let score = 0;
+    if (password.length >= 8) score += 1;
+    if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
+    if (/\d/.test(password)) score += 1;
+    if (/[^A-Za-z0-9]/.test(password)) score += 1;
+    return score;
+  }, [password]);
+
+  const fieldErrors = useMemo(() => {
+    const errors: Record<string, string> = {};
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = "Enter a valid university email.";
+    if (mode === "signup") {
+      if (password && password.length < 8) errors.password = "Use at least 8 characters.";
+      if (confirmPassword && password !== confirmPassword) errors.confirmPassword = "Passwords do not match.";
+      if (rollNumber && rollNumber.length < 3) errors.rollNumber = "Enter a valid roll number.";
+    }
+    return errors;
+  }, [confirmPassword, email, mode, password, rollNumber]);
 
   const bootstrapPortalSession = async (token: string) => {
     const response = await fetch(`${apiUrl}/api/v1/auth/me`, {
@@ -144,27 +195,21 @@ export default function Login() {
       roles: string[];
     };
     const roles = payload.roles
-      .map((role) => role.toUpperCase())
-      .filter((role): role is Role => ["STUDENT", "FACULTY", "PROCTOR", "ADMIN", "CANDIDATE"].includes(role));
-    if (!roles.length) throw new Error("No portal role is assigned to this account.");
-    const role = preferredRole(roles);
-    if (!role) throw new Error("No portal role is assigned to this account.");
+      .map((assignedRole) => assignedRole.toUpperCase())
+      .filter((assignedRole): assignedRole is Role => ["STUDENT", "FACULTY", "PROCTOR", "ADMIN", "CANDIDATE"].includes(assignedRole));
+    const activeRole = preferredRole(roles);
+    if (!activeRole) throw new Error("No portal role is assigned to this account.");
     setSession({
       id: payload.user.id,
       fullName: payload.user.full_name ?? "",
       email: payload.user.email,
       roles,
     }, token);
-    setActiveRole(role);
-    // Candidates skip the dashboard — go directly to exam state gate
-    if (role === "CANDIDATE") {
-      navigate("/candidate/state", { replace: true });
-    } else {
-      navigate(`/${role.toLowerCase()}/dashboard`, { replace: true });
-    }
+    setActiveRole(activeRole);
+    navigate(activeRole === "CANDIDATE" ? "/candidate/state" : `/${activeRole.toLowerCase()}/dashboard`, { replace: true });
   };
 
-  const switchMode = (next: "login" | "signup") => {
+  const switchMode = (next: AuthMode) => {
     setMode(next);
     setError(null);
     setSuccess(null);
@@ -175,47 +220,47 @@ export default function Login() {
     setError(null);
     setSuccess(null);
 
-    if (mode === "signup" && password !== confirmPassword) {
-      setError("Passwords do not match.");
+    if (Object.keys(fieldErrors).length) {
+      setError("Please resolve the highlighted fields.");
+      return;
+    }
+    if (mode === "signup" && !terms) {
+      setError("Please accept the terms to create your account.");
       return;
     }
 
     setLoading(true);
     try {
       if (mode === "login") {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-
-        const supaUser = data.user;
-        const session = data.session;
-
-        if (!supaUser || !session) {
-          throw new Error("Login succeeded but no session was returned.");
-        }
-
-        await bootstrapPortalSession(session.access_token);
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) throw signInError;
+        if (!data.user || !data.session) throw new Error("Login succeeded but no session was returned.");
+        window.localStorage.setItem("webassess-remember", rememberMe ? "true" : "false");
+        await bootstrapPortalSession(data.session.access_token);
       } else {
-        const { data, error } = await supabase.auth.signUp({
+        const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
               full_name: fullName,
-              role: "student",
+              roll_number: rollNumber,
+              role,
             },
           },
         });
-        if (error) throw error;
-
+        if (signUpError) throw signUpError;
         if (data.session && data.user) {
           await bootstrapPortalSession(data.session.access_token);
           return;
         }
-
-        setSuccess("Account created! Check your email to verify, then sign in.");
+        setToast("Account created. Check your email to verify your WebAssess access.");
+        setSuccess("Account created. Check your email to verify, then sign in.");
         setFullName("");
+        setRollNumber("");
         setPassword("");
         setConfirmPassword("");
+        setTerms(false);
         switchMode("login");
       }
     } catch (err) {
@@ -225,197 +270,184 @@ export default function Login() {
     }
   };
 
-  const sendPasswordReset = async () => {
-    setError(null);
-    setSuccess(null);
-    if (!email) {
-      setError("Enter your email address first.");
-      return;
-    }
-    setLoading(true);
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+  const handleReset = async (e: FormEvent) => {
+    e.preventDefault();
+    setResetLoading(true);
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetEmail, {
       redirectTo: `${window.location.origin}/login`,
     });
-    setLoading(false);
-    if (resetError) setError(resetError.message);
-    else setSuccess("Password reset instructions have been sent to your email.");
+    setResetLoading(false);
+    if (resetError) {
+      setError(resetError.message);
+      setResetOpen(false);
+      return;
+    }
+    setResetSent(true);
+    setToast("We've sent a password reset link to your email.");
   };
 
   return (
-    <div className="auth-page">
+    <main className="auth-page">
       <style dangerouslySetInnerHTML={{ __html: css }} />
-
-      <div className="auth-left">
-        <div className="auth-left-content">
-          <div className="auth-logo">EXAM<span>.</span>TIET</div>
-          <div className="auth-institution">Thapar Institute · Examination Portal</div>
-          <div className="auth-left-headline">Online Examination Platform</div>
-          <div className="auth-left-sub">
-            Secure, proctored, and fully automated examinations for 50,000+ students across all departments.
+      <section className="auth-shell" aria-label="WebAssess authentication">
+        <aside className="auth-hero" aria-label="WebAssess platform overview">
+          <div className="auth-hero-bg" aria-hidden="true" />
+          <div className="hero-top">
+            <div className="brand-mark"><span className="brand-dot" /> TIET Secure Assessment Cloud</div>
           </div>
 
-          <div className="auth-stats">
-            <div>
-              <div className="auth-stat-num">50K+</div>
-              <div className="auth-stat-label">Students</div>
-            </div>
-            <div>
-              <div className="auth-stat-num">120+</div>
-              <div className="auth-stat-label">Courses</div>
-            </div>
-            <div>
-              <div className="auth-stat-num">99.9%</div>
-              <div className="auth-stat-label">Uptime</div>
+          <div className="hero-main">
+            <div className="eyebrow">AI Powered Online Examination Platform</div>
+            <h1 className="hero-title">WebAssess</h1>
+            <p className="hero-copy">Secure. Smart. Seamless online assessments for Thapar Institute of Engineering & Technology.</p>
+            <div className="feature-cloud" aria-label="Platform capabilities">
+              {["AI Proctoring", "Secure Browser", "Live Monitoring", "Instant Results"].map((feature) => (
+                <span className="feature-chip" key={feature}><CheckIcon /> {feature}</span>
+              ))}
             </div>
           </div>
 
-          <div className="auth-features">
-            <div className="auth-feature">
-              <div className="auth-feature-icon"><i className="ti ti-shield-check"></i></div>
-              <div className="auth-feature-text">AI-powered proctoring with face verification and browser monitoring</div>
+          <div className="hero-bottom">
+            <div className="logo-strip" aria-label="TIET and TSLAS logos">
+              <img src="/auth-assets/tiet-logo.png" alt="Thapar Institute of Engineering and Technology" />
+              <img src="/auth-assets/tslas-logo.png" alt="Thapar School of Liberal Arts and Sciences" />
             </div>
-            <div className="auth-feature">
-              <div className="auth-feature-icon"><i className="ti ti-bolt"></i></div>
-              <div className="auth-feature-text">Real-time auto-save and instant result computation</div>
-            </div>
-            <div className="auth-feature">
-              <div className="auth-feature-icon"><i className="ti ti-chart-bar"></i></div>
-              <div className="auth-feature-text">Detailed analytics, grade distribution and performance insights</div>
-            </div>
-            <div className="auth-feature">
-              <div className="auth-feature-icon"><i className="ti ti-lock"></i></div>
-              <div className="auth-feature-text">Encrypted, tamper-proof submissions with full audit trail</div>
-            </div>
+            <p className="security-note">Encrypted sessions, role-aware access, and assessment workflows designed for university scale.</p>
           </div>
-        </div>
-        <div className="auth-left-footer">© 2026 Thapar Institute of Engineering & Technology · All Rights Reserved</div>
-      </div>
+        </aside>
 
-      <div className="auth-right">
-        <div className="auth-form-box">
-          <div className="auth-form-title">{mode === "login" ? "Welcome back" : "Create student account"}</div>
-          <div className="auth-form-sub">
-            {mode === "login"
-              ? "Sign in as Admin, Faculty, Student, Proctor or Candidate"
-              : "Student self-registration only. Faculty accounts are created by Admin."}
-          </div>
-
-          <div className="auth-tabs">
-            <button type="button" className={`auth-tab ${mode === "login" ? "active" : ""}`} onClick={() => switchMode("login")}>
-              Sign In
-            </button>
-            <button type="button" className={`auth-tab ${mode === "signup" ? "active" : ""}`} onClick={() => switchMode("signup")}>
-              Student Signup
-            </button>
-          </div>
-
-          {mode === "login" && (
-            <div className="auth-role-note">
-              <i className="ti ti-school"></i>
-              <div>
-                <strong>Faculty login is supported</strong>
-                Use the credentials created manually by Admin or sent after faculty CSV import.
-              </div>
-            </div>
-          )}
-
-          {invitationBanner && (
-            <div className="success-banner">
-              <i className="ti ti-mail"></i> {invitationBanner}
-            </div>
-          )}
-          {error && (
-            <div className="error-banner">
-              <i className="ti ti-alert-circle"></i> {error}
-            </div>
-          )}
-          {success && (
-            <div className="success-banner">
-              <i className="ti ti-circle-check"></i> {success}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit}>
-            {mode === "signup" && (
-              <div className="form-group">
-                <label className="form-label">Full Name</label>
-                <input
-                  className="form-control"
-                  type="text"
-                  placeholder="Your full name"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                />
-              </div>
-            )}
-
-            <div className="form-group">
-              <label className="form-label">University Email</label>
-              <input
-                className="form-control"
-                type="email"
-                placeholder="rollno@thapar.edu"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+        <section className="auth-panel">
+          <div className="auth-card">
+            <div className="card-head">
+              <div className="card-kicker">Secure Assessment Platform for TIET</div>
+              <h2 className="card-title">{mode === "login" ? "Welcome back" : "Create your account"}</h2>
+              <p className="card-subtitle">
+                {mode === "login" ? "Sign in to continue to your WebAssess dashboard." : "Use your university identity to request WebAssess access."}
+              </p>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <div className="form-control-wrap">
-                <input
-                  className="form-control"
-                  type={showPwd ? "text" : "password"}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                />
-                <button type="button" aria-label={showPwd ? "Hide password" : "Show password"} onClick={() => setShowPwd((s) => !s)} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: 0, background: "transparent", color: "var(--c-gray-400)" }}>
-                  <i className={`ti ${showPwd ? "ti-eye-off" : "ti-eye"}`}></i>
+            <div className={`tabs ${mode}`} role="tablist" aria-label="Authentication mode">
+              <button type="button" role="tab" aria-selected={mode === "login"} className={`tab ${mode === "login" ? "active" : ""}`} onClick={() => switchMode("login")}>Login</button>
+              <button type="button" role="tab" aria-selected={mode === "signup"} className={`tab ${mode === "signup" ? "active" : ""}`} onClick={() => switchMode("signup")}>Sign Up</button>
+            </div>
+
+            {invitationBanner && <div className="banner success" role="status"><CheckIcon /> {invitationBanner}</div>}
+            {error && <div className="banner error" role="alert">{error}</div>}
+            {success && <div className="banner success" role="status"><CheckIcon /> {success}</div>}
+
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="field-grid">
+                {mode === "signup" && (
+                  <div className="field">
+                    <label className="label" htmlFor="fullName">Full Name</label>
+                    <input id="fullName" className="input" type="text" placeholder="Aarav Sharma" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoComplete="name" />
+                  </div>
+                )}
+
+                <div className="field">
+                  <label className="label" htmlFor="email">{mode === "login" ? "Email" : "University Email"}</label>
+                  <input id="email" className={`input ${fieldErrors.email ? "error" : ""}`} type="email" placeholder="name@thapar.edu" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" aria-invalid={Boolean(fieldErrors.email)} />
+                  {fieldErrors.email && <div className="helper-error">{fieldErrors.email}</div>}
+                </div>
+
+                {mode === "signup" && (
+                  <div className="field-row">
+                    <div className="field">
+                      <label className="label" htmlFor="rollNumber">Roll Number</label>
+                      <input id="rollNumber" className={`input ${fieldErrors.rollNumber ? "error" : ""}`} type="text" placeholder="1022XXXX" value={rollNumber} onChange={(e) => setRollNumber(e.target.value)} required autoComplete="off" aria-invalid={Boolean(fieldErrors.rollNumber)} />
+                      {fieldErrors.rollNumber && <div className="helper-error">{fieldErrors.rollNumber}</div>}
+                    </div>
+                    <div className="field">
+                      <label className="label" htmlFor="role">Role</label>
+                      <select id="role" className="select" value={role} onChange={(e) => setRole(e.target.value as SignupRole)}>
+                        <option value="student">Student</option>
+                        <option value="faculty">Faculty</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                <div className="field">
+                  <label className="label" htmlFor="password">Password</label>
+                  <div className="input-wrap">
+                    <input id="password" className={`input has-action ${fieldErrors.password ? "error" : ""}`} type={showPwd ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={mode === "signup" ? 8 : 6} autoComplete={mode === "login" ? "current-password" : "new-password"} aria-invalid={Boolean(fieldErrors.password)} />
+                    <button className="icon-button" type="button" aria-label={showPwd ? "Hide password" : "Show password"} onClick={() => setShowPwd((shown) => !shown)}><EyeIcon off={showPwd} /></button>
+                  </div>
+                  {fieldErrors.password && <div className="helper-error">{fieldErrors.password}</div>}
+                </div>
+
+                {mode === "signup" && (
+                  <>
+                    <div className="field">
+                      <label className="label" htmlFor="confirmPassword">Confirm Password</label>
+                      <input id="confirmPassword" className={`input ${fieldErrors.confirmPassword ? "error" : ""}`} type={showPwd ? "text" : "password"} placeholder="Re-enter your password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" aria-invalid={Boolean(fieldErrors.confirmPassword)} />
+                      {fieldErrors.confirmPassword && <div className="helper-error">{fieldErrors.confirmPassword}</div>}
+                    </div>
+                    <div className="strength" aria-label="Password strength">
+                      <div className="strength-bars">{[1, 2, 3, 4].map((bar) => <span key={bar} className={passwordScore >= bar ? "on" : ""} />)}</div>
+                      <div className="strength-text">{password ? ["Very weak", "Getting there", "Good", "Strong"][Math.max(passwordScore - 1, 0)] : "Use 8+ characters with a number and symbol."}</div>
+                    </div>
+                  </>
+                )}
+
+                {mode === "login" ? (
+                  <div className="form-options">
+                    <label className="check"><input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} /> Remember me</label>
+                    <button className="link-button" type="button" onClick={() => { setResetEmail(email); setResetSent(false); setResetOpen(true); }}>Forgot Password?</button>
+                  </div>
+                ) : (
+                  <label className="check"><input type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} required /> I agree to Terms</label>
+                )}
+
+                <button className="primary-btn" type="submit" disabled={loading}>
+                  {loading ? <SpinnerIcon /> : null}
+                  {loading ? "Please wait..." : mode === "login" ? "Login" : "Create Account"}
                 </button>
               </div>
-            </div>
-
-            {mode === "signup" && (
-              <div className="form-group">
-                <label className="form-label">Confirm Password</label>
-                <input
-                  className="form-control"
-                  type={showPwd ? "text" : "password"}
-                  placeholder="Re-enter your password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  minLength={6}
-                />
-              </div>
-            )}
+            </form>
 
             {mode === "login" && (
-              <div className="form-row-2">
-                <button type="button" className="forgot-link" onClick={sendPasswordReset} disabled={loading}>Forgot password?</button>
-              </div>
+              <>
+                <div className="divider">or</div>
+                <button className="ghost-btn" type="button" disabled>Continue with Google</button>
+              </>
             )}
 
-            <button className="btn-login" type="submit" disabled={loading}>
-              <i className={`ti ${mode === "login" ? "ti-login" : "ti-user-plus"}`}></i>
-              {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
-            </button>
-          </form>
-
-          <div className="auth-signup-row">
-            {mode === "login" ? (
-              <>Student without an account? <button onClick={() => switchMode("signup")}>Create student account</button></>
-            ) : (
-              <>Already have an account? <button onClick={() => switchMode("login")}>Sign in</button></>
-            )}
+            <div className="card-foot">
+              {mode === "login" ? <>New to WebAssess? <button className="link-button" type="button" onClick={() => switchMode("signup")}>Create account</button></> : <>Already registered? <button className="link-button" type="button" onClick={() => switchMode("login")}>Login</button></>}
+            </div>
           </div>
+        </section>
+      </section>
+
+      {resetOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.currentTarget === event.target && setResetOpen(false)}>
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+            <div className="modal-top">
+              <div>
+                <div className="modal-icon"><MailIcon /></div>
+                <h2 id="reset-title">Forgot Password?</h2>
+                <p>{resetSent ? "We've sent a password reset link to your email." : "Enter your university email and we'll send a secure reset link."}</p>
+              </div>
+              <button className="close-btn" type="button" aria-label="Close forgot password modal" onClick={() => setResetOpen(false)}><CloseIcon /></button>
+            </div>
+
+            {!resetSent ? (
+              <form className="field-grid" onSubmit={handleReset}>
+                <div className="field">
+                  <label className="label" htmlFor="resetEmail">Email</label>
+                  <input id="resetEmail" className="input" type="email" placeholder="name@thapar.edu" value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} required autoFocus />
+                </div>
+                <button className="primary-btn" type="submit" disabled={resetLoading}>{resetLoading ? <SpinnerIcon /> : null}{resetLoading ? "Sending..." : "Send Reset Link"}</button>
+              </form>
+            ) : (
+              <button className="primary-btn" type="button" onClick={() => setResetOpen(false)}>Done</button>
+            )}
+          </section>
         </div>
-      </div>
-    </div>
+      )}
+
+      {toast && <div className="toast" role="status">{toast}</div>}
+    </main>
   );
 }
