@@ -139,6 +139,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
+  const [showConfirmPwd, setShowConfirmPwd] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [terms, setTerms] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -313,7 +314,7 @@ export default function Login() {
           </div>
 
           <div className="hero-main">
-            <div className="eyebrow">AI Powered Online Examination Platform</div>
+            <div className="eyebrow">Online Examination Platform</div>
             <h1 className="hero-title">WebAssess</h1>
             <p className="hero-copy">Secure. Smart. Seamless online assessments for Thapar Institute of Engineering & Technology.</p>
           </div>
@@ -347,7 +348,7 @@ export default function Login() {
                 {mode === "signup" && (
                   <div className="field">
                     <label className="label" htmlFor="fullName">Full Name</label>
-                    <input id="fullName" className="input" type="text" placeholder="Aarav Sharma" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoComplete="name" />
+                    <input id="fullName" className="input" type="text" placeholder="Name" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoComplete="name" />
                   </div>
                 )}
 
@@ -387,7 +388,10 @@ export default function Login() {
                   <>
                     <div className="field">
                       <label className="label" htmlFor="confirmPassword">Confirm Password</label>
-                      <input id="confirmPassword" className={`input ${fieldErrors.confirmPassword ? "error" : ""}`} type={showPwd ? "text" : "password"} placeholder="Re-enter your password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" aria-invalid={Boolean(fieldErrors.confirmPassword)} />
+                      <div className="input-wrap">
+                        <input id="confirmPassword" className={`input has-action ${fieldErrors.confirmPassword ? "error" : ""}`} type={showConfirmPwd ? "text" : "password"} placeholder="Re-enter your password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" aria-invalid={Boolean(fieldErrors.confirmPassword)} />
+                        <button className="icon-button" type="button" aria-label={showConfirmPwd ? "Hide confirm password" : "Show confirm password"} onClick={() => setShowConfirmPwd((shown) => !shown)}><EyeIcon off={showConfirmPwd} /></button>
+                      </div>
                       {fieldErrors.confirmPassword && <div className="helper-error">{fieldErrors.confirmPassword}</div>}
                     </div>
                     <div className="strength" aria-label="Password strength">
