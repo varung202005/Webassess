@@ -1,19 +1,12 @@
 /**
- * LiveExam.tsx — patched
+ * LiveExam.tsx — with question image support
  *
  * Changes vs previous version:
- *   • Force-submit now explicitly flushes browser counts to
- *     browser_activity_logs BEFORE calling computeProctoringsSummary,
- *     so tab_switch_count / fullscreen_exit_count are never 0 in the
- *     summary row. Previously the summary was computed before BrowserMonitor's
- *     async syncToBackend() had a chance to POST, leaving proctoring_summary
- *     with integrity_score=0.98 and flagged_for_review=false even after a
- *     tab-switch-limit breach.
- *   • navigator.sendBeacon fallback added to the force-submit flush so the
- *     browser log POST survives even if the page is already unloading.
- *   • max_fullscreen_exits added to ExamRule interface and getRule().
- *   • fullscreenCountRef added to track exits across the session.
- *   • handleViolation "fullscreen" branch updated to enforce the limit.
+ *   • ExamQuestion type now includes image_url on the nested questions object.
+ *   • QuestionImage component renders the image between the question stem and
+ *     the answer options — fullscreen-safe, zoom-on-click, anti-screenshot
+ *     watermark inherits from the parent overlay.
+ *   • All proctoring, force-submit, and browser-monitor logic is unchanged.
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -75,13 +68,7 @@ function getRule(session: any): ExamRule {
   };
 }
 
-// ── Beacon flush — survives page unload ───────────────────────────────────────
-//
-// Called right before force-submit so browser counts are guaranteed to reach
-// the backend even if the page is already tearing down. navigator.sendBeacon
-// is fire-and-forget and survives navigation/unload where fetch() does not.
-// Falls back to a normal fetch if Beacon isn't available (e.g. some older
-// mobile browsers).
+// ── Beacon flush ───────────────────────────────────────────────────────────────
 
 function flushBrowserCountsBeacon(
   attemptId: string,
@@ -96,10 +83,8 @@ function flushBrowserCountsBeacon(
     session_conflict_detected: sessionConflict,
   });
 
-  // Get token from wherever your authStore persists it
   const token = (() => {
     try {
-      // Supabase stores session in localStorage under this key
       const raw = localStorage.getItem("sb-clagdndeswnnacybvilh-auth-token");
       if (raw) return JSON.parse(raw)?.access_token ?? "";
     } catch { /* ignore */ }
@@ -117,6 +102,162 @@ function flushBrowserCountsBeacon(
     body,
     keepalive: true,
   }).catch(() => undefined);
+}
+
+// ── NEW: QuestionImage ─────────────────────────────────────────────────────────
+//
+// Renders the image attached to a question between the stem and the options.
+// Clicking the image opens a lightbox overlay for a better look — useful for
+// diagrams, circuit schematics, graphs, etc.
+//
+// Anti-screenshot note: the parent `.live-exam` already has a semi-transparent
+// watermark overlay (`.exam-watermark`) that sits above all content at z-index
+// lower than the lightbox. The lightbox also carries the watermark so the
+// student's email is always visible over the zoomed image.
+
+interface QuestionImageProps {
+  src: string;
+  studentEmail: string;
+}
+
+function QuestionImage({ src, studentEmail }: QuestionImageProps) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [imgError,     setImgError]     = useState(false);
+
+  // Close lightbox on Escape
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setLightboxOpen(false); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [lightboxOpen]);
+
+  if (imgError) return null;   // silently hide broken images
+
+  return (
+    <>
+      {/* ── Inline image ── */}
+      <div
+        className="question-image-wrap"
+        style={{
+          margin: "18px 0 22px",
+          borderRadius: 12,
+          overflow: "hidden",
+          border: "1.5px solid #e5e7eb",
+          background: "#f9fafb",
+          display: "inline-block",
+          maxWidth: "100%",
+          cursor: "zoom-in",
+          position: "relative",
+        }}
+        onClick={() => setLightboxOpen(true)}
+        title="Click to enlarge"
+      >
+        <img
+          src={src}
+          alt="Question illustration"
+          onError={() => setImgError(true)}
+          style={{
+            display: "block",
+            maxWidth: "100%",
+            maxHeight: 340,
+            objectFit: "contain",
+            userSelect: "none",
+            // Discourage casual right-click saving (not a hard block).
+            // WebkitUserDrag isn't declared in React's CSSProperties type,
+            // so the *entire* literal is typed against an intersection that
+            // adds it — this is what avoids the excess-property-check error
+            // (casting just the value, e.g. `"none" as any`, does NOT work
+            // because TS still validates the key against CSSProperties).
+            WebkitUserDrag: "none",
+          } as React.CSSProperties & { WebkitUserDrag?: string }}
+          onContextMenu={(e) => e.preventDefault()}
+          draggable={false}
+        />
+        {/* Zoom hint badge */}
+        <div style={{
+          position: "absolute", bottom: 8, right: 8,
+          background: "rgba(0,0,0,0.45)", color: "#fff",
+          borderRadius: 6, padding: "3px 8px", fontSize: 11,
+          display: "flex", alignItems: "center", gap: 4,
+          pointerEvents: "none",
+        }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/>
+          </svg>
+          Click to zoom
+        </div>
+      </div>
+
+      {/* ── Lightbox ── */}
+      {lightboxOpen && (
+        <div
+          onClick={() => setLightboxOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 2000,
+            background: "rgba(0,0,0,0.88)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "zoom-out",
+          }}
+        >
+          {/* Watermark inside lightbox so it overlays the enlarged image too */}
+          <div
+            className="exam-watermark"
+            aria-hidden="true"
+            style={{ zIndex: 2001 }}
+          >
+            {Array.from({ length: 150 }).map((_, i) => (
+              <span key={i}>{studentEmail}</span>
+            ))}
+          </div>
+
+          <img
+            src={src}
+            alt="Question illustration — enlarged"
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+            draggable={false}
+            style={{
+              maxWidth: "92vw",
+              maxHeight: "88vh",
+              objectFit: "contain",
+              borderRadius: 10,
+              boxShadow: "0 8px 60px rgba(0,0,0,0.6)",
+              position: "relative",
+              zIndex: 2002,
+              userSelect: "none",
+            }}
+          />
+
+          {/* Close button */}
+          <button
+            onClick={() => setLightboxOpen(false)}
+            style={{
+              position: "fixed", top: 18, right: 22,
+              background: "rgba(255,255,255,0.15)",
+              border: "none", borderRadius: "50%",
+              width: 38, height: 38,
+              color: "#fff", fontSize: 20,
+              cursor: "pointer", zIndex: 2003,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+            title="Close (Esc)"
+          >
+            ✕
+          </button>
+
+          {/* Keyboard hint */}
+          <div style={{
+            position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)",
+            color: "rgba(255,255,255,0.5)", fontSize: 12, zIndex: 2003,
+            pointerEvents: "none",
+          }}>
+            Press Esc or click outside to close
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -150,7 +291,6 @@ export default function LiveExam() {
   const [isFullscreen,  setIsFullscreen]  = useState(() => Boolean(document.fullscreenElement));
   const [isOnline,      setIsOnline]      = useState(navigator.onLine);
 
-  // Violation state
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
   const [tabCount,        setTabCount]        = useState(0);
   const [fsCount,         setFsCount]         = useState(0);
@@ -293,16 +433,6 @@ export default function LiveExam() {
   }, [session, flushAnswers]);
 
   // ── Force-submit helper ───────────────────────────────────────────────────────
-  //
-  // THE FIX: before computing the proctoring summary we explicitly POST the
-  // current browser counts so browser_activity_logs has a row. Previously
-  // we relied on BrowserMonitor's own async sync which raced against this
-  // 4-second timeout and often lost — leaving tab_switch_count=0 in the
-  // summary and flagged_for_review=false even after a limit breach.
-  //
-  // We use flushBrowserCountsBeacon() (sendBeacon / keepalive fetch) so the
-  // POST survives even if the page starts tearing down during the 4s wait.
-
   const triggerForceSubmit = useCallback((
     reason: string,
     finalTabCount: number,
@@ -315,19 +445,9 @@ export default function LiveExam() {
     const attemptId = session?.attempt.id ?? "";
 
     setTimeout(async () => {
-      // 1. Flush browser counts first — this is what was missing.
-      //    We do it here with the exact counts we know right now, not
-      //    whatever BrowserMonitor may or may not have sent already.
       await flushBrowserCountsBeacon(attemptId, finalTabCount, finalFsCount, sessionConflict);
-
-      // 2. Small pause so the beacon/fetch lands before the summary read.
       await new Promise((r) => setTimeout(r, 600));
-
-      // 3. Now compute summary — browser_activity_logs row exists, so
-      //    tab_switch_count and flagged_for_review will be correct.
       await studentApi.computeProctoringsSummary(attemptId).catch(() => undefined);
-
-      // 4. Submit the exam.
       void submit("AUTO");
     }, 4000);
   }, [session?.attempt.id, submit]);
@@ -350,7 +470,6 @@ export default function LiveExam() {
 
       if (max > 0 && newCount >= max) {
         const reason = `You switched tabs or lost focus ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
-        // Pass the exact counts we know right now so the beacon flush is accurate
         triggerForceSubmit(reason, newCount, fullscreenCountRef.current);
         return;
       }
@@ -417,8 +536,6 @@ export default function LiveExam() {
   }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, triggerForceSubmit]);
 
   const handleConflict = useCallback(() => {
-    // Session conflict: pass current counts + conflict=true so the beacon
-    // also sets session_conflict_detected on the browser log row.
     triggerForceSubmit(
       "🚨 Another tab with this exam was detected. This is a violation. Your exam is being submitted automatically.",
       tabCountRef.current,
@@ -427,7 +544,6 @@ export default function LiveExam() {
     );
   }, [triggerForceSubmit]);
 
-  // ── Heartbeat Failure ────────────────────────────────────────────────────────
   const handleHeartbeatFailure = useCallback(() => {
     triggerForceSubmit(
       "Proctoring telemetry has been blocked or dropped consecutively. This is a violation. Your exam is being submitted automatically.",
@@ -729,8 +845,20 @@ export default function LiveExam() {
                 <b>{question.question_type.replace("_", " ")}</b>
               </div>
             </div>
+
+            {/* Question stem */}
             <h1>{obfuscateText(question.question_text)}</h1>
+
+            {/* ── NEW: question image rendered between stem and options ── */}
+            {question.image_url && (
+              <QuestionImage
+                src={question.image_url}
+                studentEmail={currentUser?.email ?? ""}
+              />
+            )}
+
             <AnswerInput question={row} answer={currentAnswer} onChange={changeAnswer} />
+
             <div className="question-tools">
               <button
                 className={currentAnswer.is_marked_for_review ? "flagged" : ""}
@@ -779,6 +907,15 @@ export default function LiveExam() {
               return (
                 <button className={cls} key={item.questions.id} onClick={() => goTo(qi)}>
                   {qi + 1}
+                  {/* ── Image indicator dot on palette button ── */}
+                  {item.questions.image_url && (
+                    <span style={{
+                      position: "absolute", top: 2, right: 2,
+                      width: 6, height: 6, borderRadius: "50%",
+                      background: "#0369a1",
+                      display: "block",
+                    }} title="Has image" />
+                  )}
                 </button>
               );
             })}
