@@ -46,13 +46,13 @@ button,input,select{font:inherit}
 .field-row{display:flex;flex-direction:column;gap:14px;min-width:0}
 .label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .input-wrap{position:relative;min-width:0}
-.input,.select{display:block;width:100%;min-width:0;height:44px;border:1.5px solid rgba(179,18,52,.22);border-radius:999px;background:#fff;padding:0 18px;color:#7a0d24;outline:0;font-size:14px;font-weight:700;line-height:42px;box-shadow:0 1px 0 rgba(255,255,255,.95) inset,0 10px 26px rgba(179,18,52,.07);transition:border-color .18s ease,box-shadow .18s ease,background .18s ease,transform .18s ease}
+.input,.select{display:block;width:100%;min-width:0;height:44px;border:1.5px solid rgba(179,18,52,.28);border-radius:999px;background:#fff;padding:0 18px;color:#7a0d24;outline:0;font-size:14px;font-weight:700;line-height:42px;box-shadow:none;transition:border-color .18s ease,background .18s ease}
 .input::placeholder{color:rgba(122,13,36,.52)}
 .select{appearance:none;background-color:#fff;background-image:linear-gradient(45deg,transparent 50%,#b31234 50%),linear-gradient(135deg,#b31234 50%,transparent 50%);background-position:calc(100% - 18px) 19px,calc(100% - 12px) 19px;background-size:6px 6px,6px 6px;background-repeat:no-repeat}
 .select option{color:#101828;background:#fff}
 .input.has-action{padding-right:46px}
-.input:focus,.select:focus{border-color:#b31234;background:#fff;box-shadow:0 0 0 4px rgba(179,18,52,.1),0 16px 34px rgba(179,18,52,.12);transform:translateY(-1px)}
-.input.error{border-color:#b31234;box-shadow:0 0 0 4px rgba(179,18,52,.12)}
+.input:focus,.select:focus{border-color:#b31234;background:#fff}
+.input.error{border-color:#b31234}
 .icon-button{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border:0;border-radius:999px;background:#fff;color:#b31234;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
 .icon-button:hover{background:#fef4f6;color:#7a0d24}
 .helper-error{font-size:11px;color:#be123c;margin-top:0}
