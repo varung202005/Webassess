@@ -21,60 +21,53 @@ button,input,select{font:inherit}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:18px;color:#245481;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .hero-title{font-size:clamp(52px,6.4vw,86px);line-height:.92;letter-spacing:0;font-weight:850;color:#151927;margin:0 0 22px;max-width:100%;overflow-wrap:break-word}
 .hero-copy{max-width:590px;font-size:clamp(17px,1.7vw,22px);line-height:1.5;color:#344054;margin:0 0 28px}
-.feature-cloud{display:flex;flex-wrap:wrap;gap:10px;max-width:560px}
-.feature-chip{display:inline-flex;align-items:center;gap:8px;padding:10px 13px;border:1px solid rgba(255,255,255,.78);border-radius:999px;background:rgba(255,255,255,.62);backdrop-filter:blur(18px);box-shadow:0 12px 30px rgba(16,24,40,.08);font-size:13px;font-weight:750;color:#182230}
-.feature-chip svg{width:16px;height:16px;color:#0d6b4d}
 .hero-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
 .logo-strip{display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid rgba(255,255,255,.72);border-radius:22px;background:rgba(255,255,255,.62);backdrop-filter:blur(20px);box-shadow:0 12px 34px rgba(16,24,40,.08)}
 .logo-strip img{display:block;max-height:38px;width:auto;object-fit:contain;filter:saturate(.96)}
 .logo-strip img:nth-child(2){max-height:52px}
 .security-note{max-width:230px;color:#475467;font-size:13px;line-height:1.5;text-align:right}
-.auth-panel{display:flex;align-items:center;justify-content:center;padding:28px clamp(22px,4vw,58px)}
-.auth-card{width:100%;max-width:472px;border:1px solid rgba(255,255,255,.72);border-radius:24px;background:rgba(255,255,255,.78);backdrop-filter:blur(28px);box-shadow:0 24px 80px rgba(16,24,40,.16),0 1px 0 rgba(255,255,255,.9) inset;padding:30px;animation:cardIn .36s cubic-bezier(.2,.9,.2,1) both}
-.card-head{margin-bottom:22px}
-.card-kicker{color:#b31234;font-weight:800;font-size:12px;letter-spacing:.09em;text-transform:uppercase;margin-bottom:9px}
-.card-title{font-size:30px;line-height:1.1;letter-spacing:0;font-weight:820;color:#101828;margin:0 0 8px}
-.card-subtitle{font-size:14px;line-height:1.55;color:#667085;margin:0}
-.tabs{position:relative;display:grid;grid-template-columns:1fr 1fr;margin:0 0 24px;padding:4px;border-radius:999px;background:#f1f4f8;border:1px solid #e7ebf0}
+.auth-panel{display:flex;align-items:center;justify-content:center;padding:22px clamp(18px,3vw,42px);min-width:0}
+.auth-card{width:100%;max-width:440px;max-height:calc(100vh - 44px);overflow:auto;border:1px solid rgba(226,232,240,.9);border-radius:22px;background:rgba(255,255,255,.92);backdrop-filter:blur(24px);box-shadow:0 22px 70px rgba(16,24,40,.14),0 1px 0 rgba(255,255,255,.9) inset;padding:24px;animation:cardIn .36s cubic-bezier(.2,.9,.2,1) both}
+.card-head{margin-bottom:18px}
+.card-kicker{color:#b31234;font-weight:800;font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+.card-title{font-size:clamp(24px,2.8vw,30px);line-height:1.12;letter-spacing:0;font-weight:820;color:#101828;margin:0 0 7px}
+.card-subtitle{font-size:13px;line-height:1.45;color:#667085;margin:0}
+.tabs{position:relative;display:grid;grid-template-columns:1fr 1fr;margin:0 0 18px;padding:4px;border-radius:14px;background:#f1f4f8;border:1px solid #e7ebf0}
 .tabs::before{content:"";position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);border-radius:999px;background:#fff;box-shadow:0 8px 20px rgba(16,24,40,.08);transition:transform .22s ease}
 .tabs.signup::before{transform:translateX(100%)}
-.tab{position:relative;z-index:1;border:0;background:transparent;border-radius:999px;padding:10px 12px;color:#667085;font-weight:800;font-size:14px;transition:color .18s ease}
+.tab{position:relative;z-index:1;border:0;background:transparent;border-radius:11px;padding:8px 12px;color:#667085;font-weight:800;font-size:13px;transition:color .18s ease}
 .tab.active{color:#101828}
 .banner{display:flex;gap:9px;align-items:flex-start;margin-bottom:16px;border-radius:16px;padding:12px 13px;font-size:13px;line-height:1.45;border:1px solid}
 .banner.error{background:#fff1f2;color:#9f1239;border-color:#fecdd3}
 .banner.success{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
-.field-grid{display:grid;gap:15px}
-.field{display:grid;gap:7px}
-.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.label{font-size:13px;font-weight:760;color:#344054}
-.input-wrap{position:relative}
-.input,.select{width:100%;height:48px;border:1px solid #d9dee8;border-radius:15px;background:rgba(255,255,255,.82);padding:0 14px;color:#101828;outline:0;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
+.field-grid{display:flex;flex-direction:column;gap:13px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field-row{display:flex;flex-direction:column;gap:13px;min-width:0}
+.label{display:block;font-size:12px;line-height:1.2;font-weight:760;color:#344054}
+.input-wrap{position:relative;min-width:0}
+.input,.select{display:block;width:100%;min-width:0;height:42px;border:1px solid #d9dee8;border-radius:12px;background:rgba(255,255,255,.9);padding:0 12px;color:#101828;outline:0;font-size:14px;line-height:42px;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
 .select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#667085 50%),linear-gradient(135deg,#667085 50%,transparent 50%);background-position:calc(100% - 18px) 20px,calc(100% - 12px) 20px;background-size:6px 6px,6px 6px;background-repeat:no-repeat}
 .input.has-action{padding-right:46px}
 .input:focus,.select:focus{border-color:#b31234;background:#fff;box-shadow:0 0 0 4px rgba(179,18,52,.1)}
 .input.error{border-color:#f43f5e}
 .icon-button{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:11px;background:transparent;color:#667085;display:grid;place-items:center;transition:background .18s ease,color .18s ease}
 .icon-button:hover{background:#f2f4f7;color:#101828}
-.helper-error{font-size:12px;color:#be123c;margin-top:-1px}
-.form-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 2px}
+.helper-error{font-size:11px;color:#be123c;margin-top:0}
+.form-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0}
 .check{display:inline-flex;align-items:center;gap:8px;color:#475467;font-size:13px;font-weight:650}
 .check input{width:16px;height:16px;accent-color:#b31234}
 .link-button{border:0;background:transparent;color:#9d102d;font-weight:800;font-size:13px;padding:0}
 .link-button:hover{text-decoration:underline}
-.strength{display:grid;gap:7px}
+.strength{display:grid;gap:6px}
 .strength-bars{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
 .strength-bars span{height:4px;border-radius:999px;background:#e4e7ec}
 .strength-bars span.on{background:linear-gradient(90deg,#b31234,#d8a63a)}
 .strength-text{font-size:12px;color:#667085}
-.primary-btn,.ghost-btn{height:48px;width:100%;border-radius:15px;font-weight:850;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease}
+.primary-btn,.ghost-btn{height:44px;width:100%;border-radius:13px;font-size:14px;font-weight:850;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease}
 .primary-btn{border:0;background:linear-gradient(135deg,#9d102d,#b31234 58%,#245481);color:#fff;box-shadow:0 16px 34px rgba(179,18,52,.24)}
 .primary-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 20px 42px rgba(179,18,52,.28)}
 .primary-btn:disabled,.ghost-btn:disabled{opacity:.62;cursor:not-allowed}
-.divider{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;color:#98a2b3;font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em;margin:18px 0}
-.divider::before,.divider::after{content:"";height:1px;background:#e4e7ec}
-.ghost-btn{border:1px solid #d9dee8;background:rgba(255,255,255,.65);color:#344054}
-.ghost-btn:hover{background:#fff;border-color:#cbd5e1;transform:translateY(-1px)}
-.card-foot{margin-top:18px;text-align:center;color:#667085;font-size:13px}
+.card-foot{margin-top:14px;text-align:center;color:#667085;font-size:13px}
 .modal-backdrop{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:18px;background:rgba(15,23,42,.36);backdrop-filter:blur(10px);animation:fadeIn .18s ease both}
 .modal{width:min(100%,430px);border-radius:24px;background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.82);box-shadow:0 24px 80px rgba(15,23,42,.22);padding:26px;animation:modalIn .22s ease both}
 .modal-top{display:flex;justify-content:space-between;gap:18px;margin-bottom:16px}
@@ -88,16 +81,11 @@ button,input,select{font:inherit}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes modalIn{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-@media(max-width:1060px){.auth-shell{grid-template-columns:1fr;padding:14px}.auth-hero{min-height:auto;padding:34px;border-radius:28px}.hero-main{padding:56px 0 38px}.auth-panel{padding:24px 0 10px}.auth-card{max-width:620px}.security-note{text-align:left}.hero-bottom{align-items:flex-start}}
-@media(max-width:680px){.auth-shell{padding:0}.auth-hero{border-radius:0;padding:24px;min-height:430px}.hero-title{font-size:54px}.hero-copy{font-size:16px}.hero-bottom{display:grid}.logo-strip{width:100%;justify-content:space-between}.logo-strip img{max-width:44%;height:auto}.auth-panel{padding:18px 14px 28px}.auth-card{padding:22px;border-radius:22px}.field-row{grid-template-columns:1fr}.form-options{align-items:flex-start;flex-direction:column}.card-title{font-size:26px}}
+@media(max-width:1280px){.auth-shell{grid-template-columns:minmax(0,1fr) minmax(380px,.82fr)}.auth-card{padding:22px}.hero-title{font-size:clamp(46px,5.4vw,72px)}}
+@media(max-width:1100px){.auth-shell{grid-template-columns:1fr;padding:14px}.auth-hero{min-height:auto;padding:30px;border-radius:26px}.hero-main{padding:34px 0 24px}.auth-panel{padding:18px 0 10px}.auth-card{max-width:480px;max-height:none}.security-note{text-align:left}.hero-bottom{align-items:flex-start}}
+@media(max-width:680px){.auth-shell{padding:0}.auth-hero{border-radius:0;padding:22px;min-height:350px}.hero-title{font-size:44px}.hero-copy{font-size:15px}.hero-bottom{display:grid}.logo-strip{width:100%;justify-content:space-between}.logo-strip img{max-width:44%;height:auto}.auth-panel{padding:14px 12px 24px}.auth-card{padding:18px;border-radius:20px}.form-options{align-items:flex-start;flex-direction:column}.card-title{font-size:24px}.card-subtitle{font-size:13px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;
-
-const CheckIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
 
 const EyeIcon = ({ off }: { off?: boolean }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -300,11 +288,6 @@ export default function Login() {
             <div className="eyebrow">AI Powered Online Examination Platform</div>
             <h1 className="hero-title">WebAssess</h1>
             <p className="hero-copy">Secure. Smart. Seamless online assessments for Thapar Institute of Engineering & Technology.</p>
-            <div className="feature-cloud" aria-label="Platform capabilities">
-              {["AI Proctoring", "Secure Browser", "Live Monitoring", "Instant Results"].map((feature) => (
-                <span className="feature-chip" key={feature}><CheckIcon /> {feature}</span>
-              ))}
-            </div>
           </div>
 
           <div className="hero-bottom">
@@ -331,9 +314,9 @@ export default function Login() {
               <button type="button" role="tab" aria-selected={mode === "signup"} className={`tab ${mode === "signup" ? "active" : ""}`} onClick={() => switchMode("signup")}>Sign Up</button>
             </div>
 
-            {invitationBanner && <div className="banner success" role="status"><CheckIcon /> {invitationBanner}</div>}
+            {invitationBanner && <div className="banner success" role="status">{invitationBanner}</div>}
             {error && <div className="banner error" role="alert">{error}</div>}
-            {success && <div className="banner success" role="status"><CheckIcon /> {success}</div>}
+            {success && <div className="banner success" role="status">{success}</div>}
 
             <form onSubmit={handleSubmit} noValidate>
               <div className="field-grid">
@@ -405,13 +388,6 @@ export default function Login() {
                 </button>
               </div>
             </form>
-
-            {mode === "login" && (
-              <>
-                <div className="divider">or</div>
-                <button className="ghost-btn" type="button" disabled>Continue with Google</button>
-              </>
-            )}
 
             <div className="card-foot">
               {mode === "login" ? <>New to WebAssess? <button className="link-button" type="button" onClick={() => switchMode("signup")}>Create account</button></> : <>Already registered? <button className="link-button" type="button" onClick={() => switchMode("login")}>Login</button></>}
