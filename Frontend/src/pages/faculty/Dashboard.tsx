@@ -30,7 +30,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
-import { PageState, StatsRow } from "../../features/faculty/components";
+import { PageState, StatsRow, ConfirmDialog } from "../../features/faculty/components";
 import { useFacultyDashboard, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import { formatDate, formatTime, relativeTime, statusBadgeClass, statusLabel } from "../../features/faculty/format";
@@ -146,6 +146,7 @@ function ExamsTable({
   const [showAll, setShowAll] = useState(false);
   const [hiddenIds, setHiddenIdsState] = useState<string[]>(() => getHiddenExamIds());
   const [showHidden, setShowHidden] = useState(false);
+  const [unpublishTarget, setUnpublishTarget] = useState<any | null>(null);
 
   const handlePublish = async (exam: any, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -161,9 +162,14 @@ function ExamsTable({
     }
   };
 
-  const handleUnpublish = async (exam: any, e: React.MouseEvent) => {
+  const requestUnpublish = (exam: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Unpublish "${exam.title}"? Students will no longer be able to see or attempt it.`)) return;
+    setUnpublishTarget(exam);
+  };
+
+  const confirmUnpublish = async () => {
+    const exam = unpublishTarget;
+    if (!exam) return;
     setPublishError(null);
     setPublishing(exam.id);
     try {
@@ -173,6 +179,7 @@ function ExamsTable({
       setPublishError(apiMsg(err));
     } finally {
       setPublishing(null);
+      setUnpublishTarget(null);
     }
   };
 
@@ -299,7 +306,7 @@ function ExamsTable({
                           <button
                             className="btn btn-sm btn-secondary"
                             disabled={isBusy}
-                            onClick={(e) => handleUnpublish(exam, e)}
+                            onClick={(e) => requestUnpublish(exam, e)}
                             title="Unpublish — hide from students, keeps all data intact"
                             style={{ whiteSpace: "nowrap" }}
                           >
@@ -379,6 +386,17 @@ function ExamsTable({
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!unpublishTarget}
+        title={`Unpublish "${unpublishTarget?.title ?? ""}"?`}
+        message="Students will no longer be able to see or attempt it. All existing data, results, and analytics stay fully intact."
+        confirmLabel="Unpublish"
+        tone="danger"
+        loading={!!unpublishTarget && publishing === unpublishTarget.id}
+        onConfirm={confirmUnpublish}
+        onCancel={() => setUnpublishTarget(null)}
+      />
     </>
   );
 }

@@ -187,6 +187,77 @@ export function StatsRow({
   );
 }
 
+/**
+ * Styled confirmation dialog — replaces native `window.confirm()` popups
+ * (which render as an unstyled browser box) with a modal that matches
+ * the rest of the faculty portal UI. Reuses the existing .modal /
+ * .modal-backdrop / .modal-footer classes from faculty.css.
+ */
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  tone = "primary",
+  loading = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "primary" | "danger" | "success";
+  loading?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+
+  const toneMap: Record<string, { icon: string; bg: string; fg: string; btnClass: string }> = {
+    primary: { icon: "ti-info-circle",     bg: "#f0f4ff", fg: "#2152b3", btnClass: "btn btn-primary" },
+    danger:  { icon: "ti-alert-triangle",  bg: "#ffe6ea", fg: "#a30f2e", btnClass: "btn btn-danger"  },
+    success: { icon: "ti-circle-check",    bg: "#def8ee", fg: "#08775b", btnClass: "btn btn-success" },
+  };
+  const t = toneMap[tone];
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={() => !loading && onCancel()}>
+      <div
+        className="modal"
+        style={{ width: "min(420px, 100%)" }}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-body" style={{ textAlign: "center", paddingTop: 28 }}>
+          <div
+            style={{
+              width: 52, height: 52, borderRadius: 16, margin: "0 auto 14px",
+              display: "grid", placeItems: "center", background: t.bg, color: t.fg, fontSize: 24,
+            }}
+          >
+            <i className={`ti ${t.icon}`} />
+          </div>
+          <h2 id="confirm-dialog-title" style={{ fontSize: 16, marginBottom: 8 }}>{title}</h2>
+          <p style={{ fontSize: 13.5, color: "#6b7280", lineHeight: 1.5, margin: 0 }}>{message}</p>
+        </div>
+        <div className="modal-footer" style={{ justifyContent: "center" }}>
+          <button className="btn btn-secondary" onClick={onCancel} disabled={loading}>
+            {cancelLabel}
+          </button>
+          <button className={t.btnClass} onClick={onConfirm} disabled={loading}>
+            {loading ? (<><span className="spinner-sm" /> Please wait…</>) : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function accentColor(color?: string): string {
   const map: Record<string, string> = {
     navy: "#4f55a8",
