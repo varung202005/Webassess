@@ -4,13 +4,18 @@
  * Changes vs original:
  *   • AnswerEditorSidebar added — click any row in the PDF import review
  *     table to open a slide-in sidebar showing all options; select / deselect
- *     correct answers and save.  Works for MCQ (single), MSQ (multi) and
- *     TRUE_FALSE (single).
+ *     correct answers and save.  Works for MCQ (single), MSQ (multi),
+ *     TRUE_FALSE (single), and SHORT_ANSWER (free-text expected answer).
+ *   • SHORT_ANSWER (fill-in-the-blank) question type added throughout:
+ *     question creation form, PDF import review table, answer editor
+ *     sidebar, question repository filters, and auto-generate panel.
  *   • require_fullscreen is ALWAYS TRUE — platform-level, not per-exam.
  *   • max_fullscreen_exits added to rules (default 3; 0 = log-only).
+ *   • PDF import review state lifted to StepQuestions so switching tabs
+ *     mid-review (e.g. to "Select Existing") no longer wipes it.
  */
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, type Dispatch, type SetStateAction, type ChangeEvent, type DragEvent, type MouseEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
@@ -32,12 +37,14 @@ const STEPS = [
 ];
 
 const DRAFT_STORAGE_KEY = "exam_portal_drafts_v1";
+const ALLOWED_IMAGE_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const MAX_IMAGE_MB = 5;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-type QuestionType = "MCQ" | "MSQ" | "TRUE_FALSE";
+type QuestionType = "MCQ" | "MSQ" | "TRUE_FALSE" | "SHORT_ANSWER";
 type Difficulty   = "EASY" | "MEDIUM" | "HARD";
 type ImportStatus = "idle" | "uploading" | "extracting" | "review" | "saving";
 
@@ -51,6 +58,14 @@ interface ExtractedQuestion {
   confidence: number;
   needs_review: boolean;
   approved: boolean;
+  /**
+   * Client-side only — the PDF/DOCX extractor never returns images, so if
+   * faculty want a picture on an imported question they attach it here
+   * during review. Not sent to the extract endpoint; only used locally,
+   * then uploaded via uploadQuestionImage() right after the question row
+   * is created in handleImported().
+   */
+  _imageFile?: File | null;
 }
 
 interface ExamForm {
@@ -167,6 +182,160 @@ const defaultSchedule = (): ScheduleForm => ({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// QuestionImageUploader — reusable image picker + preview widget
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface QuestionImageUploaderProps {
+  /** Existing public URL (e.g. when editing a saved question) */
+  existingUrl?: string | null;
+  /** Called when the user picks a valid file — parent holds the File */
+  onFileSelected: (file: File | null) => void;
+  /** Optional: compact mode for use inside narrow form layouts */
+  compact?: boolean;
+}
+
+function QuestionImageUploader({ existingUrl, onFileSelected, compact }: QuestionImageUploaderProps) {
+  const [preview, setPreview]   = useState<string | null>(existingUrl ?? null);
+  const [dragOver, setDragOver] = useState(false);
+  const [err, setErr]           = useState("");
+  const inputRef                = useRef<HTMLInputElement>(null);
+
+  const validate = (file: File): string => {
+    if (!ALLOWED_IMAGE_MIME.includes(file.type))
+      return "Only JPEG, PNG, GIF, or WebP images are allowed.";
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024)
+      return `Image must be smaller than ${MAX_IMAGE_MB} MB.`;
+    return "";
+  };
+
+  const handleFile = (file: File | null) => {
+    if (!file) { setPreview(null); onFileSelected(null); setErr(""); return; }
+    const msg = validate(file);
+    if (msg) { setErr(msg); return; }
+    setErr("");
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    onFileSelected(file);
+  };
+
+  const onInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    handleFile(e.target.files?.[0] ?? null);
+    e.target.value = "";
+  };
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault(); setDragOver(false);
+    handleFile(e.dataTransfer.files?.[0] ?? null);
+  };
+
+  const remove = (e: MouseEvent) => {
+    e.stopPropagation();
+    setPreview(null);
+    onFileSelected(null);
+    setErr("");
+  };
+
+  return (
+    <div style={{ marginTop: compact ? 0 : 4 }}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        hidden
+        onChange={onInputChange}
+      />
+
+      {preview ? (
+        /* ── Preview state ── */
+        <div style={{
+          position: "relative",
+          display: "inline-block",
+          borderRadius: 10,
+          overflow: "hidden",
+          border: "1.5px solid #e5e7eb",
+          maxWidth: compact ? 180 : 320,
+        }}>
+          <img
+            src={preview}
+            alt="Question image preview"
+            style={{
+              display: "block",
+              maxWidth: compact ? 180 : 320,
+              maxHeight: compact ? 120 : 200,
+              objectFit: "contain",
+              background: "#f9fafb",
+            }}
+          />
+          {/* Replace button */}
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            style={{
+              position: "absolute", bottom: 6, left: 6,
+              background: "rgba(0,0,0,0.55)", color: "#fff",
+              border: "none", borderRadius: 6, padding: "3px 9px",
+              fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <i className="ti ti-replace" /> Replace
+          </button>
+          {/* Remove button */}
+          <button
+            type="button"
+            onClick={remove}
+            style={{
+              position: "absolute", top: 6, right: 6,
+              background: "rgba(220,38,38,0.85)", color: "#fff",
+              border: "none", borderRadius: "50%", width: 24, height: 24,
+              fontSize: 13, cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center",
+            }}
+            title="Remove image"
+          >
+            <i className="ti ti-x" />
+          </button>
+        </div>
+      ) : (
+        /* ── Drop zone state ── */
+        <div
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          style={{
+            border: `1.5px dashed ${dragOver ? "#8b1a1a" : "#d1d5db"}`,
+            borderRadius: 10,
+            padding: compact ? "10px 16px" : "16px 20px",
+            cursor: "pointer",
+            background: dragOver ? "#fff5f5" : "#fafafa",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            transition: "border-color .15s, background .15s",
+          }}
+        >
+          <i className="ti ti-photo-plus" style={{ fontSize: compact ? 18 : 22, color: "#9ca3af", flexShrink: 0 }} />
+          <div>
+            <div style={{ fontSize: compact ? 12 : 13, color: "#374151", fontWeight: 500 }}>
+              {dragOver ? "Drop image here" : "Attach an image (optional)"}
+            </div>
+            <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
+              JPEG · PNG · GIF · WebP · max {MAX_IMAGE_MB} MB
+            </div>
+          </div>
+        </div>
+      )}
+
+      {err && (
+        <div style={{ fontSize: 12, color: "#dc2626", marginTop: 5 }}>
+          <i className="ti ti-alert-circle" style={{ marginRight: 4 }} />{err}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // StatCard + RepositoryOverview
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -198,12 +367,13 @@ function RepositoryOverview({ portal }: {
         <span className="section-sub">Your personal question bank — reuse across exams</span>
       </div>
       <div className="repo-stats-grid">
-        <StatCard label="Total Questions" value={qs?.total         ?? 0} icon="ti-books"        color="#8b1a1a" />
-        <StatCard label="MCQ"             value={byType.MCQ        ?? 0} icon="ti-circle-dot"   color="#2563eb" />
-        <StatCard label="MSQ"             value={byType.MSQ        ?? 0} icon="ti-checkbox"     color="#7c3aed" />
-        <StatCard label="True / False"    value={byType.TRUE_FALSE ?? 0} icon="ti-toggle-left"  color="#059669" />
-        <StatCard label="Active"          value={qs?.active        ?? 0} icon="ti-circle-check" color="#d97706" />
-        <StatCard label="Courses Covered" value={portal?.courses?.length ?? 0} icon="ti-book"  color="#0891b2" />
+        <StatCard label="Total Questions"     value={qs?.total          ?? 0} icon="ti-books"       color="#8b1a1a" />
+        <StatCard label="MCQ"                 value={byType.MCQ         ?? 0} icon="ti-circle-dot"  color="#2563eb" />
+        <StatCard label="MSQ"                 value={byType.MSQ         ?? 0} icon="ti-checkbox"    color="#7c3aed" />
+        <StatCard label="True / False"        value={byType.TRUE_FALSE  ?? 0} icon="ti-toggle-left" color="#059669" />
+        <StatCard label="Fill in the Blank"   value={byType.SHORT_ANSWER ?? 0} icon="ti-forms"       color="#b45309" />
+        <StatCard label="Active"              value={qs?.active         ?? 0} icon="ti-circle-check" color="#d97706" />
+        <StatCard label="Courses Covered"     value={portal?.courses?.length ?? 0} icon="ti-book"  color="#0891b2" />
       </div>
     </div>
   );
@@ -386,7 +556,12 @@ function StepExamInfo({ form, onChange }: {
 function QuestionRow({ q, selected, onToggle }: {
   q: Question; selected: boolean; onToggle: () => void;
 }) {
-  const typeColor: Record<string, string> = { MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669" };
+  const typeColor: Record<string, string> = {
+    MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669", SHORT_ANSWER: "#b45309",
+  };
+  const typeLabel: Record<string, string> = {
+    MCQ: "MCQ", MSQ: "MSQ", TRUE_FALSE: "TRUE_FALSE", SHORT_ANSWER: "FILL-BLANK",
+  };
   const diffColor: Record<string, string> = { EASY: "#059669", MEDIUM: "#d97706", HARD: "#dc2626" };
   return (
     <div className={`q-row ${selected ? "q-row-selected" : ""}`} onClick={onToggle}>
@@ -396,12 +571,37 @@ function QuestionRow({ q, selected, onToggle }: {
       <div className="q-row-body">
         <div className="q-row-text">{q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}</div>
         <div className="q-row-meta">
-          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>{q.question_type}</span>
+          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>
+            {typeLabel[q.question_type] ?? q.question_type}
+          </span>
           <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty] }}>{q.difficulty}</span>
           <span className="q-badge">{q.marks} mark{q.marks !== 1 ? "s" : ""}</span>
           {q.courses && <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>}
+          {q.image_url && (
+            <span
+              className="q-badge"
+              title="This question has an attached image"
+              style={{ background: "#f0f9ff", color: "#0369a1", display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              <i className="ti ti-photo" style={{ fontSize: 11 }} /> Image
+            </span>
+          )}
         </div>
       </div>
+      {q.image_url && (
+        <div style={{ flexShrink: 0, marginLeft: 8 }}>
+          <img
+            src={q.image_url}
+            alt=""
+            style={{
+              width: 52, height: 40,
+              objectFit: "cover",
+              borderRadius: 6,
+              border: "1px solid #e5e7eb",
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -422,8 +622,11 @@ function CreateQuestionForm({ courseId, onSaved }: {
       { option_text: "", is_correct: false, order_index: 3 },
     ],
   });
+  const [shortAnswerText, setShortAnswerText] = useState("");
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
+  const [imgErr, setImgErr] = useState("");
 
   const setType = (qt: QuestionType) => {
     if (qt === "TRUE_FALSE") {
@@ -431,6 +634,8 @@ function CreateQuestionForm({ courseId, onSaved }: {
         { option_text: "True",  is_correct: false, order_index: 0 },
         { option_text: "False", is_correct: false, order_index: 1 },
       ]}));
+    } else if (qt === "SHORT_ANSWER") {
+      setForm((f) => ({ ...f, question_type: qt, options: [] }));
     } else {
       setForm((f) => ({ ...f, question_type: qt, options: f.options.length < 4
         ? [...f.options, ...Array(4 - f.options.length).fill(null).map((_, i) => ({ option_text: "", is_correct: false, order_index: f.options.length + i }))]
@@ -446,17 +651,38 @@ function CreateQuestionForm({ courseId, onSaved }: {
 
   const save = async () => {
     if (!form.question_text.trim()) return setError("Question text is required.");
-    if (!form.options.some((o) => o.is_correct)) return setError("Mark at least one correct answer.");
-    setSaving(true); setError("");
+    if (form.question_type === "SHORT_ANSWER") {
+      if (!shortAnswerText.trim()) return setError("Enter the expected answer.");
+    } else if (!form.options.some((o) => o.is_correct)) {
+      return setError("Mark at least one correct answer.");
+    }
+    setSaving(true); setError(""); setImgErr("");
     try {
+      // Fill-in-the-blank / short-answer questions reuse the existing
+      // options table: the expected answer is stored as a single option
+      // with is_correct=true, rather than requiring a schema change.
+      const optionsPayload = form.question_type === "SHORT_ANSWER"
+        ? [{ option_text: shortAnswerText.trim(), is_correct: true, order_index: 0 }]
+        : form.options.filter((o) => o.option_text.trim());
       const res  = await facultyApi.createQuestion({
         course_id: courseId || null, question_type: form.question_type,
         question_text: form.question_text, marks: form.marks,
         negative_marks: form.negative_marks, difficulty: form.difficulty,
-        options: form.options.filter((o) => o.option_text.trim()), topics: [],
+        options: optionsPayload, topics: [],
       });
+
+      if (pendingImageFile) {
+        try {
+          await facultyApi.uploadQuestionImage(res.question_id, pendingImageFile);
+        } catch (e: any) {
+          // Non-fatal: the question itself is already saved successfully.
+          setImgErr(`Question saved, but image upload failed: ${e?.message ?? "unknown error"}`);
+        }
+      }
+
       const full = await facultyApi.getQuestion(res.question_id);
       onSaved(full);
+      setPendingImageFile(null);
       setForm({ question_type: "MCQ", question_text: "", marks: 1, negative_marks: 0, difficulty: "MEDIUM",
         options: [
           { option_text: "", is_correct: false, order_index: 0 },
@@ -464,6 +690,7 @@ function CreateQuestionForm({ courseId, onSaved }: {
           { option_text: "", is_correct: false, order_index: 2 },
           { option_text: "", is_correct: false, order_index: 3 },
         ]});
+      setShortAnswerText("");
     } catch (e: any) { setError(e?.message ?? "Failed to save question"); }
     finally { setSaving(false); }
   };
@@ -477,6 +704,7 @@ function CreateQuestionForm({ courseId, onSaved }: {
             <option value="MCQ">MCQ (Single correct)</option>
             <option value="MSQ">MSQ (Multiple correct)</option>
             <option value="TRUE_FALSE">True / False</option>
+            <option value="SHORT_ANSWER">Short Answer / Fill in the Blank</option>
           </select>
         </div>
         <div className="form-field">
@@ -495,21 +723,46 @@ function CreateQuestionForm({ courseId, onSaved }: {
         <textarea className="form-textarea" rows={3} placeholder="Enter your question here…"
           value={form.question_text} onChange={(e) => setForm((f) => ({ ...f, question_text: e.target.value }))} />
       </div>
-      <div className="options-grid">
-        <label className="form-label-sm">Answer Options (click circle/checkbox to mark correct)</label>
-        {form.options.map((opt, idx) => (
-          <div key={idx} className={`option-row ${opt.is_correct ? "option-correct" : ""}`}>
-            <button className={`option-marker ${opt.is_correct ? "correct" : ""}`} onClick={() => toggleCorrect(idx)} type="button">
-              {form.question_type === "MSQ"
-                ? <i className={`ti ${opt.is_correct ? "ti-checkbox" : "ti-square"}`} />
-                : <i className={`ti ${opt.is_correct ? "ti-circle-filled" : "ti-circle"}`} />}
-            </button>
-            <input className="form-input option-input" placeholder={`Option ${String.fromCharCode(65 + idx)}`}
-              value={opt.option_text} readOnly={form.question_type === "TRUE_FALSE"}
-              onChange={(e) => setForm((f) => ({ ...f, options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o) }))} />
+
+      <div className="form-field">
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <i className="ti ti-photo" style={{ fontSize: 14, color: "#6b7280" }} />
+          Question Image
+          <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 400 }}>(optional)</span>
+        </label>
+        <QuestionImageUploader onFileSelected={setPendingImageFile} />
+        {imgErr && (
+          <div style={{ fontSize: 12, color: "#d97706", marginTop: 5 }}>
+            <i className="ti ti-alert-triangle" style={{ marginRight: 4 }} />{imgErr}
           </div>
-        ))}
+        )}
       </div>
+
+      {form.question_type === "SHORT_ANSWER" ? (
+        <div className="form-field">
+          <label>Expected Answer *</label>
+          <input className="form-input" placeholder="e.g. Photosynthesis"
+            value={shortAnswerText} onChange={(e) => setShortAnswerText(e.target.value)} />
+          <span className="field-hint">Students' free-text answers will need manual or fuzzy-match grading against this.</span>
+        </div>
+      ) : (
+        <div className="options-grid">
+          <label className="form-label-sm">Answer Options (click circle/checkbox to mark correct)</label>
+          {form.options.map((opt, idx) => (
+            <div key={idx} className={`option-row ${opt.is_correct ? "option-correct" : ""}`}>
+              <button className={`option-marker ${opt.is_correct ? "correct" : ""}`} onClick={() => toggleCorrect(idx)} type="button">
+                {form.question_type === "MSQ"
+                  ? <i className={`ti ${opt.is_correct ? "ti-checkbox" : "ti-square"}`} />
+                  : <i className={`ti ${opt.is_correct ? "ti-circle-filled" : "ti-circle"}`} />}
+              </button>
+              <input className="form-input option-input" placeholder={`Option ${String.fromCharCode(65 + idx)}`}
+                value={opt.option_text} readOnly={form.question_type === "TRUE_FALSE"}
+                onChange={(e) => setForm((f) => ({ ...f, options: f.options.map((o, i) => i === idx ? { ...o, option_text: e.target.value } : o) }))} />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="form-field">
         <label>Difficulty</label>
         <div className="difficulty-toggle">
@@ -543,6 +796,15 @@ function AnswerEditorSidebar({
   onSave: (updated: ExtractedQuestion) => void;
 }) {
   const [options, setOptions] = useState(question.options.map((o) => ({ ...o })));
+  // For SHORT_ANSWER, the extracted "options" array holds at most one entry
+  // (the expected answer text, is_correct=true) — surface it as a plain
+  // text field instead of a toggleable option list.
+  const [shortAnswerText, setShortAnswerText] = useState(
+    question.question_type === "SHORT_ANSWER" ? (question.options[0]?.text ?? "") : "",
+  );
+  // Image attachment — carried client-side until the question is actually
+  // created in the repository (see handleImported in the main component).
+  const [imageFile, setImageFile] = useState<File | null>(question._imageFile ?? null);
 
   // Close on Escape key
   useEffect(() => {
@@ -562,6 +824,18 @@ function AnswerEditorSidebar({
   };
 
   const handleSave = () => {
+    if (question.question_type === "SHORT_ANSWER") {
+      const text = shortAnswerText.trim();
+      onSave({
+        ...question,
+        options: text ? [{ text, is_correct: true }] : [],
+        needs_review: !text,
+        _imageFile: imageFile,
+      });
+      onClose();
+      return;
+    }
+
     const correctCount  = options.filter((o) => o.is_correct).length;
     const hasCorrect    = correctCount > 0;
     // Re-infer type from selection count (unless TRUE_FALSE)
@@ -577,14 +851,16 @@ function AnswerEditorSidebar({
       options,
       question_type: inferredType,
       needs_review: !hasCorrect || question.confidence < 70,
+      _imageFile: imageFile,
     });
     onClose();
   };
 
   const typeLabel: Record<QuestionType, string> = {
-    MCQ:        "Single correct answer",
-    MSQ:        "Multiple correct answers — toggle each",
-    TRUE_FALSE: "True / False",
+    MCQ:          "Single correct answer",
+    MSQ:          "Multiple correct answers — toggle each",
+    TRUE_FALSE:   "True / False",
+    SHORT_ANSWER: "Short answer / fill in the blank",
   };
 
   const correctAnswers = options
@@ -637,6 +913,12 @@ function AnswerEditorSidebar({
           .aes-opt.correct .aes-text { color: #065f46; font-weight: 500; }
           .aes-letter { font-weight: 700; margin-right: 6px; color: #9ca3af; }
           .aes-opt.correct .aes-letter { color: #059669; }
+          .aes-short-input {
+            width: 100%; padding: 12px 14px; border-radius: 10px;
+            border: 1.5px solid #e5e7eb; font-size: 14px; color: #1f2937;
+            transition: border-color .15s; box-sizing: border-box;
+          }
+          .aes-short-input:focus { outline: none; border-color: #8b1a1a; }
         `}</style>
 
         {/* Header */}
@@ -665,53 +947,99 @@ function AnswerEditorSidebar({
             {typeLabel[question.question_type]} · {question.marks} mark{question.marks !== 1 ? "s" : ""} · {question.difficulty}
           </div>
 
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9ca3af", marginBottom: 12 }}>
-            Select Correct Answer{question.question_type === "MSQ" ? "s" : ""}
+          {/* Image attachment (client-side only until question is saved) */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9ca3af", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <i className="ti ti-photo" style={{ fontSize: 12 }} /> Question Image
+              <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#c1c7d0" }}>(optional)</span>
+            </div>
+            <QuestionImageUploader compact onFileSelected={setImageFile} />
           </div>
 
-          {options.map((opt, idx) => {
-            const isMulti = question.question_type === "MSQ";
-            return (
-              <div
-                key={idx}
-                className={`aes-opt ${opt.is_correct ? "correct" : ""}`}
-                onClick={() => toggleOption(idx)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleOption(idx); } }}
-              >
-                <div className={`aes-marker ${isMulti ? "square" : ""}`}>
-                  {opt.is_correct && (
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  )}
-                </div>
-                <div className="aes-text">
-                  <span className="aes-letter">{String.fromCharCode(65 + idx)}.</span>
-                  {opt.text}
-                </div>
+          {question.question_type === "SHORT_ANSWER" ? (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9ca3af", marginBottom: 12 }}>
+                Expected Answer
               </div>
-            );
-          })}
-
-          {/* Summary */}
-          {correctAnswers.length > 0 ? (
-            <div style={{
-              marginTop: 14, padding: "10px 14px",
-              background: "#f0fdf4", border: "1px solid #bbf7d0",
-              borderRadius: 8, fontSize: 13, color: "#065f46",
-            }}>
-              <strong>Marked correct:</strong> {correctAnswers.join("  ·  ")}
-            </div>
+              <input
+                className="aes-short-input"
+                placeholder="Type the expected answer…"
+                value={shortAnswerText}
+                onChange={(e) => setShortAnswerText(e.target.value)}
+                autoFocus
+              />
+              {shortAnswerText.trim() ? (
+                <div style={{
+                  marginTop: 14, padding: "10px 14px",
+                  background: "#f0fdf4", border: "1px solid #bbf7d0",
+                  borderRadius: 8, fontSize: 13, color: "#065f46",
+                }}>
+                  <strong>Expected answer:</strong> {shortAnswerText.trim()}
+                </div>
+              ) : (
+                <div style={{
+                  marginTop: 14, padding: "10px 14px",
+                  background: "#fff7ed", border: "1px solid #fed7aa",
+                  borderRadius: 8, fontSize: 13, color: "#92400e",
+                }}>
+                  ⚠ No expected answer set — this question will be flagged for review.
+                </div>
+              )}
+              <div style={{ marginTop: 14, fontSize: 12, color: "#9ca3af" }}>
+                Free-text student answers will need manual or fuzzy-match grading against this expected answer.
+              </div>
+            </>
           ) : (
-            <div style={{
-              marginTop: 14, padding: "10px 14px",
-              background: "#fff7ed", border: "1px solid #fed7aa",
-              borderRadius: 8, fontSize: 13, color: "#92400e",
-            }}>
-              ⚠ No correct answer selected — this question will be flagged for review.
-            </div>
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9ca3af", marginBottom: 12 }}>
+                Select Correct Answer{question.question_type === "MSQ" ? "s" : ""}
+              </div>
+
+              {options.map((opt, idx) => {
+                const isMulti = question.question_type === "MSQ";
+                return (
+                  <div
+                    key={idx}
+                    className={`aes-opt ${opt.is_correct ? "correct" : ""}`}
+                    onClick={() => toggleOption(idx)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleOption(idx); } }}
+                  >
+                    <div className={`aes-marker ${isMulti ? "square" : ""}`}>
+                      {opt.is_correct && (
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                    <div className="aes-text">
+                      <span className="aes-letter">{String.fromCharCode(65 + idx)}.</span>
+                      {opt.text}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Summary */}
+              {correctAnswers.length > 0 ? (
+                <div style={{
+                  marginTop: 14, padding: "10px 14px",
+                  background: "#f0fdf4", border: "1px solid #bbf7d0",
+                  borderRadius: 8, fontSize: 13, color: "#065f46",
+                }}>
+                  <strong>Marked correct:</strong> {correctAnswers.join("  ·  ")}
+                </div>
+              ) : (
+                <div style={{
+                  marginTop: 14, padding: "10px 14px",
+                  background: "#fff7ed", border: "1px solid #fed7aa",
+                  borderRadius: 8, fontSize: 13, color: "#92400e",
+                }}>
+                  ⚠ No correct answer selected — this question will be flagged for review.
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -731,7 +1059,7 @@ function AnswerEditorSidebar({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PdfImportPanel  (with sidebar wired in)
+// PdfImportPanel  (with sidebar wired in; state lifted from parent)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PdfImportPanel({
@@ -739,13 +1067,12 @@ function PdfImportPanel({
   extracted, setExtracted,
   error, setError,
   onImported,
-  }: {
+}: {
   status: ImportStatus; setStatus: (s: ImportStatus) => void;
-  extracted: ExtractedQuestion[]; setExtracted: React.Dispatch<React.SetStateAction<ExtractedQuestion[]>>;
+  extracted: ExtractedQuestion[]; setExtracted: Dispatch<SetStateAction<ExtractedQuestion[]>>;
   error: string; setError: (e: string) => void;
   onImported: (qs: ExtractedQuestion[]) => void;
-  }) 
-{
+}) {
   const [editingQuestion, setEditingQuestion] = useState<ExtractedQuestion | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -759,7 +1086,7 @@ function PdfImportPanel({
       setStatus("extracting");
       const result = await facultyApi.extractQuestionsFromFile(file);
       if (!result || result.length === 0) {
-        setError("No questions could be extracted. Make sure questions are numbered (1., 2., …).");
+        setError("No questions could be extracted. Make sure questions are numbered (1., 2., … or Q.1, Q.2, …).");
         setStatus("idle"); return;
       }
       setExtracted(result.map((q) => ({ ...q, approved: false })));
@@ -799,8 +1126,8 @@ function PdfImportPanel({
         <i className="ti ti-file-upload import-drop-icon" />
         <div className="import-drop-title">Import Questions from PDF or DOCX</div>
         <div className="import-drop-sub">
-          Supports Google Forms PDFs &amp; standard MCQ PDFs · Text-based PDFs only<br />
-          Questions numbered 1., 2., … · Answers inferred via AI when not in PDF
+          Supports Google Forms PDFs, standard MCQ PDFs &amp; printed exam papers · Text-based PDFs only<br />
+          MCQ, True/False &amp; Fill-in-the-Blank · Answers extracted from the PDF when present, otherwise inferred via AI
         </div>
         {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
         <button className="btn btn-secondary" type="button"><i className="ti ti-upload" /> Choose File</button>
@@ -814,10 +1141,10 @@ function PdfImportPanel({
       <div className="import-processing">
         <span className="spinner" />
         <div className="import-proc-title">
-          {status === "uploading" ? "Uploading file…" : "Extracting questions & inferring answers via AI…"}
+          {status === "uploading" ? "Uploading file…" : "Extracting questions & answers…"}
         </div>
         <div className="import-proc-sub">
-          {status === "extracting" ? "Parsing PDF then asking AI for correct answers — takes 5–10 seconds" : "Uploading…"}
+          {status === "extracting" ? "Reading answer keys, bold/colored markers, and inferring via AI only where needed" : "Uploading…"}
         </div>
       </div>
     );
@@ -879,6 +1206,7 @@ function PdfImportPanel({
           <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "MCQ").length}</span><span className="is-lbl">MCQ</span></div>
           <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "MSQ").length}</span><span className="is-lbl">MSQ</span></div>
           <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "TRUE_FALSE").length}</span><span className="is-lbl">T/F</span></div>
+          <div className="import-summary-card"><span className="is-val">{extracted.filter((q) => q.question_type === "SHORT_ANSWER").length}</span><span className="is-lbl">Fill-in-Blank</span></div>
           <div className="import-summary-card">
             <span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span>
             <span className="is-lbl">Avg Confidence</span>
@@ -890,7 +1218,7 @@ function PdfImportPanel({
           <div className="import-table-actions" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div className="row-hint">
               <i className="ti ti-pencil" />
-              Click any row to view &amp; edit the answer options
+              Click any row to view &amp; edit the answer — you can also attach an image there
             </div>
             <button className="btn btn-sm btn-secondary" onClick={approveAll} type="button">
               <i className="ti ti-check-all" /> Approve All
@@ -911,13 +1239,14 @@ function PdfImportPanel({
             </thead>
             <tbody>
               {extracted.map((q) => {
+                const isShortAnswer = q.question_type === "SHORT_ANSWER";
                 const correctAnswers = q.options.filter((o) => o.is_correct).map((o) => o.text);
                 return (
                   <tr
                     key={q.id}
                     className={q.needs_review ? "row-review" : ""}
                     onClick={() => setEditingQuestion(q)}
-                    title="Click to edit answer options"
+                    title="Click to edit answer"
                   >
                     <td>
                       {q.needs_review && (
@@ -926,8 +1255,21 @@ function PdfImportPanel({
                     </td>
                     <td className="q-text-cell">
                       {q.question_text.slice(0, 80)}{q.question_text.length > 80 ? "…" : ""}
+                      {q._imageFile && (
+                        <span
+                          title={`Image attached: ${q._imageFile.name}`}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 3,
+                            marginLeft: 8, fontSize: 11, color: "#0369a1",
+                            background: "#f0f9ff", border: "1px solid #bae6fd",
+                            borderRadius: 5, padding: "1px 6px", verticalAlign: "middle",
+                          }}
+                        >
+                          <i className="ti ti-photo" style={{ fontSize: 10 }} /> Image
+                        </span>
+                      )}
                     </td>
-                    <td><span className="q-type-badge">{q.question_type}</span></td>
+                    <td><span className="q-type-badge">{isShortAnswer ? "FILL-BLANK" : q.question_type}</span></td>
                     <td>{q.marks}</td>
                     <td className="ans-cell">
                       {correctAnswers.length > 0 ? (
@@ -939,16 +1281,16 @@ function PdfImportPanel({
                           <i className="ti ti-pencil" style={{ fontSize: 11, flexShrink: 0 }} />
                           {correctAnswers.map((a) => a.slice(0, 22)).join(", ")}
                           {correctAnswers.some((a) => a.length > 22) ? "…" : ""}
-                          <span className="ai-badge" title="AI-inferred">✦ AI</span>
+                          {!isShortAnswer && <span className="ai-badge" title="From PDF or AI">✦</span>}
                         </span>
                       ) : (
                         <span
                           className="edit-ans-chip no-ans"
                           onClick={(e) => { e.stopPropagation(); setEditingQuestion(q); }}
-                          title="Click to set answer"
+                          title={isShortAnswer ? "Click to set expected answer" : "Click to set answer"}
                         >
                           <i className="ti ti-pencil" style={{ fontSize: 11, flexShrink: 0 }} />
-                          No answer — click to set
+                          {isShortAnswer ? "No expected answer — click to set" : "No answer — click to set"}
                         </span>
                       )}
                     </td>
@@ -1003,6 +1345,7 @@ function AutoGeneratePanel({ questions, onGenerated }: {
   const [mcqCount,   setMcqCount]   = useState(10);
   const [msqCount,   setMsqCount]   = useState(5);
   const [tfCount,    setTfCount]    = useState(5);
+  const [saCount,    setSaCount]    = useState(0);
   const [difficulty, setDifficulty] = useState<"MIXED" | Difficulty>("MIXED");
   const [error,      setError]      = useState("");
 
@@ -1017,7 +1360,12 @@ function AutoGeneratePanel({ questions, onGenerated }: {
       }
       return candidates.slice(0, count);
     };
-    const selected = [...pick("MCQ", mcqCount), ...pick("MSQ", msqCount), ...pick("TRUE_FALSE", tfCount)];
+    const selected = [
+      ...pick("MCQ", mcqCount),
+      ...pick("MSQ", msqCount),
+      ...pick("TRUE_FALSE", tfCount),
+      ...pick("SHORT_ANSWER", saCount),
+    ];
     if (selected.length === 0) { setError("No questions match criteria. Add more to the repository first."); return; }
     onGenerated(selected);
   };
@@ -1051,6 +1399,12 @@ function AutoGeneratePanel({ questions, onGenerated }: {
           <span className="field-hint">{questions.filter((q) => q.question_type === "TRUE_FALSE").length} available</span>
         </div>
         <div className="form-field">
+          <label>Fill-in-the-Blank Count</label>
+          <input type="number" className="form-input" min={0} max={30} value={saCount}
+            onChange={(e) => setSaCount(+e.target.value)} />
+          <span className="field-hint">{questions.filter((q) => q.question_type === "SHORT_ANSWER").length} available</span>
+        </div>
+        <div className="form-field">
           <label>Difficulty Mix</label>
           <select className="form-select" value={difficulty} onChange={(e) => setDifficulty(e.target.value as any)}>
             <option value="MIXED">Mixed (Recommended)</option>
@@ -1062,7 +1416,7 @@ function AutoGeneratePanel({ questions, onGenerated }: {
       </div>
       {error && <div className="form-error">{error}</div>}
       <button className="btn btn-primary" onClick={generate} type="button">
-        <i className="ti ti-wand" /> Generate Paper ({mcqCount + msqCount + tfCount} questions)
+        <i className="ti ti-wand" /> Generate Paper ({mcqCount + msqCount + tfCount + saCount} questions)
       </button>
     </div>
   );
@@ -1081,7 +1435,10 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
   const [search,     setSearch]     = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterDiff, setFilterDiff] = useState("");
-  
+
+  // ── Lifted PDF import state (survives tab switches, so switching to
+  //    "Select Existing" or "Auto-Generate" mid-review no longer wipes the
+  //    PDF import review table) ──
   const [pdfStatus,    setPdfStatus]    = useState<ImportStatus>("idle");
   const [pdfExtracted, setPdfExtracted] = useState<ExtractedQuestion[]>([]);
   const [pdfError,     setPdfError]     = useState("");
@@ -1128,6 +1485,7 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
               <option value="MCQ">MCQ</option>
               <option value="MSQ">MSQ</option>
               <option value="TRUE_FALSE">True / False</option>
+              <option value="SHORT_ANSWER">Fill in the Blank</option>
             </select>
             <select className="form-select" value={filterDiff} onChange={(e) => setFilterDiff(e.target.value)}>
               <option value="">All Difficulty</option>
@@ -1167,12 +1525,12 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
         <CreateQuestionForm courseId={courseId} onSaved={(q) => { onAddNew(q); setTab("select"); }} />
       )}
       {tab === "import" && (
-    <PdfImportPanel
-      status={pdfStatus} setStatus={setPdfStatus}
-      extracted={pdfExtracted} setExtracted={setPdfExtracted}
-      error={pdfError} setError={setPdfError}
-      onImported={(qs) => { onImported(qs); setTab("select"); }}
-    />
+        <PdfImportPanel
+          status={pdfStatus} setStatus={setPdfStatus}
+          extracted={pdfExtracted} setExtracted={setPdfExtracted}
+          error={pdfError} setError={setPdfError}
+          onImported={(qs) => { onImported(qs); setTab("select"); }}
+        />
       )}
       {tab === "auto" && (
         <AutoGeneratePanel questions={allQuestions}
@@ -1365,7 +1723,7 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
           <h4>Questions ({selectedQuestions.length})</h4>
           <div className="preview-rows">
             {Object.entries(byType).map(([type, count]) => (
-              <div key={type} className="preview-row"><span>{type}</span><strong>{count}</strong></div>
+              <div key={type} className="preview-row"><span>{type === "SHORT_ANSWER" ? "FILL-BLANK" : type}</span><strong>{count}</strong></div>
             ))}
             {selectedQuestions.length === 0 && <div className="preview-empty">No questions selected</div>}
           </div>
@@ -1623,9 +1981,25 @@ export default function CreateExam() {
           course_id: form.course_id || null, question_type: q.question_type,
           question_text: q.question_text, marks: q.marks, negative_marks: 0,
           difficulty: q.difficulty,
+          // For SHORT_ANSWER, q.options holds at most one entry (the
+          // expected answer text with is_correct=true) — same shape as
+          // MCQ options, so no special-casing is needed here.
           options: q.options.map((o, i) => ({ option_text: o.text, is_correct: o.is_correct, order_index: i })),
           topics: [],
         });
+
+        // If faculty attached an image during review (via the answer
+        // editor sidebar's image uploader), upload it now that the
+        // question row exists and has an id. Non-fatal on failure — the
+        // question itself is still saved either way.
+        if (q._imageFile) {
+          try {
+            await facultyApi.uploadQuestionImage(res.question_id, q._imageFile);
+          } catch (imgErr) {
+            console.error("Image upload failed for imported question:", q.question_text, imgErr);
+          }
+        }
+
         const full = await facultyApi.getQuestion(res.question_id);
         handleAddNew(full);
       } catch (e) {

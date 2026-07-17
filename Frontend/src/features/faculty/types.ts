@@ -19,6 +19,7 @@ export interface Question {
   created_by: string;
   created_at: string;
   updated_at?: string | null;
+  image_url?: string | null;          // ← NEW: optional image attached to question
   courses?: { name: string; code?: string } | null;
   question_options?: QuestionOption[];
   question_topics?: QuestionTopic[];
@@ -77,12 +78,12 @@ export interface ExamRule {
   exam_id?: string;
   allow_backtrack: boolean;
   allow_review_flag: boolean;
-  require_fullscreen: boolean;   // always true — enforced at the platform level
+  require_fullscreen: boolean;
   enable_proctoring: boolean;
   camera_required: boolean;
   microphone_required: boolean;
   max_tab_switches: number;
-  max_fullscreen_exits: number;  // 0 = unlimited; >0 = force-submit on limit
+  max_fullscreen_exits: number;
   auto_save_interval_sec: number;
 }
 
@@ -205,6 +206,7 @@ export interface StudentAnswer {
     question_text: string;
     question_type: string;
     marks: number;
+    image_url?: string | null;       // ← NEW
   } | null;
 }
 
@@ -251,59 +253,42 @@ export interface FacultyDashboard {
 export interface ExamAnalytics {
   exam_id: string;
   exam_title: string;
-
   course_name: string;
   course_code: string;
-
   total_marks: number;
   pass_marks: number;
   duration_minutes: number;
-
   total_registered: number;
   total_appeared: number;
-
   average_score: number;
   average_percentage: number;
-
   pass_rate: number;
-
   passed: number;
   failed: number;
-
   highest_score: number;
   highest_scorer: string | null;
-
   lowest_score: number;
   lowest_scorer: string | null;
-
   median_score: number;
   max_score: number;
-
   grade_distribution: Record<string, number>;
-
   score_distribution: number[];
   score_labels?: string[];
-
   topic_performance: {
     topic: string;
     question_count: number;
     avg_accuracy: number;
     difficulty: string;
   }[];
-
   question_performance: {
     question_id: string;
     question_text: string;
-
     difficulty: string;
-
     total_attempted: number;
     correct_count: number;
     incorrect_count: number;
     skipped_count: number;
-
     accuracy_pct: number;
-
     option_distribution: {
       option_id: string;
       option_text: string;
@@ -312,20 +297,14 @@ export interface ExamAnalytics {
       pick_pct: number;
     }[];
   }[];
-
   topper_list: {
     rank: number;
-
     student_id: string;
-
     name: string;
     roll_number: string;
-
     score: number;
     percentage: number;
-
     grade: string;
-
     is_passed: boolean;
   }[];
 }
@@ -345,4 +324,5 @@ export interface ExtractedQuestion {
   confidence: number;
   needs_review: boolean;
   approved: boolean;
+  image_url?: string | null;           // ← NEW: can be set manually after import
 }

@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     # JWT — Supabase signs JWTs with this secret
     SUPABASE_JWT_SECRET: str
 
-    # Groq API Key for transcription/proctoring checks
-    GROQ_API_KEY: Optional[str] = None
+    # OpenRouter API Key — used for DeepSeek R1 answer inference in question extraction
+    OPENROUTER_API_KEY: str
 
     # Frontend / invitation links
     FRONTEND_URL: str = "http://localhost:5173"

@@ -57,6 +57,31 @@ export const facultyApi = {
     return apiFile<ExtractedQuestion[]>("/api/v1/questions/extract", formData);
   },
 
+  // ── NEW: Question image upload / remove ─────────────────────────────────────
+  /**
+   * Upload an image for an existing question.
+   * The backend stores it in Supabase Storage and writes the public URL
+   * back to the `image_url` column on the questions table.
+   *
+   * @param questionId  UUID of the question
+   * @param file        Image file (JPEG / PNG / GIF / WebP, max 5 MB)
+   * @returns           { image_url: string } — the public URL
+   */
+  uploadQuestionImage: (questionId: string, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiFile<{ image_url: string }>(
+      `/api/v1/questions/${questionId}/upload-image`,
+      formData,
+    );
+  },
+
+  /**
+   * Remove the image attached to a question (clears image_url on the row).
+   */
+  removeQuestionImage: (questionId: string) =>
+    del(`/api/v1/questions/${questionId}/image`),
+
   // ── Exams ───────────────────────────────────────────────────────────────────
   listExams: (params?: { course_id?: string; status?: string }) => {
     const query = new URLSearchParams();
@@ -123,8 +148,6 @@ export const facultyApi = {
   getExamAttempts: (examId: string) =>
     get<ExamAttempt[]>(`/api/v1/faculty/exam-attempts/${examId}`),
 
-  // FIX: was using raw fetch() which doesn't send the Authorization header.
-  // Now uses the same get() helper as every other method — auth works correctly.
   getAttemptDetail: (attemptId: string) =>
     get<Record<string, unknown>>(`/api/v1/faculty/attempt-detail/${attemptId}`),
 
@@ -134,7 +157,6 @@ export const facultyApi = {
     ),
 
   // ── Grading ─────────────────────────────────────────────────────────────────
-  // getPendingGrading removed — objective-only portal, no manual grading needed
   setManualScore: (body: {
     answer_id: string;
     marks_awarded: number;

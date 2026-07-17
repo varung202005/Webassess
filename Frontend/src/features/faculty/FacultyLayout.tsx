@@ -217,4 +217,4 @@ function notifIcon(type: string): string {
     PROCTORING_ALERT: "alert-triangle",
   };
   return map[type] ?? "bell";
-}
+} 

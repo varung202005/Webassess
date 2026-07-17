@@ -64,7 +64,7 @@ export default function App() {
         <Route path="/faculty/reevaluations" element={<ProtectedRoute roles={["FACULTY"]}><FacultyReevaluations /></ProtectedRoute>} />
         <Route path="/faculty/notifications" element={<ProtectedRoute roles={["FACULTY"]}><FacultyNotificationsPage /></ProtectedRoute>} />
         <Route path="/faculty/profile"      element={<ProtectedRoute roles={["FACULTY"]}><FacultyProfile /></ProtectedRoute>} />
-
+      
         {/* ── Candidate ────────────────────────────────────────────────── */}
         <Route path="/candidate/state"        element={<ProtectedRoute roles={["CANDIDATE"]}><CandidateExamState /></ProtectedRoute>} />
         <Route path="/candidate/instructions" element={<ProtectedRoute roles={["CANDIDATE"]}><CandidateInstructions /></ProtectedRoute>} />
@@ -81,6 +81,7 @@ export default function App() {
         <Route path="/exam/live/:scheduleId" element={<ProtectedRoute roles={["STUDENT", "CANDIDATE"]}><LiveExam /></ProtectedRoute>} />
 
         <Route path="*" element={<NotFound />} />
+
       </Routes>
     </BrowserRouter>
   );
