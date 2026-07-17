@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
 
+    # Deployment environment: "development" | "staging" | "production"
+    # Controls whether interactive API docs are exposed and how strict
+    # security defaults (CORS, error verbosity) are.
+    ENVIRONMENT: str = "development"
+
     # Supabase
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str   # Server-side only — never expose to frontend
@@ -54,6 +59,19 @@ class Settings(BaseSettings):
         "screenshot": 0.10,
         "print": 0.10,
     }
+
+    # Rate limiting (SlowAPI, keyed by client IP unless noted).
+    # Generous enough not to disrupt legitimate exam-taking traffic
+    # (e.g. autosave), but tight on brute-forceable / expensive actions.
+    RATE_LIMIT_LOGIN: str = "5/minute"
+    RATE_LIMIT_ROLE_ASSIGNMENT: str = "10/minute"
+    RATE_LIMIT_FILE_UPLOAD: str = "10/minute"
+    RATE_LIMIT_EXAM_START: str = "5/minute"
+    RATE_LIMIT_ANSWER_SAVE: str = "60/minute"
+    RATE_LIMIT_EXAM_SUBMIT: str = "5/minute"
+    RATE_LIMIT_GRADING: str = "30/minute"
+    RATE_LIMIT_NOTIFICATIONS: str = "30/minute"
+    RATE_LIMIT_DEFAULT: str = "120/minute"
 
     # Grade thresholds (percentage)
     GRADE_THRESHOLDS: dict = {
