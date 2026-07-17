@@ -2,6 +2,7 @@ import io
 import re
 import os
 import json
+import uuid as uuid_module
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -18,7 +19,11 @@ router = APIRouter()
 
 QuestionType          = Literal["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER", "LONG_ANSWER"]
 Difficulty            = Literal["EASY", "MEDIUM", "HARD"]
-ExtractedQuestionType = Literal["MCQ", "MSQ", "TRUE_FALSE"]
+ExtractedQuestionType = Literal["MCQ", "MSQ", "TRUE_FALSE", "SHORT_ANSWER"]
+
+# ── Allowed image types for question image uploads ─────────────────────────────
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
 # ── Ligature repair ────────────────────────────────────────────────────────────
@@ -32,11 +37,31 @@ _LIGATURE_MAP = {
     "\ufb03": "ffi", "\ufb04": "ffl", "\ufb05": "st", "\ufb06": "st",
 }
 
+# Some PDFs (commonly Google Forms "Print to PDF" exports) embed a subsetted
+# font whose "fi" ligature glyph has a broken/missing ToUnicode CMap entry.
+# Instead of decoding to the letters "f"+"i", PyMuPDF resolves it to whatever
+# placeholder codepoint the broken table happens to point at — and this
+# varies by font instance, so different quizzes concatenated into one PDF
+# can each show a different artifact for the SAME missing ligature. We've
+# observed it silently vanish (leaving e.g. "in nity" for "infinity") and,
+# in other exports, render as U+00AC — the logical NOT sign, "¬" (e.g.
+# "Path¬nding" for "Pathfinding").
+#
+# We can't safely strip every "¬" globally — it's also the legitimate
+# logical-negation symbol and could appear in real question text (e.g.
+# propositional-logic questions using "¬P"). But a real NOT sign never
+# appears glued directly between two letters with no space or punctuation
+# ("h¬n"); that specific pattern only happens when a ligature glyph has
+# been mis-rendered mid-word, so it's a safe, unambiguous signal to repair.
+_BROKEN_FI_GLYPH_RE = re.compile(r"(?<=[A-Za-z])¬(?=[A-Za-z])")
+
 
 def _repair_ligatures(text: str) -> str:
     for lig, expansion in _LIGATURE_MAP.items():
         if lig in text:
             text = text.replace(lig, expansion)
+    if "¬" in text:
+        text = _BROKEN_FI_GLYPH_RE.sub("fi", text)
     return text
 
 
@@ -85,6 +110,7 @@ class QuestionCreate(BaseModel):
     difficulty: Difficulty
     options: Optional[List[OptionCreate]] = []
     topics: Optional[List[TopicCreate]] = []
+    image_url: Optional[str] = None          # optional image attached to question
 
 class QuestionUpdate(BaseModel):
     question_text: Optional[str] = None
@@ -92,6 +118,7 @@ class QuestionUpdate(BaseModel):
     negative_marks: Optional[int] = None
     difficulty: Optional[Difficulty] = None
     is_active: Optional[bool] = None
+    image_url: Optional[str] = None          # allow updating image too
 
 class ExtractedOption(BaseModel):
     text: str
@@ -168,6 +195,7 @@ async def create_question(
         "negative_marks": body.negative_marks,
         "difficulty":     body.difficulty,
         "is_active":      True,
+        "image_url":      body.image_url,
     }
     q_result = supabase.table("questions").insert(q_data).execute()
     qid = q_result.data[0]["id"]
@@ -195,6 +223,107 @@ async def create_question(
         ]).execute()
 
     return {"message": "Question created", "question_id": qid}
+
+
+# ── Image Upload Endpoint ─────────────────────────────────────────────────────
+@router.post("/{question_id}/upload-image")
+async def upload_question_image(
+    question_id: UUID,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_faculty),
+):
+    """
+    Upload an image for a question. Stores in Supabase Storage bucket
+    'question-images', updates the question's image_url column, and returns
+    the public URL.
+
+    Bucket setup (run once in Supabase dashboard):
+        CREATE BUCKET question-images WITH (public = true);
+    Or via SQL:
+        INSERT INTO storage.buckets (id, name, public)
+        VALUES ('question-images', 'question-images', true);
+    """
+    supabase = get_supabase_admin()
+
+    # ── Validate question exists and belongs to this faculty ──────────────────
+    result = (
+        supabase.table("questions")
+        .select("id, created_by")
+        .eq("id", str(question_id))
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Question not found")
+    if result.data["created_by"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="You can only upload images for your own questions")
+
+    # ── Validate file type ────────────────────────────────────────────────────
+    content_type = file.content_type or ""
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only JPEG, PNG, GIF, and WebP images are allowed. Got: {content_type}",
+        )
+
+    # ── Read and validate file size ───────────────────────────────────────────
+    content = await file.read()
+    if len(content) > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail="Image too large. Maximum size is 5 MB.",
+        )
+
+    # ── Build a unique storage path ───────────────────────────────────────────
+    ext = content_type.split("/")[-1]           # e.g. "jpeg", "png"
+    storage_path = f"{question_id}/{uuid_module.uuid4()}.{ext}"
+
+    # ── Upload to Supabase Storage ────────────────────────────────────────────
+    try:
+        supabase.storage.from_("question-images").upload(
+            path=storage_path,
+            file=content,
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+    except Exception as exc:
+        logger.error("Supabase Storage upload failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Image upload failed. Please try again.")
+
+    # ── Build public URL ──────────────────────────────────────────────────────
+    # Supabase public bucket URL pattern:
+    #   {SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}
+    supabase_url = settings.SUPABASE_URL.rstrip("/")
+    public_url = f"{supabase_url}/storage/v1/object/public/question-images/{storage_path}"
+
+    # ── Persist URL on the question row ──────────────────────────────────────
+    supabase.table("questions").update({"image_url": public_url}).eq("id", str(question_id)).execute()
+
+    logger.info("Uploaded image for question %s → %s", question_id, public_url)
+    return {"image_url": public_url}
+
+
+# ── Delete Image Endpoint ─────────────────────────────────────────────────────
+@router.delete("/{question_id}/image")
+async def delete_question_image(
+    question_id: UUID,
+    current_user: dict = Depends(require_faculty),
+):
+    """Remove the image from a question (clears image_url; does NOT delete from storage)."""
+    supabase = get_supabase_admin()
+    result = (
+        supabase.table("questions")
+        .select("id, created_by, image_url")
+        .eq("id", str(question_id))
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Question not found")
+    if result.data["created_by"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    supabase.table("questions").update({"image_url": None}).eq("id", str(question_id)).execute()
+    return {"message": "Image removed"}
 
 
 @router.patch("/{question_id}")
@@ -230,6 +359,21 @@ BOLD_CLOSE = "\u2060§/B§\u2060"
 BOLD_RUN_RE  = re.compile(re.escape(BOLD_OPEN) + r"(.*?)" + re.escape(BOLD_CLOSE), re.DOTALL)
 BOLD_TAG_RE  = re.compile(re.escape(BOLD_OPEN) + "|" + re.escape(BOLD_CLOSE))
 
+# Same idea, but for COLORED text — another very common way exam papers
+# mark the correct answer (e.g. the correct option printed in red), often
+# with no bold styling and no textual marker like "*" at all.
+COLOR_OPEN  = "\u2060§C§\u2060"
+COLOR_CLOSE = "\u2060§/C§\u2060"
+COLOR_RUN_RE = re.compile(re.escape(COLOR_OPEN) + r"(.*?)" + re.escape(COLOR_CLOSE), re.DOTALL)
+COLOR_TAG_RE = re.compile(re.escape(COLOR_OPEN) + "|" + re.escape(COLOR_CLOSE))
+
+# Combined pattern used whenever we just need to strip ALL style markers to
+# get back to plain, storable text (final question/option text should never
+# contain either kind of sentinel marker).
+ALL_STYLE_TAG_RE = re.compile(
+    "|".join(re.escape(t) for t in (BOLD_OPEN, BOLD_CLOSE, COLOR_OPEN, COLOR_CLOSE))
+)
+
 BOLD_FONT_FLAG = 1 << 4  # PyMuPDF span flag bit for bold
 
 
@@ -240,11 +384,25 @@ def _span_is_bold(span: dict) -> bool:
     return "bold" in font_name or "black" in font_name or "heavy" in font_name
 
 
+def _span_is_colored(span: dict) -> bool:
+    """
+    True if this span's text color is anything other than plain black.
+    PyMuPDF reports color as a packed int sRGB value; body text is almost
+    always exactly 0 (pure black), so any non-zero value is a strong signal
+    the author deliberately colored this text — commonly used in printed
+    exam papers to mark the correct option (e.g. in red) without any other
+    textual indicator.
+    """
+    color = span.get("color")
+    return color is not None and color != 0
+
+
 def _extract_pdf_text(content: bytes) -> str:
     """
-    Extract text from a PDF using PyMuPDF (fitz), preserving bold styling as
-    inline sentinel markers (BOLD_OPEN/BOLD_CLOSE) so that a bold-only answer
-    convention can be detected downstream.
+    Extract text from a PDF using PyMuPDF (fitz), preserving bold AND color
+    styling as inline sentinel markers (BOLD_OPEN/CLOSE, COLOR_OPEN/CLOSE)
+    so that a bold-only or colored-only answer convention can be detected
+    downstream.
 
     PyMuPDF decomposes ligature glyphs (e.g. the single "fi" glyph some PDF
     font subsets use) back into their constituent letters far more reliably
@@ -305,15 +463,33 @@ def _extract_pdf_text(content: bytes) -> str:
                         text = span.get("text", "")
                         if not text:
                             continue
-                        if _span_is_bold(span) and text.strip():
-                            line_text += f"{BOLD_OPEN}{text}{BOLD_CLOSE}"
-                        else:
-                            line_text += text
+                        is_bold    = _span_is_bold(span) and text.strip()
+                        is_colored = _span_is_colored(span) and text.strip()
+                        opened = ""
+                        closed = ""
+                        if is_bold:
+                            opened += BOLD_OPEN
+                            closed = BOLD_CLOSE + closed
+                        if is_colored:
+                            opened += COLOR_OPEN
+                            closed = COLOR_CLOSE + closed
+                        line_text += f"{opened}{text}{closed}" if (opened or closed) else text
                     if line_text.strip():
                         block_line_texts.append(line_text.strip())
                 if block_line_texts:
+                    joined_block = " ".join(block_line_texts)
+                    # Skip standalone page-number blocks (e.g. a lone "1" or
+                    # "2" printed as a page footer/header). Left as-is, these
+                    # can leak into an option's text as stray trailing
+                    # digits whenever a question's options happen to span a
+                    # page break, since the block-slicing logic that splits
+                    # "A) .. B) .. C) .. D) .." options has no other way to
+                    # know a page boundary (and the accompanying footer)
+                    # sits between two options rather than within one.
+                    if re.fullmatch(r"\d{1,3}", _strip_bold_markers(joined_block).strip()):
+                        continue
                     # Join wrapped lines of the SAME paragraph with a space.
-                    page_lines.append(" ".join(block_line_texts))
+                    page_lines.append(joined_block)
             page_text = "\n".join(page_lines).strip()
             if page_text:
                 parts.append(_repair_ligatures(page_text))
@@ -327,15 +503,34 @@ def _is_option_line_bold(raw_line: str, threshold: float = 0.7) -> bool:
     Guards against a single bold word inside an otherwise plain option
     counting as a "bold answer" signal.
     """
-    visible = BOLD_TAG_RE.sub("", raw_line).strip()
+    visible = ALL_STYLE_TAG_RE.sub("", raw_line).strip()
     if not visible:
         return False
     bold_chars = sum(len(m) for m in BOLD_RUN_RE.findall(raw_line))
     return bold_chars >= threshold * len(visible)
 
 
+def _is_option_line_colored(raw_line: str, threshold: float = 0.7) -> bool:
+    """
+    Same idea as _is_option_line_bold, but for non-black text color —
+    catches papers that mark the correct answer purely by color (e.g. red
+    text) with no bold styling and no textual marker at all.
+    """
+    visible = ALL_STYLE_TAG_RE.sub("", raw_line).strip()
+    if not visible:
+        return False
+    colored_chars = sum(len(m) for m in COLOR_RUN_RE.findall(raw_line))
+    return colored_chars >= threshold * len(visible)
+
+
 def _strip_bold_markers(text: str) -> str:
-    return BOLD_TAG_RE.sub("", text)
+    """
+    Strips ALL style sentinel markers (both bold and color) — kept under
+    its original name for backward compatibility with existing call sites,
+    but covers both marker kinds since final stored text must never
+    contain either.
+    """
+    return ALL_STYLE_TAG_RE.sub("", text)
 
 
 def _extract_docx_text(content: bytes) -> str:
@@ -437,15 +632,67 @@ ANSWER_KEY_ENTRY_RE = re.compile(
 # ── Format Detection ──────────────────────────────────────────────────────────
 
 def _detect_format(text: str) -> str:
-    lower = _strip_bold_markers(text).lower()
-    hits = sum(1 for phrase in [
+    stripped = _strip_bold_markers(text)
+    lower = stripped.lower()
+
+    gform_hits = sum(1 for phrase in [
         "mark only one oval",
         "mark all that apply",
         "this form doesn",
         "google forms",
         "indicates required question",
     ] if phrase in lower)
-    return "google_forms" if hits >= 2 else "standard"
+    if gform_hits >= 2:
+        return "google_forms"
+
+    # Printed university/institute exam papers: numbered "Q.1", "Q.2", ...
+    # and/or a "Response Table" answer-key section. Checked with a fairly
+    # high question-count threshold so a stray "Q.1" reference elsewhere
+    # in a standard-format doc doesn't misfire.
+    q_dot_hits = len(re.findall(r"(?i)\bQ\.\s?\d{1,3}\b", stripped))
+    has_response_table = bool(re.search(r"(?im)^\s*response\s+table\s*$", stripped))
+    if q_dot_hits >= 3 or (q_dot_hits >= 1 and has_response_table):
+        return "university_qa"
+
+    return "standard"
+
+
+def _build_stripped_offset_map(raw: str) -> tuple[str, list[int]]:
+    """
+    Strip all style sentinel markers (bold/color) out of `raw`, returning
+    both the stripped text and a per-character index map back into the
+    original `raw` string. This lets us run ordinary structural regexes
+    (question boundaries, answer-key headers, etc.) against clean text
+    without losing track of where bold/color styling was, so we can still
+    slice the ORIGINAL marker-bearing text for style-based correct-answer
+    detection afterwards. `index_map[i]` gives the index in `raw`
+    corresponding to `stripped[i]`.
+    """
+    out_chars: list[str] = []
+    index_map: list[int] = []
+    i = 0
+    n = len(raw)
+    tags = (BOLD_OPEN, BOLD_CLOSE, COLOR_OPEN, COLOR_CLOSE)
+    while i < n:
+        matched = False
+        for tag in tags:
+            if raw.startswith(tag, i):
+                i += len(tag)
+                matched = True
+                break
+        if matched:
+            continue
+        out_chars.append(raw[i])
+        index_map.append(i)
+        i += 1
+    return "".join(out_chars), index_map
+
+
+def _raw_index(idx_map: list[int], stripped_pos: int, raw_len: int) -> int:
+    """Map a position in stripped text back to the original raw text."""
+    if stripped_pos < len(idx_map):
+        return idx_map[stripped_pos]
+    return raw_len
 
 
 def _is_header_page(page_text: str) -> bool:
@@ -564,6 +811,218 @@ def _parse_google_forms(full_text: str) -> list[dict]:
         q["has_correct"] = any(o["is_correct"] for o in q["options"])
 
     logger.info("Google Forms parser found %d questions", len(questions))
+    return questions
+
+
+# ── University / Printed Exam Parser ──────────────────────────────────────────
+#
+# Handles structured, printed-exam-style PDFs (e.g. institute quiz papers)
+# using "Q.N ..." numbering, options given inline as "A) .. B) .. C) .. D) .."
+# (either all on one line or one per line), fill-in-the-blank questions (no
+# options, "____" blanks in the stem), and — when present — a printed answer
+# key: either a compact two-row "A1 A2 A3 ... / C C C ..." table, or explicit
+# per-question written answers for fill-in-the-blank questions.
+#
+# Bold or colored option text (a very common way these papers visually mark
+# the correct answer — e.g. printing it in red) is treated as a
+# correct-answer signal directly, on top of anything found in a printed
+# answer key.
+
+OPTION_INLINE_RE = re.compile(r"(?<![A-Za-z0-9])([A-D])\)\s*")
+BLANK_RE = re.compile(r"_{3,}")
+ANSWER_TABLE_HEADER_RE = re.compile(r"(?i)\bA(\d{1,3})\b")
+ANSWER_TABLE_VALUE_LINE_RE = re.compile(r"(?i)^\s*(?:[A-D]\s*)+$")
+FILL_BLANK_ANSWER_START_RE = re.compile(r"(?m)(?:^|\s)(\d{1,3})\.\s+")
+
+
+def _split_options_from_block(block_raw: str) -> tuple[str, list[dict]]:
+    """
+    Given the raw (style-marker-bearing) text of one question block —
+    everything between this "Q.N" and the next — split off the question
+    stem from its answer options. Options may appear all on one line
+    ("A) .. B) .. C) .. D) ..") or one per line; both are handled the same
+    way by scanning for "A)"/"B)"/"C)"/"D)" markers anywhere in the block
+    rather than assuming line boundaries. Returns (stem_raw, options),
+    where options is empty if fewer than 2 option markers were found (a
+    strong signal this is a fill-in-the-blank / short-answer question
+    rather than an MCQ).
+    """
+    block_stripped, block_idx_map = _build_stripped_offset_map(block_raw)
+    matches = list(OPTION_INLINE_RE.finditer(block_stripped))
+    if len(matches) < 2:
+        return block_raw, []
+
+    stem_end_raw = _raw_index(block_idx_map, matches[0].start(), len(block_raw))
+    stem_raw = block_raw[:stem_end_raw]
+
+    opts: list[dict] = []
+    for i, m in enumerate(matches):
+        letter = m.group(1).upper()
+        start_s = m.end()
+        end_s = matches[i + 1].start() if i + 1 < len(matches) else len(block_stripped)
+        start_raw = _raw_index(block_idx_map, start_s, len(block_raw))
+        end_raw   = _raw_index(block_idx_map, end_s, len(block_raw))
+        opts.append({"letter": letter, "raw_text": block_raw[start_raw:end_raw]})
+    return stem_raw, opts
+
+
+def _apply_university_answer_key(key_raw: str, questions: list[dict]) -> None:
+    """
+    Parse the trailing answer-key section (everything from "Response Table"
+    onward) and apply it to the already-parsed `questions` list in place.
+
+    Two answer formats are handled:
+
+    1. Explicit written answers for fill-in-the-blank questions, e.g.
+       "4. Collapse to a single layer______." / "6. Forget and output" —
+       matched by question number and assigned as free-text answers.
+
+    2. A compact two-row MCQ table:
+           A1 A2 A3 A4 A5 A6 A7 A8 A9 A10
+           C  C  C  C  B  C  B
+       The header row lists EVERY question number in that block, including
+       fill-in-the-blank ones, but the value row only has one letter per
+       actual MCQ question, in order — so the header is filtered down to
+       just the MCQ question numbers (using the question types we already
+       determined while parsing the body) before zipping it with the
+       values, otherwise every answer from that point on would be
+       misaligned.
+    """
+    key_stripped = _strip_bold_markers(key_raw)
+    q_by_number = {q["number"]: q for q in questions}
+
+    # ── Fill-in-the-blank explicit written answers ──
+    # Bounded by whichever comes next: another "N." fill-blank entry, OR
+    # the start of an "A1 A2 A3 ..." table header line — without the
+    # latter, the LAST fill-blank answer in a block would otherwise
+    # swallow an entire following MCQ answer table (nothing else marks
+    # where its free-text answer is supposed to end).
+    fillblank_marks = [
+        (m.start(), m.end(), int(m.group(1))) for m in FILL_BLANK_ANSWER_START_RE.finditer(key_stripped)
+    ]
+    table_header_marks = [
+        (hm.start(), hm.end(), None)
+        for hm in re.finditer(r"(?m)^\s*(?:A\d{1,3}\s*){2,}$", key_stripped)
+    ]
+    combined = sorted(
+        [(*m, "fillblank") for m in fillblank_marks] + [(*m, "header") for m in table_header_marks],
+        key=lambda t: t[0],
+    )
+    for idx, (start, end, num, kind) in enumerate(combined):
+        if kind != "fillblank":
+            continue
+        q = q_by_number.get(num)
+        if not (q and q.get("is_short_answer")):
+            continue
+        text_end = combined[idx + 1][0] if idx + 1 < len(combined) else len(key_stripped)
+        text = key_stripped[end:text_end].strip()
+        text = BLANK_RE.sub("", text).strip().rstrip(".").strip()
+        if text:
+            q["short_answer"] = text
+            q["has_correct"] = True
+
+    # ── Tabular MCQ answer key ──
+    lines = [l.strip() for l in key_stripped.splitlines() if l.strip()]
+    i = 0
+    while i < len(lines):
+        # Sorted numerically rather than trusting extraction order — a
+        # header line's own tokens can occasionally come out of order if
+        # the PDF's underlying block positions are slightly irregular
+        # (harmless for detection, but zipping must follow the answers'
+        # true left-to-right / ascending-question-number order).
+        header_nums = sorted(int(n) for n in ANSWER_TABLE_HEADER_RE.findall(lines[i]))
+        if header_nums and i + 1 < len(lines) and ANSWER_TABLE_VALUE_LINE_RE.match(lines[i + 1]):
+            values = re.findall(r"[A-D]", lines[i + 1].upper())
+            mcq_nums = [
+                n for n in header_nums
+                if n in q_by_number and not q_by_number[n].get("is_short_answer")
+            ]
+            for num, letter in zip(mcq_nums, values):
+                q = q_by_number[num]
+                for opt in q["options"]:
+                    opt["is_correct"] = (opt["letter"] == letter)
+                q["has_correct"] = any(o["is_correct"] for o in q["options"])
+            i += 2
+            continue
+        i += 1
+
+
+def _parse_university_qa(full_text: str) -> list[dict]:
+    stripped, idx_map = _build_stripped_offset_map(full_text)
+
+    # Split off the trailing answer-key section ("Response Table" onward)
+    # so it never gets mistaken for question content. Matched as a
+    # standalone heading line (not just any mention of the phrase — it can
+    # also appear inside the instructions, e.g. "Answers written in the
+    # Response table will be checked only.").
+    key_m = re.search(r"(?im)^\s*response\s+table\s*$", stripped)
+    if key_m:
+        split_raw = _raw_index(idx_map, key_m.start(), len(full_text))
+        body_raw, key_raw = full_text[:split_raw], full_text[split_raw:]
+    else:
+        body_raw, key_raw = full_text, ""
+
+    body_stripped, body_idx_map = _build_stripped_offset_map(body_raw)
+
+    q_starts = list(re.finditer(r"(?i)Q\.\s*(\d{1,3})\b\.?\s*", body_stripped))
+    if not q_starts:
+        return []
+
+    questions: list[dict] = []
+    for i, m in enumerate(q_starts):
+        number = int(m.group(1))
+        start_s = m.end()
+        end_s = q_starts[i + 1].start() if i + 1 < len(q_starts) else len(body_stripped)
+        start_raw = _raw_index(body_idx_map, start_s, len(body_raw))
+        end_raw   = _raw_index(body_idx_map, end_s, len(body_raw))
+        block_raw = body_raw[start_raw:end_raw]
+
+        stem_raw, opt_matches = _split_options_from_block(block_raw)
+        stem = _strip_bold_markers(stem_raw).strip()
+        stem = MARKS_RE.sub("", stem).strip()
+        if not stem:
+            continue
+
+        if not opt_matches:
+            # No A)/B)/C)/D) markers found -> fill-in-the-blank / short answer.
+            questions.append({
+                "number":          number,
+                "question_text":   stem,
+                "options":         [],
+                "marks":           1,
+                "has_correct":     False,
+                "ai_answered":     False,
+                "is_short_answer": True,
+                "short_answer":    None,
+            })
+            continue
+
+        opts: list[dict] = []
+        for om in opt_matches:
+            raw_opt_text = om["raw_text"]
+            visible_opt_text = _strip_bold_markers(raw_opt_text).strip()
+            visible_opt_text = re.sub(r"\s{2,}", " ", visible_opt_text)
+            is_marked = _is_option_line_bold(raw_opt_text) or _is_option_line_colored(raw_opt_text)
+            opts.append({
+                "letter":     om["letter"],
+                "text":       visible_opt_text,
+                "is_correct": is_marked,
+            })
+
+        questions.append({
+            "number":          number,
+            "question_text":   stem,
+            "options":         opts,
+            "marks":           1,
+            "has_correct":     any(o["is_correct"] for o in opts),
+            "ai_answered":     False,
+            "is_short_answer": False,
+        })
+
+    if key_raw:
+        _apply_university_answer_key(key_raw, questions)
+
+    logger.info("University Q&A parser found %d questions", len(questions))
     return questions
 
 
@@ -903,16 +1362,30 @@ def _infer_answers_with_deepseek(raw_questions: list[dict]) -> list[dict]:
         logger.warning("OPENROUTER_API_KEY is blank — skipping AI answer inference")
         return raw_questions
 
-    for start in range(0, len(raw_questions), DEEPSEEK_BATCH_SIZE):
-        batch = raw_questions[start:start + DEEPSEEK_BATCH_SIZE]
+    # Defense in depth: only ever send questions that (a) don't already
+    # have a correct answer extracted from the PDF itself, and (b) are
+    # MCQ/MSQ/TRUE_FALSE-shaped (have >= 2 options) — short-answer /
+    # fill-in-the-blank questions are never AI-inferred. This mirrors the
+    # filtering already done by the caller, but is enforced here too so
+    # this function is safe to call directly without re-litigating the
+    # "don't guess an answer that's already on the page" rule elsewhere.
+    to_infer = [
+        q for q in raw_questions
+        if not q.get("has_correct") and not q.get("is_short_answer") and len(q.get("options", [])) >= 2
+    ]
+    if not to_infer:
+        return raw_questions
+
+    for start in range(0, len(to_infer), DEEPSEEK_BATCH_SIZE):
+        batch = to_infer[start:start + DEEPSEEK_BATCH_SIZE]
         try:
             _infer_answers_batch(api_key, batch)
         except Exception as e:
             logger.error("DeepSeek inference failed (batch @%d): %s", start, e, exc_info=True)
         time.sleep(0.3)
 
-    answered = sum(1 for q in raw_questions if q.get("ai_answered") and q.get("has_correct"))
-    logger.info("DeepSeek answered %d / %d questions", answered, len(raw_questions))
+    answered = sum(1 for q in to_infer if q.get("ai_answered") and q.get("has_correct"))
+    logger.info("DeepSeek answered %d / %d questions that needed inference", answered, len(to_infer))
     return raw_questions
 
 
@@ -923,10 +1396,49 @@ def _finalize(raw_questions: list[dict]) -> list[dict]:
 
     for q in raw_questions:
         q_text  = q.get("question_text", "").strip()
-        options = q.get("options", [])
         marks   = q.get("marks", 1)
         number  = q.get("number", len(results) + 1)
 
+        # ── Fill-in-the-blank / short-answer questions ──
+        if q.get("is_short_answer"):
+            if not q_text:
+                logger.debug("Skipping Q%s — empty short-answer stem", number)
+                continue
+
+            short_answer = (q.get("short_answer") or "").strip()
+            has_correct  = bool(short_answer)
+            # The extracted answer text is stored as a single option with
+            # is_correct=True, reusing the existing options structure
+            # rather than requiring a schema change for free-text answers.
+            final_opts = [{"text": short_answer, "is_correct": True}] if short_answer else []
+
+            conf = 40
+            if len(q_text) > 15: conf += 10
+            if len(q_text) > 40: conf += 5
+            if has_correct:      conf += 35
+            conf = min(conf, 95)
+
+            wc = len(q_text.split())
+            difficulty = "EASY" if wc < 12 else ("MEDIUM" if wc < 30 else "HARD")
+
+            results.append({
+                "id":            f"ext-{len(results) + 1}",
+                "question_text": q_text,
+                "question_type": "SHORT_ANSWER",
+                "options":       final_opts,
+                "marks":         marks,
+                "difficulty":    difficulty,
+                "confidence":    conf,
+                # Short-answer questions always need a human look — an
+                # extracted written answer is a good starting point, but
+                # free-text matching is inherently fuzzier than an MCQ
+                # letter, so these are never treated as fully confident.
+                "needs_review":  True,
+                "approved":      False,
+            })
+            continue
+
+        options = q.get("options", [])
         if not q_text or len(options) < 2:
             logger.debug("Skipping Q%s — insufficient text or options", number)
             continue
@@ -1036,8 +1548,8 @@ async def extract_questions_from_file(
     logger.info("Detected PDF format: %s", fmt)
 
     raw_questions = (
-        _parse_google_forms(full_text)
-        if fmt == "google_forms"
+        _parse_google_forms(full_text) if fmt == "google_forms"
+        else _parse_university_qa(full_text) if fmt == "university_qa"
         else _parse_standard(full_text)
     )
 
@@ -1051,13 +1563,26 @@ async def extract_questions_from_file(
             ),
         )
 
-    missing_answers = [q for q in raw_questions if not q.get("has_correct")]
-    if missing_answers:
+    # Only MCQ/MSQ/TRUE_FALSE questions that don't already have a correct
+    # answer extracted directly from the PDF (explicit marker, printed
+    # answer key, or bold/color highlighting) are sent to the AI at all —
+    # if the answer was already found in the document, the AI should never
+    # be asked to guess it. Short-answer / fill-in-the-blank questions are
+    # never sent to the (MCQ-oriented) inference prompt either; their
+    # answers, when present, only ever come from an explicit written
+    # answer key in the PDF itself.
+    needs_ai = [
+        q for q in raw_questions
+        if not q.get("has_correct") and not q.get("is_short_answer") and len(q.get("options", [])) >= 2
+    ]
+    if needs_ai:
         logger.info(
-            "%d / %d questions need AI answer inference",
-            len(missing_answers), len(raw_questions),
+            "%d / %d questions need AI answer inference (rest already answered from the PDF)",
+            len(needs_ai), len(raw_questions),
         )
         raw_questions = _infer_answers_with_deepseek(raw_questions)
+    else:
+        logger.info("All questions already have an answer extracted from the PDF — skipping AI inference entirely")
 
     extracted = _finalize(raw_questions)
 
