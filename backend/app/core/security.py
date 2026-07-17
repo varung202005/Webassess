@@ -35,6 +35,19 @@ def _resolve_jwt_key() -> bytes:
 
 _JWT_KEY = _resolve_jwt_key()
 
+# Supabase now supports asymmetric (ES256) JWT signing keys in addition to
+# the legacy shared-secret (HS256) scheme. Projects that have rotated to
+# asymmetric keys issue ES256 tokens verifiable via this JWKS endpoint —
+# no shared secret involved. We fetch/cache signing keys from here rather
+# than trusting anything else in the token.
+_JWKS_CLIENT = jwt.PyJWKClient(f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json")
+
+# Algorithms we are willing to accept. Which one applies to a given token
+# is determined by the token's own header, then verified against the
+# matching key material below — HS256 against the static secret, ES256
+# against Supabase's published public key.
+_ALLOWED_ALGORITHMS = {"HS256", "ES256"}
+
 
 def decode_token(token: str) -> dict:
     """
@@ -42,14 +55,35 @@ def decode_token(token: str) -> dict:
 
     SECURITY: Signature verification is mandatory. There is no fallback
     path that decodes an unverified token. Any failure — bad signature,
-    expired token, malformed token, wrong audience, wrong issuer —
-    results in a 401.
+    expired token, malformed token, wrong audience, wrong issuer,
+    unsupported algorithm — results in a 401.
+
+    Supports both of Supabase's signing schemes:
+      - Legacy HS256, verified against SUPABASE_JWT_SECRET.
+      - New asymmetric ES256, verified against Supabase's JWKS public key.
+    The algorithm is read from the token header only to pick which *known*
+    key/algorithm pair to verify with — it is never used to bypass
+    verification, and anything outside _ALLOWED_ALGORITHMS is rejected.
     """
     try:
+        try:
+            unverified_alg = jwt.get_unverified_header(token).get("alg")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or malformed token")
+
+        if unverified_alg not in _ALLOWED_ALGORITHMS:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unsupported token algorithm")
+
+        if unverified_alg == "ES256":
+            signing_key = _JWKS_CLIENT.get_signing_key_from_jwt(token).key
+            key, algorithms = signing_key, ["ES256"]
+        else:
+            key, algorithms = _JWT_KEY, ["HS256"]
+
         payload = jwt.decode(
             token,
-            key=_JWT_KEY,
-            algorithms=["HS256"],          # pin the algorithm — never trust alg from the token header
+            key=key,
+            algorithms=algorithms,         # pin to the single algorithm resolved above
             audience=EXPECTED_AUDIENCE,
             issuer=EXPECTED_ISSUER,
             options={
@@ -61,6 +95,12 @@ def decode_token(token: str) -> dict:
             },
         )
         return payload
+    except HTTPException:
+        # Re-raise HTTPExceptions we raised ourselves above (e.g. unsupported
+        # algorithm, malformed header) unchanged — don't let them fall into
+        # the generic Exception handler below and get rewritten/logged as
+        # unexpected errors.
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
     except jwt.InvalidAudienceError:
