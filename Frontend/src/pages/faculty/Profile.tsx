@@ -8,19 +8,20 @@ export default function Profile() {
   const profile = portal?.profile;
 
   return (
-    <FacultyLayout activePage="dashboard">
+    <FacultyLayout activePage="profile">
       <PageState loading={isLoading}>
         <PageHeading title="Faculty Profile" subtitle="Your faculty account information" />
-        <div style={{ display: "grid", gridTemplateColumns: "210px minmax(0,1fr)", gap: 18 }}>
-          <aside style={{ padding: 22, textAlign: "center", background: "#fff", border: "1px solid #e5e7ed", borderRadius: 18 }}>
-            <div style={{ width: 76, height: 76, borderRadius: 24, margin: "0 auto 12px", background: "#fde8ec", color: "#a30f2e", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 22 }}>
+        <div className="faculty-profile-layout">
+          <aside className="faculty-profile-card">
+            <div className="faculty-profile-avatar">
               {initials(profile?.full_name ?? "")}
             </div>
-            <h2 style={{ fontSize: 17 }}>{profile?.full_name}</h2>
-            <p style={{ fontSize: 11, color: "#7c808f", marginTop: 4 }}>{profile?.email}</p>
-            <p style={{ fontSize: 11, color: "#7c808f", marginTop: 4 }}>{profile?.departments?.name || "Department not set"}</p>
+            <span className="faculty-profile-kicker">Faculty account</span>
+            <h2>{profile?.full_name}</h2>
+            <p>{profile?.email}</p>
+            <p>{profile?.departments?.name || "Department not set"}</p>
           </aside>
-          <div className="panel" style={{ margin: 0 }}>
+          <div className="panel faculty-profile-details">
             <div className="panel-header"><h2>Information</h2></div>
             <div className="panel-body form-grid">
               <div className="form-field">

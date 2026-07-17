@@ -1,14 +1,3 @@
-/**
- * FacultyLayout.tsx
- *
- * CHANGES vs original:
- *   • "Schedules" nav item removed from the Insights group entirely.
- *     Publishing and schedule management now happens inline via the
- *     Dashboard Publish button — no dedicated Schedules page needed.
- *
- * Drop this file at:  src/features/faculty/FacultyLayout.tsx
- */
-
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
@@ -18,7 +7,6 @@ import { facultyApi } from "./api";
 import type { Notification } from "./types";
 import "./faculty.css";
 
-// ─── Nav groups — Schedules intentionally removed ───────────────────────────
 const navGroups = [
   {
     label: "Main",
@@ -31,8 +19,8 @@ const navGroups = [
   {
     label: "Insights",
     items: [
-      // "Schedules" removed — scheduling info surfaces on the Dashboard
       { key: "analytics", label: "Analytics", icon: "ti-device-desktop-analytics", path: "/faculty/analytics" },
+      { key: "schedules", label: "Schedules", icon: "ti-calendar-event", path: "/faculty/schedules" },
     ],
   },
   {
@@ -40,6 +28,7 @@ const navGroups = [
     items: [
       { key: "reevaluations", label: "Re-evaluations", icon: "ti-refresh-alert", path: "/faculty/reevaluations" },
       { key: "notifications", label: "Notifications",  icon: "ti-bell",          path: "/faculty/notifications" },
+      { key: "profile", label: "Profile", icon: "ti-user-circle", path: "/faculty/profile" },
     ],
   },
 ];
@@ -94,9 +83,11 @@ export default function FacultyLayout({ activePage, children }: FacultyLayoutPro
 
       <aside className={`faculty-sidebar ${mobileOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-logo">
-          <div className="brand-mark">E</div>
+          <div className="brand-mark" aria-label="Thapar Institute of Engineering and Technology">
+            <img src="/auth-assets/tiet-logo.png" alt="" />
+          </div>
           <div className="brand-copy">
-            <strong>EXAM.TIET</strong>
+            <strong>WebAssess</strong>
             <span>Faculty Portal</span>
           </div>
           <button className="sidebar-toggle" onClick={toggleCollapsed} aria-label="Toggle sidebar">
@@ -217,4 +208,4 @@ function notifIcon(type: string): string {
     PROCTORING_ALERT: "alert-triangle",
   };
   return map[type] ?? "bell";
-} 
+}
