@@ -20,7 +20,6 @@ const navGroups = [
     label: "Insights",
     items: [
       { key: "analytics", label: "Analytics", icon: "ti-device-desktop-analytics", path: "/faculty/analytics" },
-      { key: "schedules", label: "Schedules", icon: "ti-calendar-event", path: "/faculty/schedules" },
     ],
   },
   {

@@ -487,7 +487,7 @@
 /* ── Stats grid ──────────────────────────────────────── */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 13px;
   margin-bottom: 18px;
 }
@@ -3135,7 +3135,7 @@ select:focus, input:focus {
 .panel-body, .card-body { padding: 20px; }
 .panel-header h2, .card-header .card-title, .panel-title, .chart-title { font-weight: 740; color: #27272f; }
 .stats-grid { gap: 16px; margin-bottom: 20px; }
-.stat-card { min-height: 126px; padding: 18px; border-color: var(--faculty-line); border-radius: 16px; box-shadow: 0 6px 17px rgba(24,24,32,.035); transition: transform .18s ease, box-shadow .18s ease; }
+.stat-card { padding: 18px; border-color: var(--faculty-line); border-radius: 16px; box-shadow: 0 6px 17px rgba(24,24,32,.035); transition: transform .18s ease, box-shadow .18s ease; }
 .stat-card:hover { transform: translateY(-2px); box-shadow: 0 13px 24px rgba(24,24,32,.07); }
 .stat-card .stat-value, .stats-row.analytics .stat-val { margin-top: 13px; font-size: 29px; letter-spacing: -.055em; }
 .stat-card .stat-icon { width: 36px; height: 36px; border-radius: 11px; }
@@ -3198,3 +3198,11 @@ select:focus, input:focus {
 @media (max-width: 900px) { .faculty-content { padding: 25px; } .faculty-profile-layout { grid-template-columns: 1fr; } .faculty-profile-card { position: relative; top: 0; } }
 @media (max-width: 768px) { .faculty-header { height: 64px; padding: 0 16px; } .faculty-content { padding: 22px 16px; } .page-heading h1 { font-size: 24px; } .heading-actions { width: 100%; } .heading-actions .btn { flex: 1; } .stats-grid { gap: 12px; } .panel-body, .card-body { padding: 16px; } .faculty-profile-card { padding: 22px 18px; } }
 @media (prefers-reduced-motion: reduce) { .faculty-shell *, .faculty-shell *::before, .faculty-shell *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Scope stat cards in the faculty shell to prevent leaks from student and proctor CSS */
+.faculty-shell .stat-card {
+  display: block !important;
+  min-height: auto !important;
+  height: auto !important;
+}
+

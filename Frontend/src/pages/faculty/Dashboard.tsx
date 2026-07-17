@@ -109,7 +109,6 @@ function DashboardStats({ portal }: { portal: FacultyDashboard }) {
       items={[
         { label: "Total Questions", value: portal.questionStats?.total ?? 0, icon: "ti ti-books", meta: `${portal.questionStats?.active ?? 0} active` },
         { label: "Active Exams", value: portal.examCounts?.total ?? 0, icon: "ti ti-file-description", meta: `${portal.examCounts?.published ?? 0} published · ${portal.examCounts?.draft ?? 0} draft` },
-        { label: "Pending Grading", value: portal.pendingGrading ?? 0, icon: "ti ti-clock", color: "warning", meta: "Subjective answers awaiting review" },
         { label: "Re-evaluations", value: portal.pendingReevaluations ?? 0, icon: "ti ti-refresh-alert", color: "danger", meta: "Awaiting review" },
       ]}
     />
@@ -513,47 +512,7 @@ function CandidateAssessments({
   );
 }
 
-/* ── Grading Queue ─────────────────────────────────────── */
-function GradingQueue({ queue, onNavigate }: { queue: FacultyDashboard["gradingQueue"]; onNavigate: (examId: string) => void }) {
-  if (!queue || queue.length === 0) {
-    return (
-      <div className="panel" style={{ margin: 0 }}>
-        <div className="panel-header"><div className="card-title"><i className="ti ti-writing" /> Grading Queue</div></div>
-        <div className="panel-body">
-          <div className="empty-state" style={{ padding: "30px 20px" }}>
-            <i className="ti ti-circle-check" />
-            <div className="empty-state-title">All graded!</div>
-            <div className="empty-state-text">No pending subjective answers.</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="panel" style={{ margin: 0 }}>
-      <div className="panel-header">
-        <div className="card-title"><i className="ti ti-writing" /> Grading Queue</div>
-        <span className="badge badge-pending">{queue.reduce((a, b) => a + b.pending_count, 0)} pending</span>
-      </div>
-      <div>
-        {queue.map((item) => (
-          <div className="grading-item" key={item.exam_id} onClick={() => onNavigate(item.exam_id)}>
-            <div className="grading-course-badge">{item.course_code}</div>
-            <div className="grading-info">
-              <div className="grading-name">{item.exam_title}</div>
-              <div className="grading-count">{item.pending_count} ungraded · {item.question_type}</div>
-            </div>
-            <div className="grading-action">
-              <button className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); onNavigate(item.exam_id); }}>
-                Grade
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+
 
 /* ── Pass Rates ─────────────────────────────────────────── */
 function PassRateSection({ exams }: { exams: FacultyDashboard["recentExams"] }) {
@@ -747,7 +706,6 @@ export default function Dashboard() {
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 <UpcomingSchedules schedules={portal.upcomingSchedules} />
                 <CandidateAssessments schedules={portal.upcomingSchedules} onManage={setCandidateSchedule} />
-                <GradingQueue queue={portal.gradingQueue} onNavigate={(examId) => navigate(`/faculty/evaluation?examId=${examId}`)} />
               </div>
             </div>
 
