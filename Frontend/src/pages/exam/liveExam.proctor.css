@@ -304,3 +304,21 @@
   .force-submit-card { padding: 32px 22px; }
   .proctor-nag-bar  { flex-wrap: wrap; }
 }
+
+/* Live exam's institutional palette: proctoring status remains visible without
+   introducing a competing semantic colour. */
+.live-exam .proctor-dot { background: #a50e2d; box-shadow: 0 0 0 3px rgba(165,14,45,.12); animation: none; }
+.live-exam .proctor-indicator { color: #6d6d76; }
+.live-exam .proctor-nag-bar,
+.live-exam .tab-switch-bar { background: #25252a; border-color: #3a3a40; color: #fff; }
+.live-exam .proctor-nag-bar i,
+.live-exam .tab-switch-bar i { color: #fff; }
+.live-exam .nag-btn { background: #fff; color: #25252a; border-radius: 6px; }
+.live-exam .tab-switch-fill { background: #a50e2d; }
+.live-exam .tab-switch-danger { background: #fff1f4; color: #a50e2d; animation: none; }
+.live-exam .violation-warn--tab,
+.live-exam .violation-warn--fullscreen,
+.live-exam .violation-warn--conflict { background: #fff1f4; border-color: #edbec9; color: #8b0c27; }
+.live-exam .violation-warn--tab i,
+.live-exam .violation-warn--fullscreen i,
+.live-exam .violation-warn--conflict i { color: #a50e2d; }

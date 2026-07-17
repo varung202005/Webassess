@@ -139,17 +139,6 @@ function QuestionImage({ src, studentEmail }: QuestionImageProps) {
       {/* ── Inline image ── */}
       <div
         className="question-image-wrap"
-        style={{
-          margin: "18px 0 22px",
-          borderRadius: 12,
-          overflow: "hidden",
-          border: "1.5px solid #e5e7eb",
-          background: "#f9fafb",
-          display: "inline-block",
-          maxWidth: "100%",
-          cursor: "zoom-in",
-          position: "relative",
-        }}
         onClick={() => setLightboxOpen(true)}
         title="Click to enlarge"
       >
@@ -157,31 +146,12 @@ function QuestionImage({ src, studentEmail }: QuestionImageProps) {
           src={src}
           alt="Question illustration"
           onError={() => setImgError(true)}
-          style={{
-            display: "block",
-            maxWidth: "100%",
-            maxHeight: 340,
-            objectFit: "contain",
-            userSelect: "none",
-            // Discourage casual right-click saving (not a hard block).
-            // WebkitUserDrag isn't declared in React's CSSProperties type,
-            // so the *entire* literal is typed against an intersection that
-            // adds it — this is what avoids the excess-property-check error
-            // (casting just the value, e.g. `"none" as any`, does NOT work
-            // because TS still validates the key against CSSProperties).
-            WebkitUserDrag: "none",
-          } as React.CSSProperties & { WebkitUserDrag?: string }}
+          className="question-image"
           onContextMenu={(e) => e.preventDefault()}
           draggable={false}
         />
         {/* Zoom hint badge */}
-        <div style={{
-          position: "absolute", bottom: 8, right: 8,
-          background: "rgba(0,0,0,0.45)", color: "#fff",
-          borderRadius: 6, padding: "3px 8px", fontSize: 11,
-          display: "flex", alignItems: "center", gap: 4,
-          pointerEvents: "none",
-        }}>
+        <div className="image-zoom-hint">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/>
           </svg>
@@ -193,18 +163,13 @@ function QuestionImage({ src, studentEmail }: QuestionImageProps) {
       {lightboxOpen && (
         <div
           onClick={() => setLightboxOpen(false)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 2000,
-            background: "rgba(0,0,0,0.88)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "zoom-out",
-          }}
+          className="question-lightbox"
         >
           {/* Watermark inside lightbox so it overlays the enlarged image too */}
           <div
             className="exam-watermark"
             aria-hidden="true"
-            style={{ zIndex: 2001 }}
+            data-lightbox-watermark
           >
             {Array.from({ length: 150 }).map((_, i) => (
               <span key={i}>{studentEmail}</span>
@@ -217,41 +182,20 @@ function QuestionImage({ src, studentEmail }: QuestionImageProps) {
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
             draggable={false}
-            style={{
-              maxWidth: "92vw",
-              maxHeight: "88vh",
-              objectFit: "contain",
-              borderRadius: 10,
-              boxShadow: "0 8px 60px rgba(0,0,0,0.6)",
-              position: "relative",
-              zIndex: 2002,
-              userSelect: "none",
-            }}
+            className="lightbox-image"
           />
 
           {/* Close button */}
           <button
             onClick={() => setLightboxOpen(false)}
-            style={{
-              position: "fixed", top: 18, right: 22,
-              background: "rgba(255,255,255,0.15)",
-              border: "none", borderRadius: "50%",
-              width: 38, height: 38,
-              color: "#fff", fontSize: 20,
-              cursor: "pointer", zIndex: 2003,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
+            className="lightbox-close"
             title="Close (Esc)"
           >
             ✕
           </button>
 
           {/* Keyboard hint */}
-          <div style={{
-            position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)",
-            color: "rgba(255,255,255,0.5)", fontSize: 12, zIndex: 2003,
-            pointerEvents: "none",
-          }}>
+          <div className="lightbox-caption">
             Press Esc or click outside to close
           </div>
         </div>
@@ -680,7 +624,7 @@ export default function LiveExam() {
     return (
       <div className="force-submit-overlay offline-overlay">
         <div className="force-submit-card">
-          <div className="force-submit-icon" style={{ color: "#d97706", background: "#fef3c7" }}>
+          <div className="force-submit-icon connection-lost-icon">
             <i className="ti ti-wifi-off" />
           </div>
           <h2>Connection Lost</h2>
@@ -733,16 +677,7 @@ export default function LiveExam() {
           <i className="ti ti-eye-off" />
           <span>Tab switches: <strong>{tabCount} / {rule.max_tab_switches}</strong></span>
           <div className="tab-switch-track">
-            <div
-              className="tab-switch-fill"
-              style={{
-                width: `${Math.min(100, (tabCount / rule.max_tab_switches) * 100)}%`,
-                background:
-                  tabCount >= rule.max_tab_switches - 1 ? "#dc2626" :
-                  tabCount >= Math.floor(rule.max_tab_switches / 2) ? "#d97706" :
-                  "#4ade80",
-              }}
-            />
+            <div className={`tab-switch-fill tab-fill-${Math.min(100, Math.ceil((tabCount / rule.max_tab_switches) * 100 / 10) * 10)} ${tabCount >= rule.max_tab_switches - 1 ? "is-critical" : tabCount >= Math.floor(rule.max_tab_switches / 2) ? "is-warning" : ""}`} />
           </div>
           {tabCount >= rule.max_tab_switches - 1 && (
             <span className="tab-switch-danger">Next switch = auto-submit</span>
@@ -756,16 +691,7 @@ export default function LiveExam() {
           <i className="ti ti-maximize-off" />
           <span>Fullscreen exits: <strong>{fsCount} / {rule.max_fullscreen_exits}</strong></span>
           <div className="tab-switch-track">
-            <div
-              className="tab-switch-fill"
-              style={{
-                width: `${Math.min(100, (fsCount / rule.max_fullscreen_exits) * 100)}%`,
-                background:
-                  fsCount >= rule.max_fullscreen_exits - 1 ? "#dc2626" :
-                  fsCount >= Math.floor(rule.max_fullscreen_exits / 2) ? "#d97706" :
-                  "#4ade80",
-              }}
-            />
+            <div className={`tab-switch-fill tab-fill-${Math.min(100, Math.ceil((fsCount / rule.max_fullscreen_exits) * 100 / 10) * 10)} ${fsCount >= rule.max_fullscreen_exits - 1 ? "is-critical" : fsCount >= Math.floor(rule.max_fullscreen_exits / 2) ? "is-warning" : ""}`} />
           </div>
           {fsCount >= rule.max_fullscreen_exits - 1 && (
             <span className="tab-switch-danger">Next exit = auto-submit</span>
@@ -799,27 +725,35 @@ export default function LiveExam() {
       {/* Header */}
       <header className="live-header">
         <div className="live-title">
-          <strong>EXAM.TIET</strong>
-          <span>{session.exam.courses?.code} · {session.exam.title}</span>
+          <div className="brand-mark" aria-hidden="true">W</div>
+          <div>
+            <strong>WebAssess</strong>
+            <span>{session.exam.courses?.code} · {session.exam.title}</span>
+          </div>
         </div>
         <div className={`live-timer ${danger ? "danger" : ""}`}>
           <i className="ti ti-clock" />
           <span>Time remaining</span>
           <strong>{formatRemaining(remaining)}</strong>
         </div>
-        <div className="save-state">
-          <span className={saving ? "saving" : ""} />
-          <span>
-            {saving
-              ? "Saving..."
-              : lastSaved
-              ? `Saved ${lastSaved.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : "Progress restored"}
-          </span>
-        </div>
-        <div className="proctor-indicator">
-          <div className="proctor-dot" />
-          <span>Monitored</span>
+        <div className="header-actions">
+          <div className="save-state">
+            <span className={saving ? "saving" : ""} />
+            <span>
+              {saving
+                ? "Saving..."
+                : lastSaved
+                ? `Saved ${lastSaved.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                : "Progress restored"}
+            </span>
+          </div>
+          <div className="proctor-indicator">
+            <div className="proctor-dot" />
+            <span>Monitored</span>
+          </div>
+          <button className="header-submit" onClick={() => setSubmitOpen(true)}>
+            Submit exam
+          </button>
         </div>
       </header>
 
@@ -832,68 +766,15 @@ export default function LiveExam() {
       )}
 
       <div className="live-body">
-        {/* Question pane */}
-        <main className="question-pane">
-          <div className="question-scroll">
-            <div className="question-meta">
-              <span>Question {index + 1} of {questions.length}</span>
-              <div>
-                <b>{row.marks_override ?? question.marks} marks</b>
-                {question.negative_marks > 0 && (
-                  <b className="negative">-{question.negative_marks} negative</b>
-                )}
-                <b>{question.question_type.replace("_", " ")}</b>
-              </div>
-            </div>
-
-            {/* Question stem */}
-            <h1>{obfuscateText(question.question_text)}</h1>
-
-            {/* ── NEW: question image rendered between stem and options ── */}
-            {question.image_url && (
-              <QuestionImage
-                src={question.image_url}
-                studentEmail={currentUser?.email ?? ""}
-              />
-            )}
-
-            <AnswerInput question={row} answer={currentAnswer} onChange={changeAnswer} />
-
-            <div className="question-tools">
-              <button
-                className={currentAnswer.is_marked_for_review ? "flagged" : ""}
-                onClick={() => changeAnswer({ is_marked_for_review: !currentAnswer.is_marked_for_review })}
-              >
-                <i className="ti ti-flag" />
-                {currentAnswer.is_marked_for_review ? "Marked for review" : "Mark for review"}
-              </button>
-              <button onClick={() => changeAnswer({ selected_option_id: null, selected_option_ids: [], answer_text: "" })}>
-                <i className="ti ti-eraser" />Clear response
-              </button>
-            </div>
-          </div>
-          <footer className="question-nav">
-            <button className="btn btn-secondary" disabled={index === 0} onClick={() => goTo(index - 1)}>
-              <i className="ti ti-arrow-left" />Previous
-            </button>
-            <div>
-              <button className="btn btn-danger" onClick={() => setSubmitOpen(true)}>Submit Exam</button>
-              <button
-                className="btn btn-primary"
-                disabled={index === questions.length - 1}
-                onClick={() => goTo(index + 1)}
-              >
-                Save & Next<i className="ti ti-arrow-right" />
-              </button>
-            </div>
-          </footer>
-        </main>
-
-        {/* Palette */}
+        {/* Navigator */}
         <aside className="question-palette">
+          <div className="palette-topline">
+            <span>Assessment</span>
+            <span>{summary.answered}/{questions.length}</span>
+          </div>
           <div className="palette-head">
-            <strong>Question Palette</strong>
-            <span>{summary.answered}/{questions.length} answered</span>
+            <strong>Question navigator</strong>
+            <span>Choose a question</span>
           </div>
           <div className="palette-grid">
             {questions.map((item, qi) => {
@@ -907,68 +788,78 @@ export default function LiveExam() {
               return (
                 <button className={cls} key={item.questions.id} onClick={() => goTo(qi)}>
                   {qi + 1}
-                  {/* ── Image indicator dot on palette button ── */}
-                  {item.questions.image_url && (
-                    <span style={{
-                      position: "absolute", top: 2, right: 2,
-                      width: 6, height: 6, borderRadius: "50%",
-                      background: "#0369a1",
-                      display: "block",
-                    }} title="Has image" />
-                  )}
+                  {item.questions.image_url && <span className="image-available" title="Has image" />}
                 </button>
               );
             })}
           </div>
           <div className="palette-legend">
-            <span><i className="answered" />Answered: {summary.answered}</span>
-            <span><i className="flagged" />Review: {summary.flagged}</span>
-            <span><i />Unanswered: {summary.unanswered}</span>
+            <span><i className="answered" />Answered <b>{summary.answered}</b></span>
+            <span><i className="flagged" />Marked for review <b>{summary.flagged}</b></span>
+            <span><i />Not answered <b>{summary.unanswered}</b></span>
+            <span><i className="current" />Current question</span>
           </div>
 
-          {/* Fullscreen button */}
           {rule.fullscreen_required && (
             <button
               className={`btn btn-secondary fullscreen${!isFullscreen ? " fullscreen-urgent" : ""}`}
               onClick={() => document.documentElement.requestFullscreen().catch(() => undefined)}
             >
               <i className="ti ti-maximize" />
-              {isFullscreen ? "Fullscreen Active" : "Re-enter Fullscreen ⚠"}
+              {isFullscreen ? "Fullscreen active" : "Re-enter fullscreen"}
             </button>
           )}
-
-          {/* Tab switch counter */}
-          {rule.max_tab_switches > 0 && (
-            <div className={`palette-integrity${tabCount >= rule.max_tab_switches - 1 && tabCount > 0 ? " danger" : ""}`}>
-              <i className="ti ti-eye" />
-              <span>Tab switches: {tabCount}/{rule.max_tab_switches}</span>
-            </div>
-          )}
-
-          {/* Fullscreen exit counter */}
-          {rule.max_fullscreen_exits > 0 && (
-            <div className={`palette-integrity${fsCount >= rule.max_fullscreen_exits - 1 && fsCount > 0 ? " danger" : ""}`}>
-              <i className="ti ti-maximize-off" />
-              <span>Fullscreen exits: {fsCount}/{rule.max_fullscreen_exits}</span>
-            </div>
-          )}
-
-          {/* Proctoring status */}
-          <div className="proctor-status-chip">
-            <div className="proctor-dot" />
-            <span>
-              {[
-                rule.camera_required     && "Camera",
-                rule.microphone_required && "Audio",
-                "Browser",
-              ].filter(Boolean).join(" · ")} monitoring active
-            </span>
-          </div>
-
-          <div className="timer-policy">
-            Timer policy: your attempt closes at the earlier of the full duration or the published exam closing time.
-          </div>
+          <div className="timer-policy">Your answers are saved automatically as you work.</div>
         </aside>
+
+        {/* Question pane */}
+        <main className="question-pane">
+          <div className="question-scroll">
+            <div className="exam-workspace">
+              <section className="question-content">
+                <div className="question-meta">
+                  <span>Question {index + 1} <em>of {questions.length}</em></span>
+                  <div>
+                    <b>{row.marks_override ?? question.marks} marks</b>
+                    {question.negative_marks > 0 && <b className="negative">-{question.negative_marks} negative</b>}
+                  </div>
+                </div>
+                <div className="question-type"><i className="ti ti-notes" /> {question.question_type.replace("_", " ")}</div>
+                <h1>{obfuscateText(question.question_text)}</h1>
+                {question.image_url && <QuestionImage src={question.image_url} studentEmail={currentUser?.email ?? ""} />}
+              </section>
+              <section className="answer-panel" aria-label="Answer panel">
+                <div className="answer-panel-head">
+                  <span>Your response</span>
+                  <small>{question.question_type === "MSQ" ? "Select all that apply" : question.question_type === "MCQ" ? "Select one option" : "Write your answer below"}</small>
+                </div>
+                <AnswerInput question={row} answer={currentAnswer} onChange={changeAnswer} />
+                <div className="question-tools">
+                  <button className={currentAnswer.is_marked_for_review ? "flagged" : ""} onClick={() => changeAnswer({ is_marked_for_review: !currentAnswer.is_marked_for_review })}>
+                    <i className="ti ti-flag" />{currentAnswer.is_marked_for_review ? "Marked for review" : "Mark for review"}
+                  </button>
+                  <button onClick={() => changeAnswer({ selected_option_id: null, selected_option_ids: [], answer_text: "" })}>
+                    <i className="ti ti-eraser" />Clear response
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+          <footer className="question-nav">
+            <button className="btn btn-secondary" disabled={index === 0} onClick={() => goTo(index - 1)}>
+              <i className="ti ti-arrow-left" />Previous
+            </button>
+            <div>
+              <button
+                className="btn btn-primary"
+                disabled={index === questions.length - 1}
+                onClick={() => goTo(index + 1)}
+              >
+                Save & Next<i className="ti ti-arrow-right" />
+              </button>
+            </div>
+          </footer>
+        </main>
       </div>
 
       {session && (
@@ -1010,7 +901,7 @@ export default function LiveExam() {
                 You have answered <strong>{summary.answered}</strong> of {questions.length} questions.
                 {summary.unanswered > 0 && ` ${summary.unanswered} remain unanswered.`}
               </p>
-              <div className="detail-grid" style={{ marginTop: 14 }}>
+              <div className="detail-grid submit-summary-grid">
                 <div className="detail-item"><span>Answered</span><strong>{summary.answered}</strong></div>
                 <div className="detail-item"><span>Marked for review</span><strong>{summary.flagged}</strong></div>
               </div>
