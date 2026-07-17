@@ -67,7 +67,7 @@ export default function Dashboard() {
             <section className="panel">
               <div className="panel-header">
                 <i className="ti ti-calendar-check" />
-                <h2>Registered Upcoming Exams</h2>
+                <h2>Registered/Upcoming Exams</h2>
                 <Link to="/student/registered">View all</Link>
               </div>
               <div className="panel-body">
