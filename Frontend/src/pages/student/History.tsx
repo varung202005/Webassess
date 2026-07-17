@@ -19,10 +19,11 @@ export default function History() {
 
   return <StudentLayout><PageState loading={portal.isLoading} error={portal.error}>
     <PageHeading title="Exam History" subtitle="All exam attempts recorded for your account" />
-    <div className="filter-panel">
-      <select className="select" value={subject} onChange={(event) => setSubject(event.target.value)}><option value="ALL">All subjects</option>{subjects.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-      <select className="select" value={semester} onChange={(event) => setSemester(event.target.value)}><option value="ALL">All semesters</option>{Array.from({ length: 12 }, (_, index) => index + 1).map((item) => <option key={item} value={item}>Semester {item}</option>)}</select>
-      <input className="field date-field" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+    <div className="filter-panel history-filter-panel">
+      <span className="filter-caption"><i className="ti ti-adjustments-horizontal" />Filter attempts</span>
+      <div className="filter-control"><i className="ti ti-book-2" /><label className="visually-hidden" htmlFor="history-subject">Subject</label><select id="history-subject" className="select" value={subject} onChange={(event) => setSubject(event.target.value)}><option value="ALL">All subjects</option>{subjects.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
+      <div className="filter-control"><i className="ti ti-school" /><label className="visually-hidden" htmlFor="history-semester">Semester</label><select id="history-semester" className="select" value={semester} onChange={(event) => setSemester(event.target.value)}><option value="ALL">All semesters</option>{Array.from({ length: 12 }, (_, index) => index + 1).map((item) => <option key={item} value={item}>Semester {item}</option>)}</select></div>
+      <div className="filter-control date-control"><i className="ti ti-calendar" /><label className="visually-hidden" htmlFor="history-date">Attempt date</label><input id="history-date" className="field date-field" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></div>
     </div>
     {!history.length ? <EmptyState icon="ti-history-off" title="No attempts found" body="Completed and in-progress exam attempts will appear here." /> :
       <div className="data-panel"><table className="data-table"><thead><tr><th>Exam</th><th>Attempted</th><th>Result</th><th>Status</th><th>Submission</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}>

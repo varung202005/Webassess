@@ -65,14 +65,15 @@ export default function AvailableExams() {
       <PageState loading={portal.isLoading} error={portal.error}>
         <PageHeading title="Available Exams" subtitle="Published examinations available to your department" />
         <Feedback message={feedback} error={error} />
-        <div className="filter-panel">
-          <input className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by exam, subject, or course code" />
-          <select className="select" value={status} onChange={(event) => setStatus(event.target.value)}>
+        <div className="filter-panel compact-filter-panel">
+          <div className="filter-control search-control"><i className="ti ti-search" /><label className="visually-hidden" htmlFor="available-search">Search exams</label><input id="available-search" className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search exams" /></div>
+          <div className="filter-control"><i className="ti ti-adjustments-horizontal" /><label className="visually-hidden" htmlFor="available-status">Exam status</label><select id="available-status" className="select" value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="ALL">All statuses</option>
             <option value="OPEN">Open for registration</option>
             <option value="REGISTERED">Registered</option>
             <option value="CLOSED">Closed</option>
           </select>
+          </div>
         </div>
         {!exams.length ? <EmptyState icon="ti-file-search" title="No matching exams" body="Published exams for your department will appear here." /> :
           <div className="exam-grid">{exams.map((schedule) => (
