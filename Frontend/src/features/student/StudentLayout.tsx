@@ -210,7 +210,7 @@ export function PageState({
   children: ReactNode;
 }) {
   if (loading) {
-    return <div className="state-card"><span className="spinner" /> Loading student data...</div>;
+    return <div className="page-loading" role="status" aria-live="polite"><div className="skeleton-heading"><span /><span /></div><div className="skeleton-grid"><span /><span /><span /></div><div className="skeleton-panel"><span /><span /><span /></div><p><span className="spinner" />Preparing your student workspace</p></div>;
   }
   if (error) {
     return <div className="state-card error"><i className="ti ti-alert-circle" /> {error instanceof Error ? error.message : "Unable to load this page."}</div>;
