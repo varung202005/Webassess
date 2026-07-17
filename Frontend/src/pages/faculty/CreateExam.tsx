@@ -66,6 +66,14 @@ interface ExtractedQuestion {
    * is created in handleImported().
    */
   _imageFile?: File | null;
+  /**
+   * Client-side only — whether this question should ALSO be selected into
+   * the exam currently being built, in addition to being saved to the
+   * question bank. Saving to the bank never requires marks to add up to
+   * the exam's target; that target only matters for questions flagged here,
+   * since those are the ones that actually count toward this exam's total.
+   */
+  _addToExam?: boolean;
 }
 
 interface ExamForm {
@@ -553,8 +561,9 @@ function StepExamInfo({ form, onChange }: {
 // QuestionRow
 // ─────────────────────────────────────────────────────────────────────────────
 
-function QuestionRow({ q, selected, onToggle }: {
+function QuestionRow({ q, selected, onToggle, onUpdateMarks }: {
   q: Question; selected: boolean; onToggle: () => void;
+  onUpdateMarks: (q: Question, marks: number) => void;
 }) {
   const typeColor: Record<string, string> = {
     MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669", SHORT_ANSWER: "#b45309",
@@ -563,6 +572,20 @@ function QuestionRow({ q, selected, onToggle }: {
     MCQ: "MCQ", MSQ: "MSQ", TRUE_FALSE: "TRUE_FALSE", SHORT_ANSWER: "FILL-BLANK",
   };
   const diffColor: Record<string, string> = { EASY: "#059669", MEDIUM: "#d97706", HARD: "#dc2626" };
+
+  // Editable marks — kept as local text so the field feels responsive while
+  // typing, committed to the repository (and to the exam's running total)
+  // on blur / Enter. Resyncs if the underlying question's marks change
+  // elsewhere (e.g. edited from the standalone Question Bank page).
+  const [marksInput, setMarksInput] = useState(String(q.marks));
+  useEffect(() => { setMarksInput(String(q.marks)); }, [q.marks]);
+
+  const commitMarks = () => {
+    const parsed = parseFloat(marksInput);
+    if (!Number.isFinite(parsed) || parsed < 0) { setMarksInput(String(q.marks)); return; }
+    if (parsed !== q.marks) onUpdateMarks(q, parsed);
+  };
+
   return (
     <div className={`q-row ${selected ? "q-row-selected" : ""}`} onClick={onToggle}>
       <div className="q-row-check">
@@ -575,7 +598,24 @@ function QuestionRow({ q, selected, onToggle }: {
             {typeLabel[q.question_type] ?? q.question_type}
           </span>
           <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty] }}>{q.difficulty}</span>
-          <span className="q-badge">{q.marks} mark{q.marks !== 1 ? "s" : ""}</span>
+          <span
+            className="q-badge"
+            onClick={(e) => e.stopPropagation()}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 4px 2px 8px" }}
+            title="Click to change marks for this question"
+          >
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={marksInput}
+              onChange={(e) => setMarksInput(e.target.value)}
+              onBlur={commitMarks}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              style={{ width: 40, border: "none", background: "transparent", font: "inherit", color: "inherit", padding: 0 }}
+            />
+            mark{q.marks !== 1 ? "s" : ""}
+          </span>
           {q.courses && <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>}
           {q.image_url && (
             <span
@@ -814,6 +854,20 @@ function AnswerEditorSidebar({
   // Image attachment — carried client-side until the question is actually
   // created in the repository (see handleImported in the main component).
   const [imageFile, setImageFile] = useState<File | null>(question._imageFile ?? null);
+  // FIX: QuestionImageUploader only shows a preview for a file the user just
+  // picked in *this* mount (its internal preview state starts at whatever
+  // `existingUrl` was passed in). Previously no `existingUrl` was ever passed
+  // here, so reopening the sidebar for a question that already had an image
+  // attached (from a previous visit to this editor) showed an empty "Attach
+  // an image" dropzone instead of the image — even though the row in the
+  // table correctly showed the "Image" badge. Generating an object URL for
+  // the already-selected File up front fixes that.
+  const [initialImagePreviewUrl] = useState<string | null>(
+    question._imageFile ? URL.createObjectURL(question._imageFile) : null,
+  );
+  useEffect(() => {
+    return () => { if (initialImagePreviewUrl) URL.revokeObjectURL(initialImagePreviewUrl); };
+  }, [initialImagePreviewUrl]);
 
   // Close on Escape key
   useEffect(() => {
@@ -962,7 +1016,7 @@ function AnswerEditorSidebar({
               <i className="ti ti-photo" style={{ fontSize: 12 }} /> Question Image
               <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#c1c7d0" }}>(optional)</span>
             </div>
-            <QuestionImageUploader compact onFileSelected={setImageFile} />
+            <QuestionImageUploader compact existingUrl={initialImagePreviewUrl} onFileSelected={setImageFile} />
           </div>
 
           {question.question_type === "SHORT_ANSWER" ? (
@@ -1113,6 +1167,18 @@ function PdfImportPanel({
   const approveAll = () =>
     setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
 
+  // Which approved rows should ALSO be selected into the exam being built
+  // (as opposed to just saved to the question bank). Saving to the bank
+  // never needs marks to add up — only rows checked here count toward the
+  // exam's target, and only once you continue past the Questions step.
+  const [addToExam, setAddToExam] = useState<Set<string>>(new Set());
+  const toggleAddToExam = (id: string) =>
+    setAddToExam((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   // Called by sidebar when user saves edited answers
   const handleAnswerSave = (updated: ExtractedQuestion) =>
     setExtracted((list) => list.map((q) => (q.id === updated.id ? updated : q)));
@@ -1120,7 +1186,9 @@ function PdfImportPanel({
   const saveApproved = () => {
     const approved = extracted.filter((q) => q.approved);
     if (!approved.length) { setError("Approve at least one question first."); return; }
-    setStatus("saving"); onImported(approved); setStatus("idle"); setExtracted([]); setError("");
+    const withExamFlag = approved.map((q) => ({ ...q, _addToExam: addToExam.has(q.id) }));
+    setStatus("saving"); onImported(withExamFlag); setStatus("idle");
+    setExtracted([]); setAddToExam(new Set()); setError("");
   };
 
   const reset = () => {
@@ -1175,6 +1243,9 @@ function PdfImportPanel({
   if (status === "review") {
     const approvedCount = extracted.filter((q) => q.approved).length;
     const approvedMarksSum = extracted.filter((q) => q.approved).reduce((s, q) => s + q.marks, 0);
+    const examMarksToAdd = extracted
+      .filter((q) => q.approved && addToExam.has(q.id))
+      .reduce((s, q) => s + q.marks, 0);
     const avgConf = extracted.length
       ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length)
       : 0;
@@ -1227,22 +1298,33 @@ function PdfImportPanel({
           </div>
           <div className="import-summary-card"><span className="is-val">{approvedCount}</span><span className="is-lbl">Approved</span></div>
           <div className="import-summary-card">
-            <span
-              className="is-val"
-              style={{ color: typeof targetMarks === "number" && (selectedMarksSum ?? 0) + approvedMarksSum > targetMarks ? "#dc2626" : undefined }}
-            >
-              {approvedMarksSum}
-            </span>
+            <span className="is-val">{approvedMarksSum}</span>
             <span className="is-lbl">Approved Marks</span>
           </div>
+          {examMarksToAdd > 0 && (
+            <div className="import-summary-card">
+              <span
+                className="is-val"
+                style={{ color: typeof targetMarks === "number" && (selectedMarksSum ?? 0) + examMarksToAdd > targetMarks ? "#dc2626" : undefined }}
+              >
+                {examMarksToAdd}
+              </span>
+              <span className="is-lbl">Marks Added to Exam</span>
+            </div>
+          )}
         </div>
 
-        {typeof targetMarks === "number" && (
-          <div style={{ fontSize: 12, color: "#6b7280", margin: "-6px 0 14px" }}>
-            <i className="ti ti-info-circle" style={{ marginRight: 4 }} />
-            Exam needs {targetMarks} marks total{typeof selectedMarksSum === "number" ? ` (${selectedMarksSum} already selected)` : ""} — adjust marks below (click a Marks cell) so approved questions add up correctly.
-          </div>
-        )}
+        <div style={{ fontSize: 12, color: "#6b7280", margin: "-6px 0 14px" }}>
+          <i className="ti ti-info-circle" style={{ marginRight: 4 }} />
+          Approved questions are always saved to your question bank — marks don't need to add up to anything for that.
+          {typeof targetMarks === "number" && (
+            <>
+              {" "}Check <strong>Add to Exam</strong> on the questions you also want in this exam
+              {typeof selectedMarksSum === "number" ? ` (currently ${selectedMarksSum} of ${targetMarks} marks selected)` : ""} —
+              those marks only need to add up once you continue past this step.
+            </>
+          )}
+        </div>
 
         <div className="import-table-wrap">
           <div className="import-table-actions" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1265,6 +1347,7 @@ function PdfImportPanel({
                 <th>Correct Answer(s)</th>
                 <th>Confidence</th>
                 <th>Approve</th>
+                {typeof targetMarks === "number" && <th>Add to Exam</th>}
               </tr>
             </thead>
             <tbody>
@@ -1348,6 +1431,17 @@ function PdfImportPanel({
                         {q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}
                       </button>
                     </td>
+                    {typeof targetMarks === "number" && (
+                      <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={addToExam.has(q.id)}
+                          disabled={!q.approved}
+                          onChange={() => toggleAddToExam(q.id)}
+                          title={q.approved ? "Also select this question into the current exam" : "Approve this question first"}
+                        />
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -1366,6 +1460,10 @@ function PdfImportPanel({
             type="button"
           >
             <i className="ti ti-check" /> Save {approvedCount} Question{approvedCount !== 1 ? "s" : ""} to Repository
+            {(() => {
+              const examCount = extracted.filter((q) => q.approved && addToExam.has(q.id)).length;
+              return examCount > 0 ? ` & Add ${examCount} to Exam` : "";
+            })()}
           </button>
         </div>
       </div>
@@ -1466,10 +1564,11 @@ function AutoGeneratePanel({ questions, onGenerated }: {
 // Step 2: Question Management
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, onToggle, onAddNew, onImported, allQuestions, questionsLoading }: {
+function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, onToggle, onAddNew, onImported, onUpdateMarks, allQuestions, questionsLoading }: {
   courseId: string; selectedIds: Set<string>; selectedQuestions: Question[]; targetMarks: number;
   onToggle: (q: Question) => void;
   onAddNew: (q: Question) => void; onImported: (qs: ExtractedQuestion[]) => void;
+  onUpdateMarks: (q: Question, marks: number) => void;
   allQuestions: Question[]; questionsLoading: boolean;
 }) {
   const [tab,        setTab]        = useState<"select" | "create" | "import" | "auto">("select");
@@ -1578,7 +1677,7 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
           ) : (
             <div className="q-list">
               {filtered.map((q) => (
-                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} />
+                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} onUpdateMarks={onUpdateMarks} />
               ))}
             </div>
           )}
@@ -2036,10 +2135,31 @@ export default function CreateExam() {
     );
   };
 
-  const handleAddNew = (q: Question) => {
+  const handleAddNew = (q: Question, selectForExam: boolean = true) => {
     setLocallyAddedQuestions((prev) => prev.some((p) => p.id === q.id) ? prev : [q, ...prev]);
-    setSelectedQuestions((prev) => prev.some((p) => p.id === q.id) ? prev : [...prev, q]);
+    if (selectForExam) {
+      setSelectedQuestions((prev) => prev.some((p) => p.id === q.id) ? prev : [...prev, q]);
+    }
     queryClient.invalidateQueries({ queryKey: QUERY_KEYS.questions() });
+  };
+
+  // Update a question's marks in the repository (used from the "Select
+  // Existing" tab so faculty can tweak marks to hit the exam's target
+  // without leaving the exam builder). Also keeps any local copies of the
+  // question — in the selected list and the locally-added list — in sync
+  // so the marks total updates immediately.
+  const handleUpdateQuestionMarks = async (q: Question, marks: number) => {
+    setSelectedQuestions((prev) => prev.map((p) => (p.id === q.id ? { ...p, marks } : p)));
+    setLocallyAddedQuestions((prev) => prev.map((p) => (p.id === q.id ? { ...p, marks } : p)));
+    try {
+      await facultyApi.updateQuestion(q.id, { marks });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.questions() });
+    } catch (e) {
+      console.error("Failed to update marks for question:", q.id, e);
+      // Roll back the optimistic update on failure
+      setSelectedQuestions((prev) => prev.map((p) => (p.id === q.id ? { ...p, marks: q.marks } : p)));
+      setLocallyAddedQuestions((prev) => prev.map((p) => (p.id === q.id ? { ...p, marks: q.marks } : p)));
+    }
   };
 
   const handleImported = async (qs: ExtractedQuestion[]) => {
@@ -2069,7 +2189,10 @@ export default function CreateExam() {
         }
 
         const full = await facultyApi.getQuestion(res.question_id);
-        handleAddNew(full);
+        // Every approved question is saved to the repository regardless of
+        // marks. Only the ones explicitly flagged "Add to Exam" during
+        // review are also selected into this exam's question list.
+        handleAddNew(full, !!q._addToExam);
       } catch (e) {
         console.error("Failed to save imported question:", q.question_text, e);
       }
@@ -2266,6 +2389,7 @@ export default function CreateExam() {
                       courseId={form.course_id} selectedIds={selectedIds}
                       selectedQuestions={selectedQuestions} targetMarks={form.total_marks}
                       onToggle={toggleQuestion} onAddNew={handleAddNew} onImported={handleImported}
+                      onUpdateMarks={handleUpdateQuestionMarks}
                       allQuestions={allQuestions} questionsLoading={questionsLoading}
                     />
                   )}
