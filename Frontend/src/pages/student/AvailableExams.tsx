@@ -66,7 +66,7 @@ export default function AvailableExams() {
         <PageHeading title="Available Exams" subtitle="Published examinations available to your department" />
         <Feedback message={feedback} error={error} />
         <div className="filter-panel compact-filter-panel">
-          <div className="filter-control search-control"><i className="ti ti-search" /><label className="visually-hidden" htmlFor="available-search">Search exams</label><input id="available-search" type="search" className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search exams" /></div>
+          <div className="filter-control search-control" onClick={(event) => event.currentTarget.querySelector("input")?.focus()}><i className="ti ti-search" /><label className="visually-hidden" htmlFor="available-search">Search exams</label><input id="available-search" type="search" className="field" value={search} onInput={(event) => setSearch(event.currentTarget.value)} placeholder="Search exams" /></div>
           <div className="filter-control"><i className="ti ti-adjustments-horizontal" /><label className="visually-hidden" htmlFor="available-status">Exam status</label><select id="available-status" className="select" value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="ALL">All statuses</option>
             <option value="OPEN">Open for registration</option>
