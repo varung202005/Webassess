@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import StudentLayout, { EmptyState, PageState } from "../../features/student/StudentLayout";
 import { CountdownCard, PageHeading } from "../../features/student/components";
@@ -46,20 +45,24 @@ export default function Dashboard() {
           </button>
         </PageHeading>
 
-        <div className="stats-grid">
+        <div className="dashboard-section-title">
+          <span>Overview</span>
+          <p>Your current examination activity</p>
+        </div>
+        <div className="stats-grid dashboard-stats">
           <Stat
             label="Upcoming Exams"
             value={String(registeredUpcoming.length)}
             detail={`${registeredUpcoming.filter((item) => +new Date(item.start_time) < now + 604800000).length} in the next 7 days`}
             icon="ti-calendar-event"
           />
-          <Stat label="Exams Passed" value={String(passed)} detail={`Out of ${data?.results.length ?? 0} published results`} icon="ti-circle-check" color="#08775b" soft="#def8ee" />
-          <Stat label="Best Percentile" value={data?.results.length ? `${best.toFixed(1)}th` : "—"} detail={data?.results.length ? "Across published results" : "No published results"} icon="ti-trophy" color="#9a6200" soft="#fff3d8" />
-          <Stat label="Average Score" value={data?.results.length ? `${average.toFixed(1)}%` : "—"} detail={trend == null ? "Awaiting comparable results" : `${trend >= 0 ? "+" : ""}${trend.toFixed(1)}% vs previous results`} icon="ti-chart-line" color="#4f55a8" soft="#eeefff" trend={trend} />
+          <Stat label="Exams Passed" value={String(passed)} detail={`Out of ${data?.results.length ?? 0} published results`} icon="ti-circle-check" />
+          <Stat label="Best Percentile" value={data?.results.length ? `${best.toFixed(1)}th` : "—"} detail={data?.results.length ? "Across published results" : "No published results"} icon="ti-trophy" />
+          <Stat label="Average Score" value={data?.results.length ? `${average.toFixed(1)}%` : "—"} detail={trend == null ? "Awaiting comparable results" : `${trend >= 0 ? "+" : ""}${trend.toFixed(1)}% vs previous results`} icon="ti-chart-line" trend={trend} />
         </div>
 
         <div className="dashboard-grid">
-          <div className="dashboard-left">
+          <div className="dashboard-left dashboard-exam-groups">
             {/* Section 1: Registered Upcoming */}
             <section className="panel">
               <div className="panel-header">
@@ -89,7 +92,7 @@ export default function Dashboard() {
             </section>
 
             {/* Section 2: Available to Register */}
-            <section className="panel" style={{ marginTop: "1.25rem" }}>
+            <section className="panel dashboard-section">
               <div className="panel-header">
                 <i className="ti ti-clipboard-list" />
                 <h2>Available to Register</h2>
@@ -126,12 +129,12 @@ export default function Dashboard() {
   );
 }
 
-function Stat({ label, value, detail, icon, color, soft, trend }: {
+function Stat({ label, value, detail, icon, trend }: {
   label: string; value: string; detail: string; icon: string;
-  color?: string; soft?: string; trend?: number | null;
+  trend?: number | null;
 }) {
   return (
-    <div className="stat-card" style={{ "--accent": color, "--soft": soft } as CSSProperties}>
+    <div className="stat-card">
       <div className="stat-top"><span>{label}</span><div className="stat-icon"><i className={`ti ${icon}`} /></div></div>
       <div className="stat-value">{value}</div>
       <div className="stat-detail">{detail}</div>

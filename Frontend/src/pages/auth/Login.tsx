@@ -5,6 +5,7 @@ import { preferredRole, useAuthStore, type Role } from "../../store/authStore";
 
 type AuthMode = "login" | "signup";
 type SignupRole = "student" | "faculty";
+const PORTAL_PROFILE_TIMEOUT_MS = 10_000;
 
 const css = `
 *,*::before,*::after{box-sizing:border-box}
@@ -221,9 +222,22 @@ export default function Login() {
   }, [confirmPassword, email, mode, password, rollNumber]);
 
   const bootstrapPortalSession = async (token: string) => {
-    const response = await fetch(`${apiUrl}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), PORTAL_PROFILE_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(`${apiUrl}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") {
+        throw new Error("The WebAssess server is taking too long to respond. Please try again shortly.");
+      }
+      throw new Error("Cannot reach the WebAssess server. Make sure the backend is running on port 8000.");
+    } finally {
+      window.clearTimeout(timeout);
+    }
     if (!response.ok) throw new Error("Your portal profile or role is not configured.");
     const payload = await response.json() as {
       user: { id: string; full_name?: string; email: string };

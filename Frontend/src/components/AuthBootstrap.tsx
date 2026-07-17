@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { useAuthStore, type Role } from "../store/authStore";
 
 const API_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const PROFILE_TIMEOUT_MS = 10_000;
 
 function normalizeRole(role: string): Role | null {
   const value = role.toUpperCase();
@@ -25,9 +26,17 @@ export default function AuthBootstrap({ children }: { children: ReactNode }) {
         return;
       }
       try {
-        const response = await fetch(`${API_URL}/api/v1/auth/me`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), PROFILE_TIMEOUT_MS);
+        let response: Response;
+        try {
+          response = await fetch(`${API_URL}/api/v1/auth/me`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            signal: controller.signal,
+          });
+        } finally {
+          window.clearTimeout(timeout);
+        }
         if (!response.ok) throw new Error("Unable to load account profile");
         const payload = await response.json() as {
           user: { id: string; full_name?: string; email: string };

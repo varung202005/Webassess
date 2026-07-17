@@ -88,8 +88,10 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
       {mobileOpen && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
       <aside className={`student-sidebar ${mobileOpen ? "mobile-open" : ""}`}>
         <div className="student-brand">
-          <div className="brand-mark">E</div>
-          <div className="brand-copy"><strong>EXAM.TIET</strong><span>Student Portal</span></div>
+          <div className="brand-mark" aria-label="Thapar Institute of Engineering and Technology">
+            <img src="/auth-assets/tiet-logo.png" alt="" />
+          </div>
+          <div className="brand-copy"><strong>WebAssess</strong><span>Student Portal</span></div>
           <button className="sidebar-toggle" onClick={toggleCollapsed} aria-label="Toggle sidebar">
             <i className={`ti ti-${collapsed ? "chevrons-right" : "chevrons-left"}`} />
           </button>

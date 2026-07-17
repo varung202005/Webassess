@@ -70,7 +70,7 @@ export function ExamDetailsModal({
             <Detail label="Registration Deadline" value={formatDate(schedule.registration_deadline || schedule.start_time, true)} />
             <Detail label="Eligibility" value={schedule.eligibility_status} />
           </div>
-          {schedule.exam.instructions && <div style={{ marginTop: 14 }}><strong>Instructions</strong><p style={{ marginTop: 6, color: "#676b79", lineHeight: 1.6 }}>{schedule.exam.instructions}</p></div>}
+          {schedule.exam.instructions && <div className="modal-copy"><strong>Instructions</strong><p>{schedule.exam.instructions}</p></div>}
         </div>
         <div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Close</button></div>
       </section>
@@ -89,7 +89,7 @@ export function ResultModal({ result, onClose }: { result: Result; onClose: () =
         <div className="modal-header"><h2>Result Details</h2><button onClick={onClose}><i className="ti ti-x" /></button></div>
         <div className="modal-body">
           <h3>{result.exam.title}</h3>
-          <p style={{ color: "#777b8a", margin: "4px 0 14px" }}>{result.course.code} · {result.course.name}</p>
+          <p className="modal-subtitle">{result.course.code} · {result.course.name}</p>
           <div className="detail-grid">
             <Detail label="Marks" value={`${result.total_score} / ${result.max_score}`} />
             <Detail label="Percentage" value={`${result.percentage.toFixed(2)}%`} />
@@ -98,7 +98,7 @@ export function ResultModal({ result, onClose }: { result: Result; onClose: () =
             <Detail label="Rank" value={result.rank ? `#${result.rank}` : "Not available"} />
             <Detail label="Percentile" value={result.percentile != null ? `${result.percentile.toFixed(2)}th` : "Not available"} />
           </div>
-          <div style={{ marginTop: 14 }}><strong>Faculty remarks</strong><p style={{ marginTop: 6, color: "#676b79" }}>{result.faculty_remarks || "No remarks published."}</p></div>
+          <div className="modal-copy"><strong>Faculty remarks</strong><p>{result.faculty_remarks || "No remarks published."}</p></div>
         </div>
         <div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Close</button><button className="btn btn-primary" onClick={() => downloadResult(result)}><i className="ti ti-download" />Download</button></div>
       </section>

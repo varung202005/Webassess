@@ -22,11 +22,11 @@ export default function History() {
     <div className="filter-panel">
       <select className="select" value={subject} onChange={(event) => setSubject(event.target.value)}><option value="ALL">All subjects</option>{subjects.map((item) => <option key={item} value={item}>{item}</option>)}</select>
       <select className="select" value={semester} onChange={(event) => setSemester(event.target.value)}><option value="ALL">All semesters</option>{Array.from({ length: 12 }, (_, index) => index + 1).map((item) => <option key={item} value={item}>Semester {item}</option>)}</select>
-      <input className="field" style={{ flex: "0 1 190px" }} type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+      <input className="field date-field" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
     </div>
     {!history.length ? <EmptyState icon="ti-history-off" title="No attempts found" body="Completed and in-progress exam attempts will appear here." /> :
       <div className="data-panel"><table className="data-table"><thead><tr><th>Exam</th><th>Attempted</th><th>Result</th><th>Status</th><th>Submission</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}>
-        <td><strong>{item.schedule?.exam?.title || "Exam unavailable"}</strong><small>{item.schedule?.course?.code} · {item.schedule?.course?.name}</small></td>
+        <td><div className="history-exam"><span className="history-exam-icon"><i className="ti ti-file-description" /></span><div><strong>{item.schedule?.exam?.title || "Exam unavailable"}</strong><small>{item.schedule?.course?.code} · {item.schedule?.course?.name}</small></div></div></td>
         <td>{formatDate(item.submitted_at || item.started_at, true)}</td>
         <td>{item.result ? "Published" : "Not published"}</td>
         <td><span className={`status-pill ${item.status.toLowerCase()}`}>{item.status.replace(/_/g, " ")}</span></td>

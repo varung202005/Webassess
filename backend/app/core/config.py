@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str
 
     # OpenRouter API Key — used for DeepSeek R1 answer inference in question extraction
-    OPENROUTER_API_KEY: str
+    # AI answer inference is optional; authentication and the core portal must
+    # remain available when the key has not been configured.
+    OPENROUTER_API_KEY: str = ""
 
     # Frontend / invitation links
     FRONTEND_URL: str = "http://localhost:5173"

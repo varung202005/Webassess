@@ -108,7 +108,7 @@ function ExamCard({
           <div className="eyebrow">{schedule.course.code || "Course"} · {schedule.course.name || "Subject"}</div>
           <h3>{schedule.exam.title}</h3>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div className="exam-card-status">
           <span className={`status-pill ${registered ? "registered" : schedule.can_register ? "success" : "closed"}`}>
             {registered ? "Registered" : schedule.eligibility_status}
           </span>
@@ -117,9 +117,8 @@ function ExamCard({
             onClick={onDismiss}
             aria-label="Dismiss exam"
             title="Hide this exam"
-            style={{ padding: "4px 6px", lineHeight: 1 }}
           >
-            <i className="ti ti-x" style={{ fontSize: "16px" }} />
+            <i className="ti ti-x" />
           </button>
         </div>
       </div>
