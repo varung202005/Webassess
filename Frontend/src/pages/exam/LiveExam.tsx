@@ -33,7 +33,7 @@ interface AnswerState {
   time_spent_sec: number;
 }
 
-type ViolationType = "tab" | "fullscreen" | "conflict" | "focus" | "clipboard" | "screenshot" | "print";
+type ViolationType = "tab" | "fullscreen" | "conflict" | "clipboard" | "screenshot" | "print";
 
 interface ViolationWarning {
   id: number;
@@ -66,42 +66,6 @@ function getRule(session: any): ExamRule {
     max_fullscreen_exits:   raw?.max_fullscreen_exits   ?? 3,
     auto_save_interval_sec: raw?.auto_save_interval_sec ?? 30,
   };
-}
-
-// ── Beacon flush ───────────────────────────────────────────────────────────────
-
-function flushBrowserCountsBeacon(
-  attemptId: string,
-  tabCount: number,
-  fsCount: number,
-  sessionConflict = false,
-) {
-  const body = JSON.stringify({
-    attempt_id:                attemptId,
-    tab_switch_count:          tabCount,
-    fullscreen_exit_count:     fsCount,
-    session_conflict_detected: sessionConflict,
-  });
-
-  const token = (() => {
-    try {
-      const raw = localStorage.getItem("sb-clagdndeswnnacybvilh-auth-token");
-      if (raw) return JSON.parse(raw)?.access_token ?? "";
-    } catch { /* ignore */ }
-    return "";
-  })();
-
-  const BACKEND = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
-  return fetch(`${BACKEND}/api/v1/proctoring/browser`, {
-    method:    "POST",
-    headers:   {
-      "Content-Type":  "application/json",
-      "Authorization": `Bearer ${token}`,
-    },
-    body,
-    keepalive: true,
-  }).catch(() => undefined);
 }
 
 // ── NEW: QuestionImage ─────────────────────────────────────────────────────────
@@ -236,16 +200,10 @@ export default function LiveExam() {
   const [isOnline,      setIsOnline]      = useState(navigator.onLine);
 
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
-  const [tabCount,        setTabCount]        = useState(0);
-  const [fsCount,         setFsCount]         = useState(0);
-  const [forceSubmitting, setForceSubmitting] = useState(false);
-  const [forceReason,     setForceReason]     = useState("");
 
   const dirty              = useRef(new Set<string>());
   const submitted          = useRef(false);
   const enteredAt          = useRef(Date.now());
-  const tabCountRef        = useRef(0);
-  const fullscreenCountRef = useRef(0);
 
   const session     = sessionQuery.data;
   const currentUser = useAuthStore((s) => s.user);
@@ -285,7 +243,7 @@ export default function LiveExam() {
 
   // ── Navigation Lockdown ──────────────────────────────────────────────────────
   useEffect(() => {
-    if (!session || submitting || forceSubmitting) return;
+    if (!session || submitting) return;
     window.history.pushState(null, "", window.location.href);
     const handlePopState = () => {
       window.history.pushState(null, "", window.location.href);
@@ -300,7 +258,7 @@ export default function LiveExam() {
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [session, submitting, forceSubmitting]);
+  }, [session, submitting]);
 
   // ── Flush answers to backend ─────────────────────────────────────────────────
   const flushAnswers = useCallback(async () => {
@@ -376,83 +334,28 @@ export default function LiveExam() {
     };
   }, [session, flushAnswers]);
 
-  // ── Force-submit helper ───────────────────────────────────────────────────────
-  const triggerForceSubmit = useCallback((
-    reason: string,
-    finalTabCount: number,
-    finalFsCount: number,
-    sessionConflict = false,
-  ) => {
-    setForceReason(reason);
-    setForceSubmitting(true);
-
-    const attemptId = session?.attempt.id ?? "";
-
-    setTimeout(async () => {
-      await flushBrowserCountsBeacon(attemptId, finalTabCount, finalFsCount, sessionConflict);
-      await new Promise((r) => setTimeout(r, 600));
-      await studentApi.computeProctoringsSummary(attemptId).catch(() => undefined);
-      void submit("AUTO");
-    }, 4000);
-  }, [session?.attempt.id, submit]);
-
   // ── Violation handler ────────────────────────────────────────────────────────
   const handleViolation = useCallback((
     _message: string,
     type: ViolationType,
   ) => {
-    if (type === "tab" || type === "focus") {
-      tabCountRef.current += 1;
-      const newCount = tabCountRef.current;
-      setTabCount(newCount);
-      const max = rule.max_tab_switches;
-
-      void studentApi.logEvent(
-        session?.attempt.id ?? "",
-        type === "focus" ? "FOCUS_LOST_WARNING" : "TAB_SWITCH_WARNING"
-      ).catch(() => undefined);
-
-      if (max > 0 && newCount >= max) {
-        const reason = `You switched tabs or lost focus ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
-        triggerForceSubmit(reason, newCount, fullscreenCountRef.current);
-        return;
-      }
-
+    if (type === "tab") {
+      void studentApi.logEvent(session?.attempt.id ?? "", "TAB_SWITCH_WARNING").catch(() => undefined);
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
         type,
-        message: max <= 0
-          ? `⚠ ${_message}`
-          : newCount >= max
-          ? `🚨 Switch ${newCount}/${max} — You have exceeded the limit of allowed switches! This violation has been flagged for review.`
-          : `⚠ Switch ${newCount}/${max} — This violation has been logged and flagged for review.`,
+        message: `⚠ ${_message} This event has been flagged for review.`,
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 10_000);
 
     } else if (type === "fullscreen") {
-      fullscreenCountRef.current += 1;
-      const newCount = fullscreenCountRef.current;
-      setFsCount(newCount);
-      const max = rule.max_fullscreen_exits;
-
       void studentApi.logEvent(session?.attempt.id ?? "", "FULLSCREEN_EXIT").catch(() => undefined);
-
-      if (max > 0 && newCount >= max) {
-        const reason = `You exited fullscreen ${newCount} time${newCount !== 1 ? "s" : ""}, exceeding the limit of ${max} set for this exam. Your exam is being submitted automatically.`;
-        triggerForceSubmit(reason, tabCountRef.current, newCount);
-        return;
-      }
-
       const id = ++warnCounter;
       setWarnings((prev) => [{
         id,
         type: "fullscreen" as ViolationType,
-        message: max <= 0
-          ? `⚠ You exited fullscreen (${newCount} total). This has been logged.`
-          : newCount >= max
-          ? `🚨 Fullscreen exit ${newCount}/${max} — You have exceeded the limit of allowed exits! This violation has been flagged for review.`
-          : `⚠ Fullscreen exit ${newCount}/${max} — This violation has been logged and flagged for review.`,
+        message: "⚠ Fullscreen exit logged and flagged for review. Please return to fullscreen.",
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 12_000);
 
@@ -477,24 +380,7 @@ export default function LiveExam() {
       }, ...prev].slice(0, 5));
       setTimeout(() => setWarnings((prev) => prev.filter((w) => w.id !== id)), 8_000);
     }
-  }, [rule.max_tab_switches, rule.max_fullscreen_exits, session, triggerForceSubmit]);
-
-  const handleConflict = useCallback(() => {
-    triggerForceSubmit(
-      "🚨 Another tab with this exam was detected. This is a violation. Your exam is being submitted automatically.",
-      tabCountRef.current,
-      fullscreenCountRef.current,
-      true,
-    );
-  }, [triggerForceSubmit]);
-
-  const handleHeartbeatFailure = useCallback(() => {
-    triggerForceSubmit(
-      "Proctoring telemetry has been blocked or dropped consecutively. This is a violation. Your exam is being submitted automatically.",
-      tabCountRef.current,
-      fullscreenCountRef.current,
-    );
-  }, [triggerForceSubmit]);
+  }, [session]);
 
   // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions = useMemo(() => {
@@ -545,26 +431,22 @@ export default function LiveExam() {
 
   // ── Camera gate ──────────────────────────────────────────────────────────────
   if (session && !cameraCleared) {
-    if (rule.camera_required || rule.proctoring_enabled || rule.fullscreen_required) {
-      const proceedPastGate = () => {
-        if (rule.fullscreen_required && document.fullscreenElement === null) {
-          document.documentElement.requestFullscreen().catch((err) =>
-            console.warn("[LiveExam] Could not enter fullscreen on gate click:", err)
-          );
-        }
-        setCameraCleared(true);
-      };
-      return (
-        <CameraPermission
-          examTitle={session.exam.title}
-          courseCode={session.exam.courses?.code ?? ""}
-          cameraRequired={rule.camera_required}
-          onProceed={proceedPastGate}
-          onSkip={proceedPastGate}
-        />
-      );
-    }
-    setCameraCleared(true);
+    const proceedPastGate = () => {
+      if (rule.fullscreen_required && document.fullscreenElement === null) {
+        document.documentElement.requestFullscreen().catch((err) =>
+          console.warn("[LiveExam] Could not enter fullscreen on gate click:", err)
+        );
+      }
+      setCameraCleared(true);
+    };
+    return (
+      <CameraPermission
+        examTitle={session.exam.title}
+        courseCode={session.exam.courses?.code ?? ""}
+        cameraRequired
+        onProceed={proceedPastGate}
+      />
+    );
   }
 
   // ── Loading / error states ────────────────────────────────────────────────────
@@ -596,28 +478,6 @@ export default function LiveExam() {
     );
 
   const danger = remaining <= 300;
-
-  // ── Force-submit overlay ─────────────────────────────────────────────────────
-  if (forceSubmitting) {
-    return (
-      <div className="force-submit-overlay">
-        <div className="force-submit-card">
-          <div className="force-submit-icon">
-            <i className="ti ti-ban" />
-          </div>
-          <h2>Exam Terminated</h2>
-          <p>{forceReason}</p>
-          <div className="force-submit-note">
-            Your answers have been saved and the exam is being submitted automatically. Please wait...
-          </div>
-          <div className="force-submit-spinner">
-            <span className="spinner" />
-            Submitting...
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // ── Offline lockdown overlay ─────────────────────────────────────────────────
   if (!isOnline) {
@@ -659,8 +519,7 @@ export default function LiveExam() {
         <div className="proctor-nag-bar">
           <i className="ti ti-maximize" />
           <span>
-            This exam requires <strong>fullscreen mode</strong>. Your exit has been logged
-            {rule.max_fullscreen_exits > 0 && ` (${fsCount}/${rule.max_fullscreen_exits})`}.
+            This exam requires <strong>fullscreen mode</strong>. Exits are logged for review.
           </span>
           <button
             className="nag-btn"
@@ -668,34 +527,6 @@ export default function LiveExam() {
           >
             <i className="ti ti-maximize" /> Re-enter Fullscreen
           </button>
-        </div>
-      )}
-
-      {/* Tab switch progress bar */}
-      {rule.max_tab_switches > 0 && tabCount > 0 && (
-        <div className="tab-switch-bar">
-          <i className="ti ti-eye-off" />
-          <span>Tab switches: <strong>{tabCount} / {rule.max_tab_switches}</strong></span>
-          <div className="tab-switch-track">
-            <div className={`tab-switch-fill tab-fill-${Math.min(100, Math.ceil((tabCount / rule.max_tab_switches) * 100 / 10) * 10)} ${tabCount >= rule.max_tab_switches - 1 ? "is-critical" : tabCount >= Math.floor(rule.max_tab_switches / 2) ? "is-warning" : ""}`} />
-          </div>
-          {tabCount >= rule.max_tab_switches - 1 && (
-            <span className="tab-switch-danger">Next switch = auto-submit</span>
-          )}
-        </div>
-      )}
-
-      {/* Fullscreen exit progress bar */}
-      {rule.max_fullscreen_exits > 0 && fsCount > 0 && (
-        <div className="tab-switch-bar">
-          <i className="ti ti-maximize-off" />
-          <span>Fullscreen exits: <strong>{fsCount} / {rule.max_fullscreen_exits}</strong></span>
-          <div className="tab-switch-track">
-            <div className={`tab-switch-fill tab-fill-${Math.min(100, Math.ceil((fsCount / rule.max_fullscreen_exits) * 100 / 10) * 10)} ${fsCount >= rule.max_fullscreen_exits - 1 ? "is-critical" : fsCount >= Math.floor(rule.max_fullscreen_exits / 2) ? "is-warning" : ""}`} />
-          </div>
-          {fsCount >= rule.max_fullscreen_exits - 1 && (
-            <span className="tab-switch-danger">Next exit = auto-submit</span>
-          )}
         </div>
       )}
 
@@ -864,13 +695,11 @@ export default function LiveExam() {
 
       {session && (
         <>
-          {rule.camera_required && (
-            <WebcamCapture
-              attemptId={session.attempt.id}
-              studentId={currentUser?.id ?? ""}
-              intervalMs={30_000}
-            />
-          )}
+          <WebcamCapture
+            attemptId={session.attempt.id}
+            studentId={currentUser?.id ?? ""}
+            intervalMs={30_000}
+          />
           {rule.microphone_required && (
             <AudioMonitor
               attemptId={session.attempt.id}
@@ -882,8 +711,6 @@ export default function LiveExam() {
             attemptId={session.attempt.id}
             fullscreenRequired={rule.fullscreen_required}
             onWarning={handleViolation}
-            onConflict={handleConflict}
-            onHeartbeatFailure={handleHeartbeatFailure}
           />
         </>
       )}

@@ -15,19 +15,16 @@
  *   fullscreenRequired — whether to request + enforce fullscreen
  *   onWarning        — called with a human-readable message each event
  *                      (so LiveExam can show a toast/banner)
- *   onConflict       — called when a duplicate session is detected
  */
 import { useEffect, useRef, useCallback } from "react";
 import { post } from "../../lib/api";
 
-export type ViolationType = "tab" | "fullscreen" | "conflict" | "focus" | "clipboard" | "screenshot" | "print";
+export type ViolationType = "tab" | "fullscreen" | "conflict" | "clipboard" | "screenshot" | "print";
 
 interface BrowserMonitorProps {
   attemptId: string;
   fullscreenRequired?: boolean;
   onWarning?: (message: string, type: ViolationType) => void;
-  onConflict?: () => void;
-  onHeartbeatFailure?: () => void;
 }
 
 /** How often (ms) to push a cumulative sync to the backend even if quiet */
@@ -40,19 +37,15 @@ export default function BrowserMonitor({
   attemptId,
   fullscreenRequired = true,
   onWarning,
-  onConflict,
-  onHeartbeatFailure,
 }: BrowserMonitorProps) {
   const tabSwitches     = useRef(0);
   const fullscreenExits = useRef(0);
-  const focusLoss       = useRef(0);
   const clipboardViolations  = useRef(0);
   const screenshotViolations = useRef(0);
   const printViolations      = useRef(0);
   const conflictRef     = useRef(false);
   const activeRef       = useRef(true);
   const syncTimerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const syncFailures    = useRef(0);
 
   // ── POST cumulative counts to backend ──────────────────────────────────────
   const syncToBackend = useCallback(async () => {
@@ -62,34 +55,24 @@ export default function BrowserMonitor({
         attempt_id:                attemptId,
         tab_switch_count:          tabSwitches.current,
         fullscreen_exit_count:     fullscreenExits.current,
-        focus_loss_count:          focusLoss.current,
+        focus_loss_count:          0,
         clipboard_violation_count: clipboardViolations.current,
         screenshot_violation_count:screenshotViolations.current,
         print_violation_count:     printViolations.current,
         session_conflict_detected: conflictRef.current,
       });
       console.log(
-        `[BrowserMonitor] ✓ synced — tabs:${tabSwitches.current} fs:${fullscreenExits.current} focus:${focusLoss.current} clip:${clipboardViolations.current} screen:${screenshotViolations.current} print:${printViolations.current} conflict:${conflictRef.current}`
+        `[BrowserMonitor] ✓ synced — tabs:${tabSwitches.current} fs:${fullscreenExits.current} clip:${clipboardViolations.current} screen:${screenshotViolations.current} print:${printViolations.current} conflict:${conflictRef.current}`
       );
-      syncFailures.current = 0; // Reset on success
     } catch (err) {
       console.warn("[BrowserMonitor] ❌ sync failed:", err);
-      syncFailures.current += 1;
-      // If we fail 3 times consecutively while the browser still thinks it's online,
-      // it means the network request is being intentionally dropped (e.g. by an AdBlocker or Proxy).
-      if (syncFailures.current >= 3 && navigator.onLine) {
-        onHeartbeatFailure?.();
-      }
     }
-  }, [attemptId, onHeartbeatFailure]);
+  }, [attemptId]);
 
   useEffect(() => {
     activeRef.current = true;
     console.log("[BrowserMonitor] Mounting — attemptId:", attemptId, "fullscreenRequired:", fullscreenRequired);
 
-    // ── 0. Anti-Cheat Initializations ─────────────────────────────────────
-    const originalTitle = document.title;
-    
     // Proactively clear clipboard on start
     navigator.clipboard?.writeText("").catch(() => undefined);
 
@@ -109,48 +92,6 @@ export default function BrowserMonitor({
         onWarning?.(
           `Tab switch detected (${tabSwitches.current} total). Switching tabs during an exam is a violation.`,
           "tab"
-        );
-        void syncToBackend();
-      }
-    };
-
-    // ── 2.5 Window Focus Loss Detection ──────────────────────────────────
-    const handleBlur = () => {
-      if (!activeRef.current) return;
-      document.title = "⚠️ EXAM IN PROGRESS ⚠️"; // Hijack tab title
-      
-      // We map focus loss to a tab switch in the backend counters for now,
-      // as it logically implies looking at another application.
-      tabSwitches.current += 1;
-      focusLoss.current += 1;
-      console.log("[BrowserMonitor] Window lost focus — total switches:", tabSwitches.current);
-      onWarning?.(
-        `Focus loss detected. Switching to another window or application is a violation.`,
-        "focus"
-      );
-      void syncToBackend();
-    };
-
-    const handleFocus = () => {
-      if (!activeRef.current) return;
-      document.title = originalTitle; // Restore title
-      // Clear clipboard again to prevent bringing copied text from outside
-      navigator.clipboard?.writeText("").catch(() => undefined);
-    };
-
-    // ── 2.6 Mouse Leave Detection ─────────────────────────────────────────
-    const handleMouseLeave = (e: MouseEvent) => {
-      if (!activeRef.current) return;
-      // If the mouse leaves the document entirely, they might be interacting with a VM/dual monitor
-      // We map this to focus loss.
-      // e.relatedTarget is null when the mouse leaves the window entirely
-      if (e.relatedTarget === null) {
-        tabSwitches.current += 1;
-        focusLoss.current += 1;
-        console.log("[BrowserMonitor] Mouse left window — total switches:", tabSwitches.current);
-        onWarning?.(
-          `Mouse left the exam window. Interacting with other monitors or applications is a violation.`,
-          "focus"
         );
         void syncToBackend();
       }
@@ -245,7 +186,6 @@ export default function BrowserMonitor({
             "Another browser tab or window with this exam was detected. This is a violation.",
             "conflict"
           );
-          onConflict?.();
           void syncToBackend();
           // Respond so the other tab also knows
           bc?.postMessage({ type: "PONG", attemptId });
@@ -253,7 +193,6 @@ export default function BrowserMonitor({
         if (ev.data?.type === "PONG" && ev.data?.attemptId === attemptId) {
           conflictRef.current = true;
           console.warn("[BrowserMonitor] ⚠ Duplicate session responded!");
-          onConflict?.();
           void syncToBackend();
         }
       };
@@ -292,9 +231,6 @@ export default function BrowserMonitor({
     };
 
     document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("blur", handleBlur);
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("mouseleave", handleMouseLeave);
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("contextmenu", preventDefaultAction);
     document.addEventListener("dragstart", preventDefaultAction);
@@ -314,11 +250,7 @@ export default function BrowserMonitor({
       // Final sync on unmount (exam submitted)
       void syncToBackend();
       document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("blur", handleBlur);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("mouseleave", handleMouseLeave);
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
-      document.title = originalTitle; // ensure title is restored
       document.removeEventListener("contextmenu", preventDefaultAction);
       document.removeEventListener("dragstart", preventDefaultAction);
       document.removeEventListener("drop", preventDefaultAction);

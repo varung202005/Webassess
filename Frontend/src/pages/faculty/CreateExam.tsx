@@ -1582,8 +1582,7 @@ function StepRules({ rules, onChange }: {
         <i className="ti ti-maximize" style={{ marginTop: 1, flexShrink: 0 }} />
         <span>
           <strong>Fullscreen mode is always required</strong> — this is a platform-level rule that cannot be disabled.
-          Use <em>Max fullscreen exits allowed</em> below to control how many exits a student may make before their exam
-          is auto-submitted.
+          The thresholds below determine when browser activity is highlighted for proctor review; they never end an exam.
         </span>
       </div>
 
@@ -1601,10 +1600,10 @@ function StepRules({ rules, onChange }: {
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
-          {rule("max_tab_switches",       "Max tab switches allowed",     "num", 0)}
-          {rule("max_fullscreen_exits",   "Max fullscreen exits allowed", "num", 0)}
+          {rule("max_tab_switches",       "Tab-switch review threshold",     "num", 0)}
+          {rule("max_fullscreen_exits",   "Fullscreen-exit review threshold", "num", 0)}
           <span className="field-hint" style={{ display: "block", marginTop: -6, marginBottom: 10, fontSize: 12, color: "#888" }}>
-            Set 0 to log exits without auto-submitting.
+            Set 0 to log every event without applying a threshold.
           </span>
           {rule("auto_save_interval_sec", "Auto-save interval (sec)",     "num", 10)}
         </div>

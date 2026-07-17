@@ -35,12 +35,23 @@ export default function CameraPermission({
 }: CameraPermissionProps) {
   const [state,    setState]    = useState<PermissionState>("idle");
   const [errMsg,   setErrMsg]   = useState<string | null>(null);
+  const [screenReady, setScreenReady] = useState(false);
+  const [screenError, setScreenError] = useState<string | null>(null);
+  const [framingConfirmed, setFramingConfirmed] = useState(false);
+  const [workspaceConfirmed, setWorkspaceConfirmed] = useState(false);
   const videoRef   = useRef<HTMLVideoElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const screenRecorderRef = useRef<MediaRecorder | null>(null);
 
   // Stop stream on unmount
   useEffect(() => {
-    return () => { streamRef.current?.getTracks().forEach((t) => t.stop()); };
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      // The accepted screen-share stream deliberately remains active after this
+      // gate unmounts, so the browser's sharing indicator stays visible during
+      // the exam. It ends when the candidate stops sharing in the browser UI.
+    };
   }, []);
 
   // Attach stream to video element once it mounts (state === "granted")
@@ -86,6 +97,30 @@ export default function CameraPermission({
     // We stop it here and let WebcamCapture open a fresh stream
     streamRef.current?.getTracks().forEach((t) => t.stop());
     onProceed();
+  };
+
+  const startScreenShare = async () => {
+    setScreenError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings() as MediaTrackSettings & { displaySurface?: string };
+      if (settings.displaySurface && settings.displaySurface !== "monitor") {
+        stream.getTracks().forEach((t) => t.stop());
+        setScreenError("Select Entire Screen in the sharing picker, then try again.");
+        return;
+      }
+      screenStreamRef.current = stream;
+      track?.addEventListener("ended", () => setScreenReady(false));
+      if (typeof MediaRecorder !== "undefined") {
+        const recorder = new MediaRecorder(stream);
+        recorder.start(1000);
+        screenRecorderRef.current = recorder;
+      }
+      setScreenReady(true);
+    } catch {
+      setScreenError("Screen sharing is required. Choose Entire Screen and allow sharing to continue.");
+    }
   };
 
   return (
@@ -197,15 +232,32 @@ export default function CameraPermission({
             </p>
 
             <ul className="cam-gate-rules">
-              <li><i className="ti ti-user" />Keep your face visible at all times</li>
+              <li><i className="ti ti-user" />Keep your entire face and both hands visible in the camera frame</li>
               <li><i className="ti ti-sun" />Ensure good lighting (face the light source)</li>
               <li><i className="ti ti-device-mobile-off" />No phones or extra devices</li>
               <li><i className="ti ti-users-minus" />Only you should be in frame</li>
             </ul>
 
+            <div className="cam-gate-checklist">
+              <label className="cam-check-item">
+                <input type="checkbox" checked={workspaceConfirmed} onChange={(e) => setWorkspaceConfirmed(e.target.checked)} />
+                <span>I have closed other apps and browser tabs/windows.</span>
+              </label>
+              <label className="cam-check-item">
+                <input type="checkbox" checked={framingConfirmed} onChange={(e) => setFramingConfirmed(e.target.checked)} />
+                <span>My entire face and both hands are visible in this preview.</span>
+              </label>
+              <button type="button" className="cam-gate-btn cam-gate-btn--ghost" onClick={() => void startScreenShare()}>
+                <i className={screenReady ? "ti ti-circle-check-filled" : "ti ti-screen-share"} />
+                {screenReady ? "Entire screen sharing active" : "Share entire screen & start recording"}
+              </button>
+              {screenError && <span className="cam-gate-body cam-gate-body--error">{screenError}</span>}
+            </div>
+
             <button
               className="cam-gate-btn cam-gate-btn--start"
               onClick={handleProceed}
+              disabled={!screenReady || !framingConfirmed || !workspaceConfirmed}
             >
               <i className="ti ti-player-play-filled" />
               Start Exam
