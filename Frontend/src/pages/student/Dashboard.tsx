@@ -136,8 +136,7 @@ function Stat({ label, value, detail, icon, trend }: {
   return (
     <div className="stat-card">
       <div className="stat-top"><span>{label}</span><div className="stat-icon"><i className={`ti ${icon}`} /></div></div>
-      <div className="stat-value">{value}</div>
-      <div className="stat-detail">{detail}</div>
+      <div className="stat-metric"><div className="stat-value">{value}</div><div className="stat-detail">{detail}</div></div>
       {trend != null && <div className="stat-trend"><i className={`ti ti-trending-${trend >= 0 ? "up" : "down"}`} /> {Math.abs(trend).toFixed(1)} point trend</div>}
     </div>
   );

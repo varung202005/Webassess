@@ -91,6 +91,8 @@
 
 /* Metrics should be compact summaries, not tall empty cards. */
 .dashboard-stats{align-items:start}.dashboard-stats .stat-card{min-height:0;height:auto;padding:15px 18px 16px}.dashboard-stats .stat-value{margin:11px 0 3px;line-height:1}.dashboard-stats .stat-detail{min-height:0;line-height:1.35}.dashboard-stats .stat-trend{margin-top:5px;line-height:1.2}
+.dashboard-stats .stat-metric{display:flex;align-items:center;gap:12px;margin-top:12px}.dashboard-stats .stat-metric .stat-value{flex:none;margin:0;font-size:29px}.dashboard-stats .stat-metric .stat-detail{max-width:135px;color:#858690;font-size:11px;line-height:1.4}.dashboard-stats .stat-trend{margin-left:0}
+@media(max-width:1100px){.dashboard-stats .stat-metric .stat-detail{max-width:none}}
 
 /* Protect Student button defaults from globally named button classes in other
    portal modules. Buttons must be readable before hover, not only on hover. */
