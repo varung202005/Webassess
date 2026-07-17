@@ -610,8 +610,8 @@ function QuestionRow({ q, selected, onToggle }: {
 // CreateQuestionForm
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CreateQuestionForm({ courseId, onSaved }: {
-  courseId: string; onSaved: (q: Question) => void;
+function CreateQuestionForm({ courseId, remainingMarks, onSaved }: {
+  courseId: string; remainingMarks?: number; onSaved: (q: Question) => void;
 }) {
   const [form, setForm] = useState<NewQuestion>({
     question_type: "MCQ", question_text: "", marks: 1, negative_marks: 0, difficulty: "MEDIUM",
@@ -711,6 +711,15 @@ function CreateQuestionForm({ courseId, onSaved }: {
           <label>Marks</label>
           <input type="number" className="form-input" min={1} max={100} value={form.marks}
             onChange={(e) => setForm((f) => ({ ...f, marks: +e.target.value }))} />
+          {typeof remainingMarks === "number" && (
+            <span className="field-hint" style={{ color: remainingMarks < 0 ? "#dc2626" : "#8b1a1a" }}>
+              {remainingMarks > 0
+                ? `${remainingMarks} more mark${remainingMarks !== 1 ? "s" : ""} needed to reach the exam total`
+                : remainingMarks < 0
+                  ? `Already ${-remainingMarks} mark${-remainingMarks !== 1 ? "s" : ""} over the exam total`
+                  : "Exam total marks already reached"}
+            </span>
+          )}
         </div>
         <div className="form-field">
           <label>Negative Marks</label>
@@ -1066,11 +1075,13 @@ function PdfImportPanel({
   status, setStatus,
   extracted, setExtracted,
   error, setError,
+  targetMarks, selectedMarksSum,
   onImported,
 }: {
   status: ImportStatus; setStatus: (s: ImportStatus) => void;
   extracted: ExtractedQuestion[]; setExtracted: Dispatch<SetStateAction<ExtractedQuestion[]>>;
   error: string; setError: (e: string) => void;
+  targetMarks?: number; selectedMarksSum?: number;
   onImported: (qs: ExtractedQuestion[]) => void;
 }) {
   const [editingQuestion, setEditingQuestion] = useState<ExtractedQuestion | null>(null);
@@ -1163,9 +1174,12 @@ function PdfImportPanel({
   // ── review ──
   if (status === "review") {
     const approvedCount = extracted.filter((q) => q.approved).length;
+    const approvedMarksSum = extracted.filter((q) => q.approved).reduce((s, q) => s + q.marks, 0);
     const avgConf = extracted.length
       ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length)
       : 0;
+    const setQuestionMarks = (id: string, marks: number) =>
+      setExtracted((list) => list.map((q) => (q.id === id ? { ...q, marks } : q)));
 
     return (
       <div className="import-review">
@@ -1212,7 +1226,23 @@ function PdfImportPanel({
             <span className="is-lbl">Avg Confidence</span>
           </div>
           <div className="import-summary-card"><span className="is-val">{approvedCount}</span><span className="is-lbl">Approved</span></div>
+          <div className="import-summary-card">
+            <span
+              className="is-val"
+              style={{ color: typeof targetMarks === "number" && (selectedMarksSum ?? 0) + approvedMarksSum > targetMarks ? "#dc2626" : undefined }}
+            >
+              {approvedMarksSum}
+            </span>
+            <span className="is-lbl">Approved Marks</span>
+          </div>
         </div>
+
+        {typeof targetMarks === "number" && (
+          <div style={{ fontSize: 12, color: "#6b7280", margin: "-6px 0 14px" }}>
+            <i className="ti ti-info-circle" style={{ marginRight: 4 }} />
+            Exam needs {targetMarks} marks total{typeof selectedMarksSum === "number" ? ` (${selectedMarksSum} already selected)` : ""} — adjust marks below (click a Marks cell) so approved questions add up correctly.
+          </div>
+        )}
 
         <div className="import-table-wrap">
           <div className="import-table-actions" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1270,7 +1300,17 @@ function PdfImportPanel({
                       )}
                     </td>
                     <td><span className="q-type-badge">{isShortAnswer ? "FILL-BLANK" : q.question_type}</span></td>
-                    <td>{q.marks}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={q.marks}
+                        onChange={(e) => setQuestionMarks(q.id, +e.target.value)}
+                        style={{ width: 56, padding: "4px 6px", border: "1px solid #e5e7eb", borderRadius: 6, fontSize: 13 }}
+                        title="Adjust marks for this question"
+                      />
+                    </td>
                     <td className="ans-cell">
                       {correctAnswers.length > 0 ? (
                         <span
@@ -1426,8 +1466,9 @@ function AutoGeneratePanel({ questions, onGenerated }: {
 // Step 2: Question Management
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, allQuestions, questionsLoading }: {
-  courseId: string; selectedIds: Set<string>; onToggle: (q: Question) => void;
+function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, onToggle, onAddNew, onImported, allQuestions, questionsLoading }: {
+  courseId: string; selectedIds: Set<string>; selectedQuestions: Question[]; targetMarks: number;
+  onToggle: (q: Question) => void;
   onAddNew: (q: Question) => void; onImported: (qs: ExtractedQuestion[]) => void;
   allQuestions: Question[]; questionsLoading: boolean;
 }) {
@@ -1450,6 +1491,10 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
     return matchSearch && matchType && matchDiff;
   });
 
+  const selectedMarksSum = selectedQuestions.reduce((s, q) => s + q.marks, 0);
+  const remainingMarks   = targetMarks - selectedMarksSum;
+  const marksMatch       = remainingMarks === 0;
+
   const tabs = [
     { id: "select", label: "Select Existing", icon: "ti-list-search"  },
     { id: "create", label: "Create Question", icon: "ti-pencil-plus"  },
@@ -1462,8 +1507,26 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
       <div className="step-header">
         <h3>Question Management</h3>
         <p>Select questions from your repository, create new ones, or import from a PDF.</p>
-        <div className="selected-count-badge">
-          {selectedIds.size} question{selectedIds.size !== 1 ? "s" : ""} selected for this exam
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div className="selected-count-badge">
+            {selectedIds.size} question{selectedIds.size !== 1 ? "s" : ""} selected for this exam
+          </div>
+          <div
+            className="selected-count-badge"
+            style={{
+              background: marksMatch ? "#def8ee" : "#fff3d8",
+              color: marksMatch ? "#08775b" : "#94600a",
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}
+          >
+            <i className={`ti ${marksMatch ? "ti-circle-check" : "ti-alert-triangle"}`} />
+            {selectedMarksSum} / {targetMarks} marks
+            {!marksMatch && (
+              <span>
+                {" · "}{remainingMarks > 0 ? `${remainingMarks} more needed` : `${-remainingMarks} too many`}
+              </span>
+            )}
+          </div>
         </div>
       </div>
       <div className="q-tabs">
@@ -1522,13 +1585,14 @@ function StepQuestions({ courseId, selectedIds, onToggle, onAddNew, onImported, 
         </div>
       )}
       {tab === "create" && (
-        <CreateQuestionForm courseId={courseId} onSaved={(q) => { onAddNew(q); setTab("select"); }} />
+        <CreateQuestionForm courseId={courseId} remainingMarks={remainingMarks} onSaved={(q) => { onAddNew(q); setTab("select"); }} />
       )}
       {tab === "import" && (
         <PdfImportPanel
           status={pdfStatus} setStatus={setPdfStatus}
           extracted={pdfExtracted} setExtracted={setPdfExtracted}
           error={pdfError} setError={setPdfError}
+          targetMarks={targetMarks} selectedMarksSum={selectedMarksSum}
           onImported={(qs) => { onImported(qs); setTab("select"); }}
         />
       )}
@@ -1582,7 +1646,8 @@ function StepRules({ rules, onChange }: {
         <i className="ti ti-maximize" style={{ marginTop: 1, flexShrink: 0 }} />
         <span>
           <strong>Fullscreen mode is always required</strong> — this is a platform-level rule that cannot be disabled.
-          The thresholds below determine when browser activity is highlighted for proctor review; they never end an exam.
+          Use <em>Max fullscreen exits allowed</em> below to control how many exits a student may make before their exam
+          is auto-submitted.
         </span>
       </div>
 
@@ -1600,10 +1665,10 @@ function StepRules({ rules, onChange }: {
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
-          {rule("max_tab_switches",       "Tab-switch review threshold",     "num", 0)}
-          {rule("max_fullscreen_exits",   "Fullscreen-exit review threshold", "num", 0)}
+          {rule("max_tab_switches",       "Max tab switches allowed",     "num", 0)}
+          {rule("max_fullscreen_exits",   "Max fullscreen exits allowed", "num", 0)}
           <span className="field-hint" style={{ display: "block", marginTop: -6, marginBottom: 10, fontSize: 12, color: "#888" }}>
-            Set 0 to log every event without applying a threshold.
+            Set 0 to log exits without auto-submitting.
           </span>
           {rule("auto_save_interval_sec", "Auto-save interval (sec)",     "num", 10)}
         </div>
@@ -1803,7 +1868,7 @@ export default function CreateExam() {
 
   const { data: portal, isLoading: portalLoading } = useFacultyDashboard();
 
-  const [draftId]                     = useState(() => newDraftId());
+  const [draftId,      setDraftId]      = useState(() => newDraftId());
   const [currentStep,  setCurrentStep]  = useState(0);
   const [saving,       setSaving]       = useState(false);
   const [saveError,    setSaveError]    = useState("");
@@ -1948,6 +2013,10 @@ export default function CreateExam() {
   }, [pendingQuestionIds, serverQuestions]);
 
   const handleResumeDraft = (draft: ExamDraft) => {
+    // Reuse the resumed draft's own ID — otherwise autosave keeps writing
+    // under this mount's freshly-generated draftId, leaving the original
+    // draft entry behind as a stale duplicate in the Saved Drafts list.
+    setDraftId(draft.draftId);
     setForm(draft.form);
     setRules(draft.rules);
     setSchedule(draft.schedule ?? defaultSchedule());
@@ -2088,8 +2157,12 @@ export default function CreateExam() {
     }
   };
 
+  const selectedMarksSum = selectedQuestions.reduce((s, q) => s + q.marks, 0);
+  const marksMatchTarget = selectedMarksSum === form.total_marks;
+
   const canProceed = () => {
     if (currentStep === 0) return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
+    if (currentStep === 1) return selectedQuestions.length > 0 && marksMatchTarget;
     if (currentStep === 3) return !!schedule.start_time && !!schedule.end_time;
     return true;
   };
@@ -2191,6 +2264,7 @@ export default function CreateExam() {
                   {currentStep === 1 && (
                     <StepQuestions
                       courseId={form.course_id} selectedIds={selectedIds}
+                      selectedQuestions={selectedQuestions} targetMarks={form.total_marks}
                       onToggle={toggleQuestion} onAddNew={handleAddNew} onImported={handleImported}
                       allQuestions={allQuestions} questionsLoading={questionsLoading}
                     />
@@ -2221,6 +2295,15 @@ export default function CreateExam() {
                     </div>
                     <div className="footer-center">
                       {saveError && <div className="form-error" style={{ textAlign: "center" }}>{saveError}</div>}
+                      {currentStep === 1 && !marksMatchTarget && (
+                        <div className="form-error" style={{ textAlign: "center" }}>
+                          {selectedQuestions.length === 0
+                            ? `Select questions worth ${form.total_marks} marks to continue.`
+                            : selectedMarksSum < form.total_marks
+                              ? `Selected questions total ${selectedMarksSum} marks — add ${form.total_marks - selectedMarksSum} more mark${form.total_marks - selectedMarksSum !== 1 ? "s" : ""} to reach ${form.total_marks}.`
+                              : `Selected questions total ${selectedMarksSum} marks — remove ${selectedMarksSum - form.total_marks} mark${selectedMarksSum - form.total_marks !== 1 ? "s" : ""} to reach ${form.total_marks}.`}
+                        </div>
+                      )}
                       {!isEditMode && form.title.trim() && (
                         <span className="draft-autosave-indicator"><i className="ti ti-device-floppy" /> Draft auto-saved</span>
                       )}
