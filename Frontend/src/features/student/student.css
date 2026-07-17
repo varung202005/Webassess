@@ -90,9 +90,9 @@
 .dashboard-stats .stat-card{position:relative;overflow:hidden}.dashboard-stats .stat-card:after{position:absolute;right:0;bottom:0;left:0;height:3px;background:var(--metric);content:""}.dashboard-stats .stat-card:nth-child(1){--metric:#b31234}.dashboard-stats .stat-card:nth-child(1) .stat-icon{background:#fce8ed;color:#b31234}.dashboard-stats .stat-card:nth-child(2){--metric:var(--teal)}.dashboard-stats .stat-card:nth-child(2) .stat-icon{background:var(--teal-wash);color:var(--teal)}.dashboard-stats .stat-card:nth-child(3){--metric:var(--amber)}.dashboard-stats .stat-card:nth-child(3) .stat-icon{background:var(--amber-wash);color:var(--amber)}.dashboard-stats .stat-card:nth-child(4){--metric:var(--blue)}.dashboard-stats .stat-card:nth-child(4) .stat-icon{background:var(--blue-wash);color:var(--blue)}.dashboard-stats .stat-card:hover:after{height:4px}
 
 /* Metrics should be compact summaries, not tall empty cards. */
-.dashboard-stats{align-items:start}.dashboard-stats .stat-card{min-height:0;height:auto;padding:15px 18px 16px}.dashboard-stats .stat-value{margin:11px 0 3px;line-height:1}.dashboard-stats .stat-detail{min-height:0;line-height:1.35}.dashboard-stats .stat-trend{margin-top:5px;line-height:1.2}
+.dashboard-stats{align-items:stretch}.dashboard-stats .stat-card{height:126px;min-height:126px;padding:15px 18px 16px}.dashboard-stats .stat-value{margin:11px 0 3px;line-height:1}.dashboard-stats .stat-detail{min-height:0;line-height:1.35}.dashboard-stats .stat-trend{margin-top:5px;line-height:1.2}
 .dashboard-stats .stat-metric{display:flex;align-items:center;gap:12px;margin-top:12px}.dashboard-stats .stat-metric .stat-value{flex:none;margin:0;font-size:29px}.dashboard-stats .stat-metric .stat-detail{max-width:135px;color:#858690;font-size:11px;line-height:1.4}.dashboard-stats .stat-trend{margin-left:0}
-@media(max-width:1100px){.dashboard-stats .stat-metric .stat-detail{max-width:none}}
+@media(max-width:1100px){.dashboard-stats .stat-metric .stat-detail{max-width:none}}@media(max-width:760px){.dashboard-stats .stat-card{height:auto;min-height:108px}}
 
 /* Protect Student button defaults from globally named button classes in other
    portal modules. Buttons must be readable before hover, not only on hover. */
