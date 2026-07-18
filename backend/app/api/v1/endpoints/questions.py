@@ -112,6 +112,16 @@ class QuestionCreate(BaseModel):
     topics: Optional[List[TopicCreate]] = []
     image_url: Optional[str] = None          # optional image attached to question
 
+class OptionUpdate(BaseModel):
+    # Present for an option that already exists in the DB (so we can update
+    # it in place rather than delete+recreate, which would orphan any past
+    # student answers that reference the option's id). Absent for a brand
+    # new option being added during this edit.
+    id: Optional[UUID] = None
+    option_text: str
+    is_correct: bool
+    order_index: int
+
 class QuestionUpdate(BaseModel):
     question_text: Optional[str] = None
     marks: Optional[int] = None
@@ -119,6 +129,11 @@ class QuestionUpdate(BaseModel):
     difficulty: Optional[Difficulty] = None
     is_active: Optional[bool] = None
     image_url: Optional[str] = None          # allow updating image too
+    # FIX: previously there was no way to update a question's options (e.g.
+    # to fix a wrong "correct answer", reword a choice, or add/remove one)
+    # once the question had been created — this field, plus the handling in
+    # update_question() below, adds that.
+    options: Optional[List[OptionUpdate]] = None
 
 class ExtractedOption(BaseModel):
     text: str
@@ -326,6 +341,45 @@ async def delete_question_image(
     return {"message": "Image removed"}
 
 
+def _replace_question_options(supabase, question_id: UUID, options: List[OptionUpdate]) -> None:
+    """
+    Persist an edited option list for an existing question.
+
+    Options that carry an `id` are updated in place (so past student
+    answers that reference that option's id via selected_option_id /
+    selected_option_ids stay valid). Options without an `id` are newly
+    added rows. Any existing option not present in the submitted list
+    is removed.
+    """
+    existing = (
+        supabase.table("question_options")
+        .select("id")
+        .eq("question_id", str(question_id))
+        .execute()
+    ).data or []
+    existing_ids = {row["id"] for row in existing}
+    submitted_ids = {str(o.id) for o in options if o.id}
+
+    to_delete = existing_ids - submitted_ids
+    if to_delete:
+        supabase.table("question_options").delete().in_("id", list(to_delete)).execute()
+
+    for o in options:
+        if o.id and str(o.id) in existing_ids:
+            supabase.table("question_options").update({
+                "option_text": sanitize(o.option_text),
+                "is_correct":  o.is_correct,
+                "order_index": o.order_index,
+            }).eq("id", str(o.id)).execute()
+        else:
+            supabase.table("question_options").insert({
+                "question_id":  str(question_id),
+                "option_text":  sanitize(o.option_text),
+                "is_correct":   o.is_correct,
+                "order_index":  o.order_index,
+            }).execute()
+
+
 @router.patch("/{question_id}")
 async def update_question(
     question_id: UUID,
@@ -333,11 +387,26 @@ async def update_question(
     _: dict = Depends(require_faculty),
 ):
     supabase = get_supabase_admin()
-    data = body.model_dump(exclude_none=True)
-    if not data:
+    data = body.model_dump(exclude_none=True, exclude={"options"})
+    if "question_text" in data:
+        data["question_text"] = sanitize(data["question_text"])   # ← FIX: same null-byte/ligature safety net as create_question
+
+    if not data and body.options is None:
         raise HTTPException(status_code=400, detail="No fields to update")
-    result = supabase.table("questions").update(data).eq("id", str(question_id)).execute()
-    return result.data[0]
+
+    result = None
+    if data:
+        result = supabase.table("questions").update(data).eq("id", str(question_id)).execute()
+
+    if body.options is not None:
+        _replace_question_options(supabase, question_id, body.options)
+
+    if result and result.data:
+        return result.data[0]
+    # Only options changed (no `questions` row fields in this request) —
+    # fetch and return the current row so callers still get a full object back.
+    fetched = supabase.table("questions").select("*").eq("id", str(question_id)).single().execute()
+    return fetched.data
 
 
 @router.delete("/{question_id}")

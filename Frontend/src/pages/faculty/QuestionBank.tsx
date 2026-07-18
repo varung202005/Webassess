@@ -37,7 +37,7 @@ type QuestionFormData = {
   negative_marks: number;
   course_id: string;
   topic: string;
-  options: Array<{ text: string; is_correct: boolean }>;
+  options: Array<{ id?: string; text: string; is_correct: boolean }>;
 };
 
 const initialForm: QuestionFormData = {
@@ -148,10 +148,16 @@ function QuestionFormPanel({
     }
 
     if (!["SHORT_ANSWER", "LONG_ANSWER"].includes(form.question_type)) {
+      // FIX: the backend's option schema uses `order_index` (0-based) and
+      // `id` (to update an existing option in place) — this previously sent
+      // `option_order`, a key the backend never recognized, so edited
+      // options (including a changed correct answer) were silently dropped
+      // and never actually saved.
       body.options = form.options.map((o, i) => ({
+        ...(o.id ? { id: o.id } : {}),
         option_text: o.text,
         is_correct: o.is_correct,
-        option_order: i + 1,
+        order_index: i,
       }));
     }
 
@@ -404,6 +410,7 @@ export default function QuestionBank() {
         topic: "",
         options:
           q.question_options?.map((o: any) => ({
+            id: o.id,
             text: o.option_text ?? o.text ?? "",
             is_correct: o.is_correct ?? false,
           })) ?? [],

@@ -561,9 +561,10 @@ function StepExamInfo({ form, onChange }: {
 // QuestionRow
 // ─────────────────────────────────────────────────────────────────────────────
 
-function QuestionRow({ q, selected, onToggle, onUpdateMarks }: {
+function QuestionRow({ q, selected, onToggle, onUpdateMarks, onView }: {
   q: Question; selected: boolean; onToggle: () => void;
   onUpdateMarks: (q: Question, marks: number) => void;
+  onView: (q: Question) => void;
 }) {
   const typeColor: Record<string, string> = {
     MCQ: "#2563eb", MSQ: "#7c3aed", TRUE_FALSE: "#059669", SHORT_ANSWER: "#b45309",
@@ -594,14 +595,17 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks }: {
       <div className="q-row-body">
         <div className="q-row-text">{q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}</div>
         <div className="q-row-meta">
-          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type] }}>
+          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type], flex: "0 0 auto" }}>
             {typeLabel[q.question_type] ?? q.question_type}
           </span>
-          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty] }}>{q.difficulty}</span>
+          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty], flex: "0 0 auto" }}>{q.difficulty}</span>
           <span
             className="q-badge"
             onClick={(e) => e.stopPropagation()}
-            style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 4px 2px 8px" }}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              padding: "2px 8px 2px 10px", flex: "0 0 auto", whiteSpace: "nowrap",
+            }}
             title="Click to change marks for this question"
           >
             <input
@@ -612,20 +616,40 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks }: {
               onChange={(e) => setMarksInput(e.target.value)}
               onBlur={commitMarks}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={{ width: 40, border: "none", background: "transparent", font: "inherit", color: "inherit", padding: 0 }}
+              style={{
+                // Fixed, non-growing size regardless of any global input
+                // styling (e.g. width:100% resets) — flex-basis + grow/shrink
+                // of 0 pins the box even when a plain `width` gets overridden.
+                flex: "0 0 26px", width: 26, minWidth: 26, maxWidth: 26,
+                boxSizing: "border-box", textAlign: "right",
+                border: "none", background: "transparent", font: "inherit",
+                color: "inherit", padding: 0, MozAppearance: "textfield",
+              }}
             />
-            mark{q.marks !== 1 ? "s" : ""}
+            <span style={{ flex: "0 0 auto" }}>mark{q.marks !== 1 ? "s" : ""}</span>
           </span>
-          {q.courses && <span className="q-badge q-badge-course">{q.courses.code ?? q.courses.name}</span>}
+          {q.courses && <span className="q-badge q-badge-course" style={{ flex: "0 0 auto" }}>{q.courses.code ?? q.courses.name}</span>}
           {q.image_url && (
             <span
               className="q-badge"
               title="This question has an attached image"
-              style={{ background: "#f0f9ff", color: "#0369a1", display: "inline-flex", alignItems: "center", gap: 4 }}
+              style={{ background: "#f0f9ff", color: "#0369a1", display: "inline-flex", alignItems: "center", gap: 4, flex: "0 0 auto" }}
             >
               <i className="ti ti-photo" style={{ fontSize: 11 }} /> Image
             </span>
           )}
+          <button
+            type="button"
+            className="q-badge"
+            onClick={(e) => { e.stopPropagation(); onView(q); }}
+            title="View full question, options, and correct answer"
+            style={{
+              flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 4,
+              background: "#eef2ff", color: "#4338ca", border: "none", cursor: "pointer",
+            }}
+          >
+            <i className="ti ti-eye" style={{ fontSize: 12 }} /> View / Edit
+          </button>
         </div>
       </div>
       {q.image_url && (
@@ -643,6 +667,293 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks }: {
         </div>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExistingQuestionDetailSidebar
+//
+// Opened from the "View / Edit" button on a Select Existing row. Unlike
+// AnswerEditorSidebar (which edits a not-yet-saved PDF-import candidate held
+// entirely client-side), this edits a REAL question already in the
+// repository — so every save round-trips to the API. It shows the full
+// question text (the row itself truncates long questions), lets you toggle
+// which option is correct, edit option wording, adjust marks/difficulty, and
+// attach / replace / remove the question's image.
+// ─────────────────────────────────────────────────────────────────────────────
+function ExistingQuestionDetailSidebar({
+  question,
+  onClose,
+  onSaved,
+}: {
+  question: Question;
+  onClose: () => void;
+  onSaved: (updated: Question) => void;
+}) {
+  const [loading, setLoading]     = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [saving, setSaving]       = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  const [questionText, setQuestionText] = useState(question.question_text);
+  const [marks, setMarks]               = useState<number>(question.marks);
+  const [difficulty, setDifficulty]     = useState(question.difficulty);
+  const [options, setOptions] = useState<Array<{ id?: string; text: string; is_correct: boolean }>>([]);
+  const [shortAnswerText, setShortAnswerText] = useState("");
+
+  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(question.image_url ?? null);
+  const [newImageFile, setNewImageFile]         = useState<File | null>(null);
+  const [removeImage, setRemoveImage]           = useState(false);
+
+  const mapOptions = (raw: any[]) =>
+    (raw ?? [])
+      .slice()
+      .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0))
+      .map((o: any) => ({ id: o.id, text: o.option_text ?? o.text ?? "", is_correct: !!o.is_correct }));
+
+  // Always fetch the freshest full detail on open — the row passed in may be
+  // a lighter-weight copy without every option.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setLoadError("");
+      try {
+        const full: any = await facultyApi.getQuestion(question.id);
+        if (cancelled) return;
+        setQuestionText(full.question_text ?? question.question_text);
+        setMarks(full.marks ?? question.marks);
+        setDifficulty(full.difficulty ?? question.difficulty);
+        setExistingImageUrl(full.image_url ?? null);
+        const opts = mapOptions(full.question_options);
+        setOptions(opts);
+        if (question.question_type === "SHORT_ANSWER") setShortAnswerText(opts[0]?.text ?? "");
+      } catch {
+        if (cancelled) return;
+        setLoadError("Couldn't refresh from the server — showing what was already loaded.");
+        const opts = mapOptions((question as any).question_options);
+        setOptions(opts);
+        if (question.question_type === "SHORT_ANSWER") setShortAnswerText(opts[0]?.text ?? "");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question.id]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const toggleOption = (idx: number) => {
+    if (question.question_type === "MCQ" || question.question_type === "TRUE_FALSE") {
+      setOptions((prev) => prev.map((o, i) => ({ ...o, is_correct: i === idx })));
+    } else {
+      setOptions((prev) => prev.map((o, i) => (i === idx ? { ...o, is_correct: !o.is_correct } : o)));
+    }
+  };
+
+  const handleImageFileSelected = (f: File | null) => {
+    if (f) { setNewImageFile(f); setRemoveImage(false); }
+    else    { setNewImageFile(null); setRemoveImage(!!existingImageUrl); }
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setSaveError("");
+    try {
+      const body: Record<string, unknown> = { question_text: questionText, marks, difficulty };
+
+      if (question.question_type === "SHORT_ANSWER") {
+        const text = shortAnswerText.trim();
+        body.options = text
+          ? [{ ...(options[0]?.id ? { id: options[0].id } : {}), option_text: text, is_correct: true, order_index: 0 }]
+          : [];
+      } else {
+        body.options = options.map((o, i) => ({
+          ...(o.id ? { id: o.id } : {}),
+          option_text: o.text,
+          is_correct: o.is_correct,
+          order_index: i,
+        }));
+      }
+
+      await facultyApi.updateQuestion(question.id, body);
+
+      let finalImageUrl = existingImageUrl;
+      if (newImageFile) {
+        const uploaded: any = await facultyApi.uploadQuestionImage(question.id, newImageFile);
+        finalImageUrl = uploaded?.image_url ?? finalImageUrl;
+      } else if (removeImage && existingImageUrl) {
+        // NOTE: if your api client wraps DELETE /questions/{id}/image under a
+        // different method name, update this call to match.
+        await (facultyApi as any).deleteQuestionImage(question.id);
+        finalImageUrl = null;
+      }
+
+      onSaved({
+        ...question,
+        question_text: questionText,
+        marks,
+        difficulty,
+        image_url: finalImageUrl,
+        question_options: options.map((o, i) => ({ id: o.id, option_text: o.text, is_correct: o.is_correct, order_index: i })),
+      } as Question);
+    } catch {
+      setSaveError("Couldn't save changes. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const correctAnswers = options
+    .map((o, i) => (o.is_correct ? `${String.fromCharCode(65 + i)}. ${o.text}` : null))
+    .filter(Boolean);
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(2px)" }} />
+      <div style={{
+        position: "fixed", top: 0, right: 0, height: "100dvh",
+        width: "min(520px, 96vw)", background: "#fff", zIndex: 1001,
+        display: "flex", flexDirection: "column",
+        boxShadow: "-6px 0 40px rgba(0,0,0,0.18)",
+        animation: "sidebarSlideIn 0.22s cubic-bezier(.22,1,.36,1)",
+      }}>
+        <style>{`
+          @keyframes sidebarSlideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+          .eqs-opt { display: flex; align-items: flex-start; gap: 12px; padding: 13px 15px; border-radius: 10px; border: 1.5px solid #e5e7eb; margin-bottom: 9px; }
+          .eqs-opt.correct { border-color: #059669; background: #ecfdf5; }
+          .eqs-marker { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #d1d5db; display: flex; align-items: center; justify-content: center; margin-top: 1px; cursor: pointer; }
+          .eqs-marker.square { border-radius: 5px; }
+          .eqs-opt.correct .eqs-marker { border-color: #059669; background: #059669; }
+          .eqs-text-input { flex: 1; border: none; background: transparent; font-size: 14px; color: #1f2937; line-height: 1.5; font-family: inherit; padding: 2px 0; outline: none; }
+          .eqs-letter { font-weight: 700; color: #9ca3af; margin-top: 3px; }
+          .eqs-opt.correct .eqs-letter { color: #059669; }
+          .eqs-short-input, .eqs-text-area { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1.5px solid #e5e7eb; font-size: 14px; color: #1f2937; box-sizing: border-box; font-family: inherit; }
+          .eqs-short-input:focus, .eqs-text-area:focus { outline: none; border-color: #8b1a1a; }
+          .eqs-field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9ca3af; margin-bottom: 8px; }
+        `}</style>
+
+        {/* Header */}
+        <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "#8b1a1a", marginBottom: 6 }}>
+              View / Edit Question
+            </div>
+            <textarea
+              className="eqs-text-area"
+              value={questionText}
+              onChange={(e) => setQuestionText(e.target.value)}
+              rows={3}
+              style={{ fontWeight: 600, resize: "vertical" }}
+            />
+          </div>
+          <button onClick={onClose} type="button" title="Close (Esc)" style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#9ca3af", fontSize: 20, lineHeight: 1, flexShrink: 0 }}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+          {loading ? (
+            <div className="loading-state"><span className="spinner" /> Loading full question…</div>
+          ) : (
+            <>
+              {loadError && (
+                <div style={{ marginBottom: 14, padding: "10px 14px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, fontSize: 13, color: "#92400e" }}>
+                  ⚠ {loadError}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="eqs-field-label">Marks</div>
+                  <input type="number" className="form-input" min={0} step={0.5} value={marks}
+                    onChange={(e) => setMarks(parseFloat(e.target.value) || 0)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div className="eqs-field-label">Difficulty</div>
+                  <select className="form-select" value={difficulty} onChange={(e) => setDifficulty(e.target.value as any)}>
+                    <option value="EASY">Easy</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="HARD">Hard</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <div className="eqs-field-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className="ti ti-photo" style={{ fontSize: 12 }} /> Question Image
+                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#c1c7d0" }}>(optional)</span>
+                </div>
+                <QuestionImageUploader
+                  compact
+                  existingUrl={removeImage ? null : existingImageUrl}
+                  onFileSelected={handleImageFileSelected}
+                />
+              </div>
+
+              {question.question_type === "SHORT_ANSWER" ? (
+                <>
+                  <div className="eqs-field-label">Expected Answer</div>
+                  <input
+                    className="eqs-short-input"
+                    value={shortAnswerText}
+                    onChange={(e) => setShortAnswerText(e.target.value)}
+                    placeholder="Type the expected answer…"
+                  />
+                </>
+              ) : (
+                <>
+                  <div className="eqs-field-label">
+                    Options — click the circle to mark correct{question.question_type === "MSQ" ? " (multiple allowed)" : ""}, or edit the text
+                  </div>
+                  {options.map((opt, idx) => {
+                    const isMulti = question.question_type === "MSQ";
+                    return (
+                      <div key={opt.id ?? idx} className={`eqs-opt ${opt.is_correct ? "correct" : ""}`}>
+                        <div className={`eqs-marker ${isMulti ? "square" : ""}`} onClick={() => toggleOption(idx)}>
+                          {opt.is_correct && (
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                        <span className="eqs-letter">{String.fromCharCode(65 + idx)}.</span>
+                        <input
+                          className="eqs-text-input"
+                          value={opt.text}
+                          onChange={(e) => setOptions((prev) => prev.map((o, i) => (i === idx ? { ...o, text: e.target.value } : o)))}
+                        />
+                      </div>
+                    );
+                  })}
+                  {correctAnswers.length > 0 ? (
+                    <div style={{ marginTop: 14, padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 13, color: "#065f46" }}>
+                      <strong>Marked correct:</strong> {correctAnswers.join("  ·  ")}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 14, padding: "10px 14px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, fontSize: 13, color: "#92400e" }}>
+                      ⚠ No correct answer selected.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {saveError && <div className="form-error" style={{ marginTop: 14 }}>{saveError}</div>}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "16px 20px", borderTop: "1px solid #f0f0f0", display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button className="btn btn-secondary" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn btn-primary" type="button" onClick={handleSave} disabled={loading || saving}>
+            {saving ? <><span className="spinner" /> Saving…</> : <><i className="ti ti-check" /> Save Changes</>}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1564,13 +1875,15 @@ function AutoGeneratePanel({ questions, onGenerated }: {
 // Step 2: Question Management
 // ─────────────────────────────────────────────────────────────────────────────
 
-function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, onToggle, onAddNew, onImported, onUpdateMarks, allQuestions, questionsLoading }: {
+function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, onToggle, onAddNew, onImported, onUpdateMarks, onQuestionUpdated, allQuestions, questionsLoading }: {
   courseId: string; selectedIds: Set<string>; selectedQuestions: Question[]; targetMarks: number;
   onToggle: (q: Question) => void;
   onAddNew: (q: Question) => void; onImported: (qs: ExtractedQuestion[]) => void;
   onUpdateMarks: (q: Question, marks: number) => void;
+  onQuestionUpdated: (q: Question) => void;
   allQuestions: Question[]; questionsLoading: boolean;
 }) {
+  const [viewingQuestion, setViewingQuestion] = useState<Question | null>(null);
   const [tab,        setTab]        = useState<"select" | "create" | "import" | "auto">("select");
   const [search,     setSearch]     = useState("");
   const [filterType, setFilterType] = useState("");
@@ -1677,7 +1990,7 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
           ) : (
             <div className="q-list">
               {filtered.map((q) => (
-                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} onUpdateMarks={onUpdateMarks} />
+                <QuestionRow key={q.id} q={q} selected={selectedIds.has(q.id)} onToggle={() => onToggle(q)} onUpdateMarks={onUpdateMarks} onView={setViewingQuestion} />
               ))}
             </div>
           )}
@@ -1698,6 +2011,13 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
       {tab === "auto" && (
         <AutoGeneratePanel questions={allQuestions}
           onGenerated={(selected) => { selected.forEach((q) => { if (!selectedIds.has(q.id)) onToggle(q); }); setTab("select"); }} />
+      )}
+      {viewingQuestion && (
+        <ExistingQuestionDetailSidebar
+          question={viewingQuestion}
+          onClose={() => setViewingQuestion(null)}
+          onSaved={(updated) => { onQuestionUpdated(updated); setViewingQuestion(null); }}
+        />
       )}
     </div>
   );
@@ -2162,6 +2482,17 @@ export default function CreateExam() {
     }
   };
 
+  // A question was fully edited (text/marks/difficulty/options/image) via
+  // the "View / Edit" detail sidebar on the Select Existing tab — the API
+  // calls already happened there; this just syncs local copies so the row,
+  // the exam's selection, and the marks total all reflect the change
+  // immediately without waiting on a refetch.
+  const handleQuestionUpdated = (updated: Question) => {
+    setSelectedQuestions((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    setLocallyAddedQuestions((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.questions() });
+  };
+
   const handleImported = async (qs: ExtractedQuestion[]) => {
     for (const q of qs) {
       try {
@@ -2390,6 +2721,7 @@ export default function CreateExam() {
                       selectedQuestions={selectedQuestions} targetMarks={form.total_marks}
                       onToggle={toggleQuestion} onAddNew={handleAddNew} onImported={handleImported}
                       onUpdateMarks={handleUpdateQuestionMarks}
+                      onQuestionUpdated={handleQuestionUpdated}
                       allQuestions={allQuestions} questionsLoading={questionsLoading}
                     />
                   )}
