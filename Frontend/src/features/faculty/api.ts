@@ -54,7 +54,7 @@ export const facultyApi = {
   extractQuestionsFromFile: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return apiFile<ExtractedQuestion[]>("/api/v1/questions/extract", formData);
+    return apiFile<ExtractedQuestion[]>("/api/v1/questions/extract", formData, 150_000);
   },
 
   // ── NEW: Question image upload / remove ─────────────────────────────────────

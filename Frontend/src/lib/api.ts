@@ -50,7 +50,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
  * File upload variant — sends multipart/form-data.
  * Does NOT set Content-Type so the browser can supply the boundary.
  */
-export async function apiFile<T>(path: string, formData: FormData): Promise<T> {
+export async function apiFile<T>(path: string, formData: FormData, timeoutMs?: number): Promise<T> {
   const token = useAuthStore.getState().token;
   const res = await timedFetch(`${BASE_URL}${path}`, {
     method: "POST",
@@ -59,7 +59,7 @@ export async function apiFile<T>(path: string, formData: FormData): Promise<T> {
       // No Content-Type — browser sets it with the correct multipart boundary
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-  });
+  }, timeoutMs);
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -77,9 +77,9 @@ export async function apiFile<T>(path: string, formData: FormData): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function timedFetch(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+async function timedFetch(input: RequestInfo | URL, init: RequestInit, timeoutMs?: number): Promise<Response> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (cause) {

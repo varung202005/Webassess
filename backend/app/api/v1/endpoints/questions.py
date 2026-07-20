@@ -1326,7 +1326,26 @@ def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float) ->
     payload = {
         "model":       "openrouter/free",
         "temperature": temperature,
-        "max_tokens":  300 * len(batch) + 200,
+        # FIX: the "openrouter/free" router (see class comment above) can
+        # land on ANY currently-available free model — not just DeepSeek R1
+        # — and different providers format chain-of-thought differently.
+        # Some wrap it in <think>...</think> (which _strip_reasoning
+        # handles); others just write it as plain prose with no tags at
+        # all ("We need to output a JSON object mapping..."), which is
+        # exactly what showed up unparsed in production logs. Rather than
+        # trying to detect every provider's reasoning style after the
+        # fact, tell OpenRouter to keep it out of `content` in the first
+        # place — this is documented as supported across all models.
+        "reasoning": {"exclude": True},
+        # FIX: 300 tokens/question was sized for "just emit the JSON",
+        # not for a reasoning model's internal thinking pass — even with
+        # reasoning.exclude above, some providers still consume part of
+        # the same completion budget while thinking before the visible
+        # answer appears. A batch of 5 questions was hitting this ceiling
+        # and getting cut off before ever reaching the JSON. Floor of
+        # 2500 plus real per-question headroom fixes that regardless of
+        # which model answers.
+        "max_tokens":  max(2500, 900 * len(batch) + 500),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_content},
@@ -1343,7 +1362,7 @@ def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float) ->
             "X-Title":       "ExamPortal",
             "User-Agent":    "Mozilla/5.0 (compatible; ExamPortal/1.0)",
         },
-        timeout=90,
+        timeout=120,
     )
 
     if resp.status_code == 429:
@@ -1351,13 +1370,23 @@ def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float) ->
     resp.raise_for_status()
 
     body = resp.json()
+    routed_model = body.get("model", "unknown")
     message = body["choices"][0]["message"]
     content = message.get("content", "") or ""
     content = _strip_reasoning(content)
 
     parsed = _extract_json_object(content)
     if not parsed:
-        logger.warning("DeepSeek batch response was not valid JSON: %r", content[:300])
+        # Note which model the "openrouter/free" router actually picked —
+        # useful for spotting a specific free model that's consistently
+        # unreliable for this task — and whether it leaked reasoning into
+        # a separate `reasoning` field despite reasoning.exclude, which
+        # would point at a provider that doesn't honor that flag.
+        leaked_reasoning = message.get("reasoning")
+        logger.warning(
+            "DeepSeek batch response was not valid JSON (model=%s, reasoning_leaked=%s): %r",
+            routed_model, bool(leaked_reasoning), content[:300],
+        )
         return {}
 
     result: dict[int, list[int]] = {}

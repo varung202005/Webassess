@@ -595,16 +595,17 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks, onView }: {
       <div className="q-row-body">
         <div className="q-row-text">{q.question_text.slice(0, 120)}{q.question_text.length > 120 ? "…" : ""}</div>
         <div className="q-row-meta">
-          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}18`, color: typeColor[q.question_type], flex: "0 0 auto" }}>
+          <span className="q-badge" style={{ background: `${typeColor[q.question_type]}14`, color: typeColor[q.question_type], borderColor: `${typeColor[q.question_type]}30`, flex: "0 0 auto" }}>
             {typeLabel[q.question_type] ?? q.question_type}
           </span>
-          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}18`, color: diffColor[q.difficulty], flex: "0 0 auto" }}>{q.difficulty}</span>
+          <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}14`, color: diffColor[q.difficulty], borderColor: `${diffColor[q.difficulty]}30`, flex: "0 0 auto" }}>{q.difficulty}</span>
           <span
             className="q-badge"
             onClick={(e) => e.stopPropagation()}
             style={{
               display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "2px 8px 2px 10px", flex: "0 0 auto", whiteSpace: "nowrap",
+              padding: "4px 12px", flex: "0 0 auto", whiteSpace: "nowrap",
+              borderColor: "#d1d5db",
             }}
             title="Click to change marks for this question"
           >
@@ -633,7 +634,7 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks, onView }: {
             <span
               className="q-badge"
               title="This question has an attached image"
-              style={{ background: "#f0f9ff", color: "#0369a1", display: "inline-flex", alignItems: "center", gap: 4, flex: "0 0 auto" }}
+              style={{ background: "#f0f9ff", color: "#0369a1", borderColor: "#bae6fd", display: "inline-flex", alignItems: "center", gap: 4, flex: "0 0 auto" }}
             >
               <i className="ti ti-photo" style={{ fontSize: 11 }} /> Image
             </span>
@@ -644,8 +645,8 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks, onView }: {
             onClick={(e) => { e.stopPropagation(); onView(q); }}
             title="View full question, options, and correct answer"
             style={{
-              flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 4,
-              background: "#eef2ff", color: "#4338ca", border: "none", cursor: "pointer",
+              flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 5,
+              background: "#eef2ff", color: "#4338ca", border: "1px solid #c7d2fe", cursor: "pointer",
             }}
           >
             <i className="ti ti-eye" style={{ fontSize: 12 }} /> View / Edit
