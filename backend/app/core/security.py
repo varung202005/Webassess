@@ -1,5 +1,6 @@
 import base64
 import logging
+import time
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -40,7 +41,53 @@ _JWT_KEY = _resolve_jwt_key()
 # asymmetric keys issue ES256 tokens verifiable via this JWKS endpoint —
 # no shared secret involved. We fetch/cache signing keys from here rather
 # than trusting anything else in the token.
-_JWKS_CLIENT = jwt.PyJWKClient(f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json")
+#
+# FIX: PyJWT's default cache lifespan is 5 minutes, which means this
+# endpoint gets hit fairly often. On machines where outbound HTTPS is
+# occasionally blocked at the OS level (seen in practice as intermittent
+# `PyJWKClientConnectionError` / WinError 10013 from antivirus, a
+# corporate firewall, or a stale HTTP(S)_PROXY env var), that's a lot of
+# opportunities for a transient blip to reject an otherwise-valid token.
+# Supabase's signing keys essentially never change without an explicit
+# rotation, so caching them for an hour instead of 5 minutes is safe and
+# cuts network exposure ~12x. `timeout` also guards against a hung socket
+# blocking the request indefinitely instead of failing fast.
+_JWKS_CLIENT = jwt.PyJWKClient(
+    f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json",
+    cache_keys=True,
+    cache_jwk_set=True,
+    lifespan=3600,
+    timeout=10,
+)
+
+# How many times to retry fetching the JWKS signing key on a transient
+# connection failure before giving up, and how long to wait between tries.
+_JWKS_FETCH_MAX_ATTEMPTS = 3
+_JWKS_FETCH_RETRY_DELAY_SECONDS = 0.4
+
+
+def _get_es256_signing_key(token: str):
+    """
+    Resolve the ES256 signing key for `token`, retrying a couple of times
+    on a transient network failure reaching Supabase's JWKS endpoint
+    before giving up. This is specifically to smooth over one-off local
+    connectivity blips (antivirus/firewall/proxy issues) — see the note
+    above `_JWKS_CLIENT`. Any *validation* failure (bad token, no matching
+    key, etc.) is not retried and propagates immediately.
+    """
+    last_error: jwt.exceptions.PyJWKClientConnectionError | None = None
+    for attempt in range(_JWKS_FETCH_MAX_ATTEMPTS):
+        try:
+            return _JWKS_CLIENT.get_signing_key_from_jwt(token).key
+        except jwt.exceptions.PyJWKClientConnectionError as e:
+            last_error = e
+            if attempt < _JWKS_FETCH_MAX_ATTEMPTS - 1:
+                logger.warning(
+                    "JWKS fetch failed (attempt %d/%d), retrying: %s",
+                    attempt + 1, _JWKS_FETCH_MAX_ATTEMPTS, e,
+                )
+                time.sleep(_JWKS_FETCH_RETRY_DELAY_SECONDS * (attempt + 1))
+    raise last_error
 
 # Algorithms we are willing to accept. Which one applies to a given token
 # is determined by the token's own header, then verified against the
@@ -75,7 +122,7 @@ def decode_token(token: str) -> dict:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unsupported token algorithm")
 
         if unverified_alg == "ES256":
-            signing_key = _JWKS_CLIENT.get_signing_key_from_jwt(token).key
+            signing_key = _get_es256_signing_key(token)
             key, algorithms = signing_key, ["ES256"]
         else:
             key, algorithms = _JWT_KEY, ["HS256"]
@@ -113,6 +160,17 @@ def decode_token(token: str) -> dict:
         # Catches InvalidSignatureError, DecodeError, InvalidAlgorithmError, etc.
         logger.warning("JWT rejected: invalid token (%s)", type(e).__name__)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or malformed token")
+    except jwt.exceptions.PyJWKClientConnectionError as e:
+        # We genuinely couldn't reach Supabase's JWKS endpoint after retries
+        # (see _get_es256_signing_key) — this is an infra/network problem,
+        # not a bad token. Returning 401 here would look identical to an
+        # invalid session and could cause a frontend to needlessly log the
+        # user out; 503 signals "transient, try again" instead.
+        logger.error("Could not reach Supabase JWKS endpoint after retries: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable. Please try again.",
+        )
     except Exception:
         logger.exception("Unexpected error while decoding JWT")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
