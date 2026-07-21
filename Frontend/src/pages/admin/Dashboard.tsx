@@ -724,7 +724,7 @@ export default function AdminDashboard() {
               <i className="ti ti-upload" />
               <div>
                 <p>Upload CSV</p>
-                <small>name,email,phone,temp_password</small>
+                <small>name,email,phone,<br />temp_password</small>
               </div>
               <input ref={fileRef} type="file" accept=".csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadCSV(file); }} />
             </div>
