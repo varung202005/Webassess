@@ -1,6 +1,8 @@
 import base64
 import logging
 import time
+import os
+import json
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -41,19 +43,49 @@ _JWT_KEY = _resolve_jwt_key()
 # asymmetric keys issue ES256 tokens verifiable via this JWKS endpoint —
 # no shared secret involved. We fetch/cache signing keys from here rather
 # than trusting anything else in the token.
-#
-# FIX: PyJWT's default cache lifespan is 5 minutes, which means this
-# endpoint gets hit fairly often. On machines where outbound HTTPS is
-# occasionally blocked at the OS level (seen in practice as intermittent
-# `PyJWKClientConnectionError` / WinError 10013 from antivirus, a
-# corporate firewall, or a stale HTTP(S)_PROXY env var), that's a lot of
-# opportunities for a transient blip to reject an otherwise-valid token.
-# Supabase's signing keys essentially never change without an explicit
-# rotation, so caching them for an hour instead of 5 minutes is safe and
-# cuts network exposure ~12x. `timeout` also guards against a hung socket
-# blocking the request indefinitely instead of failing fast.
-_JWKS_CLIENT = jwt.PyJWKClient(
+
+_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jwks_cache.json")
+
+# Prepopulate cache for the current SUPABASE_URL if it is empty/doesn't exist
+if not os.path.exists(_CACHE_FILE) and settings.SUPABASE_URL.rstrip('/') == "https://clagdndeswnnacybvilh.supabase.co":
+    try:
+        with open(_CACHE_FILE, "w") as f:
+            f.write('{"keys":[{"alg":"ES256","crv":"P-256","ext":true,"key_ops":["verify"],"kid":"2017518d-6ddb-4358-8e30-8f5d145a5c45","kty":"EC","use":"sig","x":"XIqzdCepP2o71Ttq4XWNAAnfvTmXr70L6G1weoB6DDk","y":"dR4wVTm6nY0uUeYoEAEuB3MQZzt9bAtslSkuWYZF2UQ"}]}')
+    except Exception as e:
+        logger.warning("Could not pre-populate JWKS cache file: %s", e)
+
+
+class FileCachingJWKClient(jwt.PyJWKClient):
+    def __init__(self, uri: str, cache_file: str, *args, **kwargs):
+        super().__init__(uri, *args, **kwargs)
+        self.cache_file = cache_file
+
+    def fetch_data(self) -> dict:
+        try:
+            data = super().fetch_data()
+            try:
+                with open(self.cache_file, "w") as f:
+                    json.dump(data, f)
+            except Exception as e:
+                logger.warning("Failed to save JWKS to local cache file: %s", e)
+            return data
+        except Exception as net_err:
+            logger.warning("JWKS network fetch failed (%s). Checking local file cache fallback.", net_err)
+            try:
+                if os.path.exists(self.cache_file):
+                    with open(self.cache_file, "r") as f:
+                        data = json.load(f)
+                        if data:
+                            logger.info("Successfully fell back to local JWKS cache file.")
+                            return data
+            except Exception as file_err:
+                logger.error("JWKS local file cache fallback failed: %s", file_err)
+            raise net_err
+
+
+_JWKS_CLIENT = FileCachingJWKClient(
     f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json",
+    cache_file=_CACHE_FILE,
     cache_keys=True,
     cache_jwk_set=True,
     lifespan=3600,

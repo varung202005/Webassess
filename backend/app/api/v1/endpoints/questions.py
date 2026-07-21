@@ -668,6 +668,12 @@ SKIP_LINE_RE = re.compile(
     # header-page filter alone can't catch it — this line-level pattern
     # (any line mentioning "quiz" and containing a 4-digit year) does.
     r"|quiz[\s\-]*[ivx\d]*\b.*\d{4}\s*$"
+    # Google Forms print header / footer metadata
+    r"|https?://(?:www\.)?docs\.google\.com/forms/d/.*"
+    r"|\d{1,2}/\d{1,2}/\d{2,4},\s+\d{1,2}:\d{2}.*"
+    r"|section[\s\-]+[ivx\d]+.*"
+    r"|section\s+\w+\s+contains.*"
+    r"|this\s+section\s+contains.*"
     r")\s*$",
 )
 
@@ -802,14 +808,39 @@ def _parse_google_forms(full_text: str) -> list[dict]:
 
     STANDALONE_ASTERISK_RE = re.compile(r"^\*+$")
     cleaned: list[str] = []  # list of (raw_line, stripped_line)
-    for raw in content_lines:
+    
+    i = 0
+    n = len(content_lines)
+    while i < n:
+        raw = content_lines[i]
         raw_line = raw.strip()
         stripped_line = _strip_bold_markers(raw_line).strip()
-        if not stripped_line or SKIP_LINE_RE.match(stripped_line):
+        
+        if not stripped_line:
+            i += 1
             continue
-        if STANDALONE_ASTERISK_RE.match(stripped_line):
+            
+        # If this line is just a number (like "1." or "2."), check if the next non-empty line is metadata
+        if re.fullmatch(r"\d{1,3}\.?", stripped_line):
+            next_idx = i + 1
+            next_stripped = ""
+            while next_idx < n:
+                nt = _strip_bold_markers(content_lines[next_idx]).strip()
+                if nt:
+                    next_stripped = nt
+                    break
+                next_idx += 1
+            
+            if next_stripped and SKIP_LINE_RE.match(next_stripped):
+                i = next_idx + 1
+                continue
+                
+        if SKIP_LINE_RE.match(stripped_line) or STANDALONE_ASTERISK_RE.match(stripped_line):
+            i += 1
             continue
+            
         cleaned.append((raw_line, stripped_line))
+        i += 1
 
     questions: list[dict] = []
     current: dict | None = None
@@ -1301,7 +1332,7 @@ def _extract_json_object(content: str) -> dict | None:
         return None
 
 
-def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float) -> dict[int, list[int]]:
+def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float, model_name: str) -> dict[int, list[int]]:
     """
     Send an entire batch of questions in ONE request. The model returns a
     single JSON object mapping question index -> list of correct option
@@ -1324,27 +1355,14 @@ def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float) ->
     user_content = _build_batch_prompt(batch)
 
     payload = {
-        "model":       "openrouter/free",
+        "model":       model_name,
         "temperature": temperature,
-        # FIX: the "openrouter/free" router (see class comment above) can
-        # land on ANY currently-available free model — not just DeepSeek R1
-        # — and different providers format chain-of-thought differently.
-        # Some wrap it in <think>...</think> (which _strip_reasoning
-        # handles); others just write it as plain prose with no tags at
-        # all ("We need to output a JSON object mapping..."), which is
-        # exactly what showed up unparsed in production logs. Rather than
-        # trying to detect every provider's reasoning style after the
-        # fact, tell OpenRouter to keep it out of `content` in the first
-        # place — this is documented as supported across all models.
-        "reasoning": {"exclude": True},
-        # FIX: 300 tokens/question was sized for "just emit the JSON",
-        # not for a reasoning model's internal thinking pass — even with
-        # reasoning.exclude above, some providers still consume part of
-        # the same completion budget while thinking before the visible
-        # answer appears. A batch of 5 questions was hitting this ceiling
-        # and getting cut off before ever reaching the JSON. Floor of
-        # 2500 plus real per-question headroom fixes that regardless of
-        # which model answers.
+        # Ask the router for a model that supports JSON mode. This is more
+        # reliable than trying to parse prose from whichever free model is
+        # currently available.
+        "response_format": {"type": "json_object"},
+        # Leave enough output room for the largest supported batch. Some
+        # models use part of their completion budget before emitting JSON.
         "max_tokens":  max(2500, 900 * len(batch) + 500),
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -1377,11 +1395,7 @@ def _call_deepseek_batch(api_key: str, batch: list[dict], temperature: float) ->
 
     parsed = _extract_json_object(content)
     if not parsed:
-        # Note which model the "openrouter/free" router actually picked —
-        # useful for spotting a specific free model that's consistently
-        # unreliable for this task — and whether it leaked reasoning into
-        # a separate `reasoning` field despite reasoning.exclude, which
-        # would point at a provider that doesn't honor that flag.
+        # Note the model selected by the free router for troubleshooting.
         leaked_reasoning = message.get("reasoning")
         logger.warning(
             "DeepSeek batch response was not valid JSON (model=%s, reasoning_leaked=%s): %r",
@@ -1414,24 +1428,40 @@ def _infer_answers_batch(api_key: str, batch: list[dict]) -> None:
     scheme, which was the main source of the 16-minute runtime.
     """
     remaining = list(enumerate(batch))  # (local_index, question_dict)
+    
+    # Do not hard-code free model IDs: OpenRouter changes that catalog often.
+    # Its maintained free router selects a currently available compatible model.
+    candidate_models = ["openrouter/free"]
 
     for temperature in (0, 0.5):
         if not remaining:
             return
 
         sub_batch = [q for _, q in remaining]
-        backoff = 1.0
         mapping: dict[int, list[int]] = {}
-        for _retry in range(2):  # up to 2 tries per temperature on 429
-            try:
-                mapping = _call_deepseek_batch(api_key, sub_batch, temperature=temperature)
-                break
-            except _RateLimited:
-                logger.info("DeepSeek batch rate-limited, backing off %.1fs", backoff)
-                time.sleep(backoff)
-                backoff *= 2
-            except (requests.exceptions.HTTPError, requests.exceptions.Timeout, json.JSONDecodeError) as e:
-                logger.warning("DeepSeek batch request failed: %s", e)
+        success = False
+
+        for model_name in candidate_models:
+            backoff = 1.0
+            for _retry in range(2):  # up to 2 tries per model on 429
+                try:
+                    logger.info("Attempting AI answer inference with model: %s (temp: %.1f)", model_name, temperature)
+                    mapping = _call_deepseek_batch(api_key, sub_batch, temperature=temperature, model_name=model_name)
+                    if mapping:
+                        success = True
+                        break
+                    else:
+                        logger.warning("Model %s returned an empty mapping or invalid JSON.", model_name)
+                        break
+                except _RateLimited:
+                    logger.info("Model %s rate-limited, backing off %.1fs", model_name, backoff)
+                    time.sleep(backoff)
+                    backoff *= 2
+                except (requests.exceptions.HTTPError, requests.exceptions.Timeout, json.JSONDecodeError) as e:
+                    logger.warning("Model %s request failed: %s", model_name, e)
+                    break
+            
+            if success:
                 break
 
         still_remaining = []

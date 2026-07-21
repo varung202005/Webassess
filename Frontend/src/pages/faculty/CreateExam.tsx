@@ -574,19 +574,6 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks, onView }: {
   };
   const diffColor: Record<string, string> = { EASY: "#059669", MEDIUM: "#d97706", HARD: "#dc2626" };
 
-  // Editable marks — kept as local text so the field feels responsive while
-  // typing, committed to the repository (and to the exam's running total)
-  // on blur / Enter. Resyncs if the underlying question's marks change
-  // elsewhere (e.g. edited from the standalone Question Bank page).
-  const [marksInput, setMarksInput] = useState(String(q.marks));
-  useEffect(() => { setMarksInput(String(q.marks)); }, [q.marks]);
-
-  const commitMarks = () => {
-    const parsed = parseFloat(marksInput);
-    if (!Number.isFinite(parsed) || parsed < 0) { setMarksInput(String(q.marks)); return; }
-    if (parsed !== q.marks) onUpdateMarks(q, parsed);
-  };
-
   return (
     <div className={`q-row ${selected ? "q-row-selected" : ""}`} onClick={onToggle}>
       <div className="q-row-check">
@@ -599,35 +586,8 @@ function QuestionRow({ q, selected, onToggle, onUpdateMarks, onView }: {
             {typeLabel[q.question_type] ?? q.question_type}
           </span>
           <span className="q-badge" style={{ background: `${diffColor[q.difficulty]}14`, color: diffColor[q.difficulty], borderColor: `${diffColor[q.difficulty]}30`, flex: "0 0 auto" }}>{q.difficulty}</span>
-          <span
-            className="q-badge"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "4px 12px", flex: "0 0 auto", whiteSpace: "nowrap",
-              borderColor: "#d1d5db",
-            }}
-            title="Click to change marks for this question"
-          >
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              value={marksInput}
-              onChange={(e) => setMarksInput(e.target.value)}
-              onBlur={commitMarks}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={{
-                // Fixed, non-growing size regardless of any global input
-                // styling (e.g. width:100% resets) — flex-basis + grow/shrink
-                // of 0 pins the box even when a plain `width` gets overridden.
-                flex: "0 0 26px", width: 26, minWidth: 26, maxWidth: 26,
-                boxSizing: "border-box", textAlign: "right",
-                border: "none", background: "transparent", font: "inherit",
-                color: "inherit", padding: 0, MozAppearance: "textfield",
-              }}
-            />
-            <span style={{ flex: "0 0 auto" }}>mark{q.marks !== 1 ? "s" : ""}</span>
+          <span className="q-badge" style={{ flex: "0 0 auto", borderColor: "#d1d5db" }}>
+            {q.marks} mark{q.marks !== 1 ? "s" : ""}
           </span>
           {q.courses && <span className="q-badge q-badge-course" style={{ flex: "0 0 auto" }}>{q.courses.code ?? q.courses.name}</span>}
           {q.image_url && (
