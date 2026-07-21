@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { get, patch, post } from "../../lib/api";
 import { useAuthStore } from "../../store/authStore";
+import "../../features/student/student.css";
 
 type AdminTab = "overview" | "users" | "candidates" | "audit";
 type ApiRole = "Admin" | "Faculty" | "Proctor" | "Student" | "Candidate";
@@ -168,6 +169,14 @@ const css = `
 .admin-mobile-menu,.admin-mobile-scrim{display:none}
 @media(max-width:1000px){.admin-sidebar{display:flex;transform:translateX(-102%);width:264px}.admin-sidebar.mobile-open{transform:translateX(0);box-shadow:14px 0 40px rgba(25,25,30,.15)}.admin-main,.admin-sidebar.collapsed+.admin-main{margin-left:0;width:100%}.admin-sidebar.collapsed{width:264px}.admin-sidebar.collapsed .admin-brand-copy,.admin-sidebar.collapsed .admin-nav span,.admin-sidebar.collapsed .admin-side-bottom div,.admin-sidebar.collapsed .admin-nav-label{display:block}.admin-sidebar.collapsed .admin-nav button{justify-content:flex-start;padding:0 12px}.admin-sidebar.collapsed .collapse-btn{position:static;border:1px solid #e8e8ec}.admin-mobile-menu{display:grid;place-items:center;width:34px;height:34px;margin-right:10px;border:1px solid #e4e4e8;border-radius:9px;background:#fff;color:#65666f}.admin-mobile-scrim{display:block;position:fixed;inset:0;z-index:25;border:0;background:rgba(26,26,30,.32)}.admin-topbar{height:68px;padding:0 16px}.admin-content{padding:24px 16px 36px}.stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.quick-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.two-col{grid-template-columns:1fr}.hero{gap:14px}.admin-subtitle{display:none}}
 @media(max-width:640px){.stats-grid,.quick-actions{grid-template-columns:1fr}.admin-topbar .toolbar .btn{display:none}.hero h1{font-size:22px}.admin-card-head{align-items:flex-start;padding:14px 16px;gap:10px}.admin-card-body{padding:14px 16px}.data-table th,.data-table td{padding-right:14px;padding-left:14px}.tabs{overflow-x:auto}.tab-btn{white-space:nowrap}.input{min-width:0;width:100%}.toolbar{width:100%}.audit-toolbar{padding:14px 16px}.fab{right:16px;bottom:16px}.modal-backdrop{padding:12px}}
+
+/* Direct aliases to the Student portal shell. These values intentionally
+   mirror the source system rather than creating an Admin-specific variant. */
+.admin-brand.student-brand{height:80px;padding:0 20px;gap:10px}.admin-mark.brand-mark{width:34px;height:34px;padding:4px;border-radius:10px;background:var(--red);box-shadow:0 5px 12px rgba(163,19,50,.16)}.admin-brand-copy.brand-copy strong{color:#1d1d21;font-size:14px;letter-spacing:-.02em}.admin-brand-copy.brand-copy span{margin-top:2px;color:#898990;font-size:10px;font-weight:650;letter-spacing:.08em}.admin-nav.student-nav{padding:22px 12px}.admin-nav-label{padding:0 12px 8px;color:#9b9ba2;font-size:10px;font-weight:750;letter-spacing:.1em}.admin-nav button{position:relative;min-height:42px;margin:2px 0;padding:0 12px;border-radius:9px;color:#606068;font-size:13px;font-weight:620}.admin-nav button i{font-size:18px;color:inherit}.admin-nav button.active{background:var(--red-wash);color:var(--red);font-weight:750}.admin-nav button.active:before{position:absolute;left:0;width:3px;height:19px;border-radius:0 3px 3px 0;background:var(--red);content:""}.admin-side-bottom.sidebar-profile{margin:12px;padding:12px;border-color:var(--line);border-radius:13px;background:#fbfbfb}.admin-side-bottom.sidebar-profile strong{color:#25252a;font-size:12px}.admin-side-bottom.sidebar-profile button{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#777780}.admin-side-bottom.sidebar-profile button:hover{background:var(--red-wash);color:var(--red)}
+.admin-topbar.student-topbar{height:80px;padding:0 40px;background:rgba(255,255,255,.86);border-color:var(--line);backdrop-filter:blur(18px)}.admin-content{max-width:1480px;padding:38px 40px 56px}.admin-page-heading{margin-bottom:30px}.hero.admin-page-heading h1{color:#1d1d21;font-size:28px;font-weight:720;letter-spacing:-.045em;line-height:1.12}.hero.admin-page-heading p{margin-top:8px;color:var(--muted);font-size:13px;line-height:1.5}.topbar-user{border-color:transparent;background:transparent}.topbar-user:hover{border-color:var(--line);background:#fff}
+.stats-grid.dashboard-stats{gap:16px;margin-bottom:28px}.stats-grid.dashboard-stats .stat-card{min-height:132px;padding:18px 19px;border-radius:20px}.stats-grid.dashboard-stats .stat-top{font-size:9px}.stats-grid.dashboard-stats .stat-icon{width:36px;height:36px;border-radius:13px}.stats-grid.dashboard-stats .stat-metric{margin-top:12px}.stats-grid.dashboard-stats .stat-value{font-size:29px}.quick-actions{gap:16px;margin-bottom:28px}.action-btn{height:58px;border-radius:14px}.admin-card,.stat-card{border-color:rgba(223,225,230,.94)}.admin-card{border-radius:20px;box-shadow:0 7px 18px rgba(30,32,38,.055)}.admin-card-head{min-height:57px;padding:0 19px}.admin-card-body{padding:0 19px}.admin-card-body>.feed-item:first-child,.admin-card-body>.schedule-item:first-child{padding-top:15px}.admin-card-body>.feed-item:last-child,.admin-card-body>.schedule-item:last-child{padding-bottom:15px}.data-table th{padding:13px 18px;background:#fafafb;color:#96969e}.data-table td{padding:16px 18px;border-top:1px solid #f0f0f2}.input,.select{height:40px;border-radius:8px;font-size:12px}.btn{min-height:38px;border-radius:9px;font-size:12px}.tabs{border-radius:12px}.tab-btn{font-size:12px}.rule-box{border-radius:20px;box-shadow:0 7px 18px rgba(30,32,38,.04)}
+@media(max-width:1100px){.admin-topbar.student-topbar{padding:0 28px}.admin-content{padding:28px}.admin-brand.student-brand{padding:0 20px}}
+@media(max-width:760px){.admin-topbar.student-topbar{height:68px;padding:0 16px}.admin-content{padding:24px 16px 48px}.admin-mobile-menu{margin-right:8px}.admin-page-heading{margin-bottom:22px}.hero.admin-page-heading h1{font-size:24px}.quick-actions{gap:12px}.admin-card{border-radius:18px}}
 `;
 
 function roleClass(role?: string) {
@@ -446,7 +455,7 @@ export default function AdminDashboard() {
 
   const renderOverview = () => (
     <>
-      <section className="hero">
+      <section className="hero page-heading admin-page-heading">
         <div>
           <h1>Good Afternoon, {currentUser?.fullName?.split(" ")[0] || "Admin"}</h1>
           <p>Manage users, exams, schedules and live examinations.</p>
@@ -455,11 +464,11 @@ export default function AdminDashboard() {
           <button className="btn btn-primary" type="button" onClick={() => openCreateAccount("Faculty")}><i className="ti ti-plus" /> Add Faculty</button>
         </div>
       </section>
-      <div className="admin-grid stats-grid">
-        <div className="stat-card"><div className="stat-label">Total Users</div><div className="stat-value">{data?.stats.total_users ?? 0}</div><div className="stat-meta">{data?.stats.active_users ?? 0} active accounts</div></div>
-        <div className="stat-card"><div className="stat-label">Active Exams</div><div className="stat-value">{data?.stats.active_exams ?? 0}</div><div className="stat-meta">{data?.stats.total_exams ?? 0} total exams</div></div>
-        <div className="stat-card"><div className="stat-label">Live Exams</div><div className="stat-value">{liveSchedules.length}</div><div className="stat-meta">{data?.stats.flagged_attempts ?? 0} flagged candidates</div></div>
-        <div className="stat-card"><div className="stat-label">Candidates Assigned</div><div className="stat-value">{candidatesAssigned}</div><div className="stat-meta">Across published schedules</div></div>
+      <div className="admin-grid stats-grid dashboard-stats">
+        <div className="stat-card"><div className="stat-top"><span>Total Users</span><i className="ti ti-users stat-icon" /></div><div className="stat-metric"><div className="stat-value">{data?.stats.total_users ?? 0}</div><div className="stat-detail">{data?.stats.active_users ?? 0} active accounts</div></div></div>
+        <div className="stat-card"><div className="stat-top"><span>Active Exams</span><i className="ti ti-clipboard-list stat-icon" /></div><div className="stat-metric"><div className="stat-value">{data?.stats.active_exams ?? 0}</div><div className="stat-detail">{data?.stats.total_exams ?? 0} total exams</div></div></div>
+        <div className="stat-card"><div className="stat-top"><span>Live Exams</span><i className="ti ti-broadcast stat-icon" /></div><div className="stat-metric"><div className="stat-value">{liveSchedules.length}</div><div className="stat-detail">{data?.stats.flagged_attempts ?? 0} flagged candidates</div></div></div>
+        <div className="stat-card"><div className="stat-top"><span>Candidates Assigned</span><i className="ti ti-user-check stat-icon" /></div><div className="stat-metric"><div className="stat-value">{candidatesAssigned}</div><div className="stat-detail">Across published schedules</div></div></div>
       </div>
       <div className="admin-grid quick-actions">
         {quickAction("Create Faculty", "ti-school", () => openCreateAccount("Faculty"))}
@@ -859,14 +868,14 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="admin-shell">
+    <div className="admin-shell student-app">
       <style dangerouslySetInnerHTML={{ __html: css }} />
       {mobileOpen && <button className="admin-mobile-scrim" type="button" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
-      <aside className={`admin-sidebar ${sidebarCollapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
-        <div className="admin-brand">
+      <aside className={`admin-sidebar student-sidebar ${sidebarCollapsed ? "collapsed sidebar-collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
+        <div className="admin-brand student-brand">
           <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-            <div className="admin-mark"><img src="/auth-assets/tiet-logo.png" alt="TIET" /></div>
-            <div className="admin-brand-copy">
+            <div className="admin-mark brand-mark"><img src="/auth-assets/tiet-logo.png" alt="TIET" /></div>
+            <div className="admin-brand-copy brand-copy">
               <strong>WebAssess</strong>
               <span>Admin Portal</span>
             </div>
@@ -875,7 +884,7 @@ export default function AdminDashboard() {
             <i className={`ti ${sidebarCollapsed ? "ti-layout-sidebar-right-expand" : "ti-layout-sidebar-left-collapse"}`} />
           </button>
         </div>
-        <nav className="admin-nav">
+        <nav className="admin-nav student-nav">
           <div className="admin-nav-label">Control Center</div>
           {[
             ["overview", "Dashboard", "ti-layout-dashboard"],
@@ -891,20 +900,20 @@ export default function AdminDashboard() {
             <i className="ti ti-device-desktop" /><span>Proctor Console</span>
           </button>
         </nav>
-        <div className="admin-side-bottom">
-          <strong>{currentUser?.fullName ?? "Admin"}</strong>
-          <div>{currentUser?.email ?? "System administrator"}</div>
+        <div className="admin-side-bottom sidebar-profile">
+          <div className="avatar">{currentUser?.fullName?.slice(0, 1).toUpperCase() ?? "A"}</div>
+          <div className="profile-copy"><strong>{currentUser?.fullName ?? "Admin"}</strong><span>{currentUser?.email ?? "System administrator"}</span></div>
+          <button type="button" onClick={signOut} title="Sign out"><i className="ti ti-logout" /></button>
         </div>
       </aside>
       <section className="admin-main">
-        <header className="admin-topbar">
+        <header className="admin-topbar student-topbar">
           <div style={{ display: "flex", alignItems: "center" }}>
             <button className="admin-mobile-menu" type="button" aria-label="Open menu" onClick={() => setMobileOpen(true)}><i className="ti ti-menu-2" /></button>
-            <div><div className="admin-title">Admin Portal</div><div className="admin-subtitle">Focused controls for users, candidates, schedules and live exams</div></div>
+            <div className="topbar-title"><span>Admin Portal</span><strong>{{ overview: "Dashboard", users: "Users and Roles", candidates: "Candidate Assignment", audit: "Audit Logs" }[activeTab]}</strong></div>
           </div>
-          <div className="toolbar">
-            <span className="badge badge-admin">ADMIN</span>
-            <button className="btn btn-secondary" onClick={signOut}>Sign out</button>
+          <div className="toolbar topbar-actions">
+            <button className="topbar-user" onClick={() => setActiveTab("overview")} title="Admin profile"><div className="avatar small">{currentUser?.fullName?.slice(0, 1).toUpperCase() ?? "A"}</div><span>{currentUser?.fullName ?? "Admin"}</span></button>
           </div>
         </header>
         <main className="admin-content">
