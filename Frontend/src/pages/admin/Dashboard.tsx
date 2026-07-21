@@ -189,6 +189,9 @@ const css = `
 
 /* Match the Student dashboard: compact content sizing with equal grid rows. */
 .admin-shell .stats-grid.dashboard-stats .stat-card{align-self:stretch;height:auto!important;min-height:0!important;padding:15px 18px 16px}
+
+/* Keep CSV instructions contained within their drop zone at every width. */
+.admin-shell .mini-upload{min-width:0;overflow:hidden}.admin-shell .mini-upload>div{min-width:0}.admin-shell .mini-upload small{max-width:100%;overflow-wrap:anywhere;word-break:break-word;white-space:normal}
 `;
 
 function roleClass(role?: string) {
