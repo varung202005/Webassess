@@ -191,7 +191,7 @@ const css = `
 .admin-shell .stats-grid.dashboard-stats .stat-card{align-self:stretch;height:auto!important;min-height:0!important;padding:15px 18px 16px}
 
 /* Keep CSV instructions contained within their drop zone at every width. */
-.admin-shell .mini-upload{min-width:0;overflow:hidden}.admin-shell .mini-upload>div{min-width:0}.admin-shell .mini-upload small{max-width:100%;overflow-wrap:anywhere;word-break:break-word;white-space:normal}
+.admin-shell .mini-upload{display:flex;min-width:0;min-height:148px;padding:22px 18px;overflow:hidden;align-items:center;justify-content:center;gap:9px;border:1.5px dashed #e7c6ce;border-radius:18px;background:#fffafb;text-align:center;transition:border-color .16s ease,background .16s ease,transform .16s ease}.admin-shell .mini-upload:hover{border-color:#b31234;background:#fff5f7;transform:translateY(-1px)}.admin-shell .mini-upload>i{width:42px;height:42px;border-radius:14px;background:#fcecef;color:#b31234;font-size:20px}.admin-shell .mini-upload>div{min-width:0}.admin-shell .mini-upload p{color:#35363e;font-size:12px}.admin-shell .mini-upload small{display:block;max-width:100%;margin-top:4px;color:#898a93;font-size:10px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word;white-space:normal}
 `;
 
 function roleClass(role?: string) {
