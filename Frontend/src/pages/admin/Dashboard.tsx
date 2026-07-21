@@ -138,6 +138,36 @@ const css = `
 .skeleton{position:relative;overflow:hidden;background:#eef0f4;border-radius:10px}.skeleton:after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.62),transparent);animation:shine 1.2s infinite}.sk-line{height:12px}.sk-card{height:108px;border-radius:14px}.sk-table{height:340px;border-radius:14px}@keyframes shine{to{transform:translateX(100%)}}
 @media(max-width:1000px){.admin-sidebar{display:none}.admin-main{margin-left:0;width:100%}.stats-grid,.two-col,.quick-actions{grid-template-columns:1fr}.admin-content{padding:16px}.form-row{grid-template-columns:1fr}.input{min-width:0;width:100%}.hero{align-items:flex-start;flex-direction:column}.admin-topbar{padding:0 16px}}
 @media(max-width:1100px){.user-layout,.candidate-layout,.candidate-tools,.audit-toolbar{grid-template-columns:1fr}.fab{right:18px;bottom:18px}}
+
+/* Admin portal: aligned to the student workspace system.  Kept local so this
+   dashboard cannot change legacy/exam surfaces that use the shared class names. */
+.admin-shell{--side:264px;background:#f8f8f9;color:#292a31;letter-spacing:-.01em}
+.admin-sidebar{background:#fff;color:#4d4e56;border-right:1px solid #e8e8ec;box-shadow:none}
+.admin-brand{height:76px;padding:0 16px;border-bottom:1px solid #efeff1;gap:8px}
+.admin-mark{width:38px;height:38px;padding:3px;border-radius:12px;background:#fff;box-shadow:0 2px 7px rgba(29,30,35,.08);color:#a31332;overflow:hidden}
+.admin-mark img{display:block;width:100%;height:100%;object-fit:contain}
+.admin-brand-copy strong{color:#292a31;font-size:15px;letter-spacing:-.03em}.admin-brand-copy span{color:#9899a1;font-size:9px;font-weight:750;letter-spacing:.1em;opacity:1}
+.collapse-btn{width:32px;height:32px;border:1px solid #e8e8ec;border-radius:10px;background:#fff;color:#73747d}.collapse-btn:hover{background:#f7f7f8;color:#a31332}
+.admin-nav{padding:18px 10px;gap:2px}.admin-nav-label{padding:8px 11px 7px;color:#a0a1a8;font-size:9px;font-weight:800;letter-spacing:.1em;opacity:1}
+.admin-nav button{min-height:40px;padding:0 12px;border-radius:10px;color:#6d6e77;font-size:12px;font-weight:650}.admin-nav button i{font-size:17px;color:#85868e}.admin-nav button:hover{background:#f7f7f8;color:#292a31}.admin-nav button:hover i{color:#a31332}.admin-nav button.active{background:#fcecef;color:#a31332;box-shadow:none}.admin-nav button.active i{color:#a31332}
+.admin-side-bottom{margin:12px;padding:12px;border:1px solid #ececef;border-radius:14px;background:#fafafb;color:#85868e;font-size:11px}.admin-side-bottom strong{color:#36373e;font-size:12px}
+.admin-sidebar.collapsed{width:72px}.admin-sidebar.collapsed .admin-brand{padding:0;justify-content:center}.admin-sidebar.collapsed .admin-mark{width:36px;height:36px}.admin-sidebar.collapsed .collapse-btn{position:absolute;right:-15px;border-color:#e4e4e8;background:#fff;color:#64656d}.admin-sidebar.collapsed+.admin-main{margin-left:72px;width:calc(100% - 72px)}
+.admin-main{margin-left:var(--side);width:calc(100% - var(--side));background:#f8f8f9}.admin-topbar{height:76px;padding:0 32px;border-color:#e8e8ec;background:rgba(255,255,255,.88);box-shadow:none}.admin-title{font-size:14px;font-weight:760;letter-spacing:-.03em}.admin-subtitle{margin-top:3px;color:#93949c;font-size:11px}.admin-content{max-width:1560px;width:100%;margin:0 auto;padding:30px 32px 44px}
+.hero{margin-bottom:24px}.hero h1{margin-bottom:7px;color:#27282f;font-size:25px;font-weight:760;letter-spacing:-.045em}.hero p{color:#85868f;font-size:12px}.toolbar{gap:8px}
+.btn{height:36px;padding:0 12px;border-radius:9px;font-size:11px;font-weight:720}.btn-primary{background:#a31332;box-shadow:0 6px 14px rgba(163,19,50,.16)}.btn-primary:hover{background:#851026}.btn-secondary{border-color:#e1e2e6;color:#4f5058;box-shadow:0 1px 2px rgba(25,26,30,.02)}.btn-secondary:hover{border-color:#d3d4da;background:#fff;color:#292a31}.btn-ghost{background:#f5f5f6}.icon-btn{width:34px;height:34px;border:1px solid #e7e7eb;border-radius:9px;background:#fff;color:#696a73;font-size:16px}.icon-btn:hover{background:#f8f8f9;color:#a31332}
+.stats-grid{gap:14px;margin-bottom:24px}.stat-card,.admin-card{border-color:#e4e4e8;border-radius:18px;box-shadow:0 7px 18px rgba(27,27,32,.045)}.stat-card{position:relative;min-height:116px;padding:16px 18px;overflow:hidden}.stat-card:after{position:absolute;right:0;bottom:0;left:0;height:3px;background:#b31234;content:""}.stat-card:nth-child(2):after{background:#62636b}.stat-card:nth-child(3):after{background:#d19431}.stat-card:nth-child(4):after{background:#8a8b94}.stat-label{color:#9798a0;font-size:9px;letter-spacing:.08em}.stat-value{margin-top:13px;color:#292a31;font-size:28px;letter-spacing:-.05em}.stat-meta{margin-top:5px;color:#85868d;font-size:11px}
+.quick-actions{gap:12px;margin-bottom:24px}.action-btn{height:54px;padding:0 13px;border-color:#e5e5e9;border-radius:14px;box-shadow:0 4px 12px rgba(30,30,35,.025);color:#3b3c44;font-size:11px}.action-btn i{width:30px;height:30px;border-radius:10px;background:#fcecef;color:#a31332;font-size:16px}.action-btn:hover{border-color:#e7c3cc;background:#fffafb;box-shadow:0 8px 18px rgba(64,20,31,.055);transform:translateY(-1px)}
+.two-col{gap:18px}.admin-card{background:#fff;overflow:hidden}.admin-card-head{min-height:62px;padding:0 18px;border-color:#efeff1}.admin-card-title{color:#35363e;font-size:13px;font-weight:760}.admin-card-title i{color:#a31332;font-size:17px}.admin-card-body{padding:14px 18px}.feed-item,.schedule-item,.live-item{padding:12px 0;border-color:#f0f0f2}.feed-icon{width:30px;height:30px;border-radius:10px;background:#fcecef;color:#a31332}.row-title,.name-cell{color:#373840;font-size:12px;font-weight:720}.row-meta,.muted{color:#898a93;font-size:10.5px}.status-dot{box-shadow:0 0 0 4px #e7f5ef}
+.input,.select{height:36px;border-color:#e2e3e7;border-radius:9px;color:#35363e;font-size:11px}.input{min-width:220px}.input::placeholder{color:#999aa2}.input:hover,.select:hover{border-color:#d1d2d8}.input:focus,.select:focus{border-color:#b31234;box-shadow:0 0 0 3px rgba(179,18,52,.09)}
+.data-table th{padding:11px 18px;background:#fafafb;border-bottom-color:#ebebee;color:#9899a1;font-size:9px;letter-spacing:.08em}.data-table td{padding:13px 18px;border-bottom-color:#f0f0f2;color:#53545c;font-size:11px}.data-table tbody tr{transition:background .15s ease}.data-table tbody tr:hover td{background:#fffafb}.data-table tbody tr:hover td:first-child{box-shadow:inset 3px 0 #b31234}
+.badge{padding:3px 8px;border-radius:999px;font-size:9px;font-weight:760;letter-spacing:.05em}.badge-admin,.badge-student{border-color:#f1c7d1;background:#fff0f3;color:#a31332}.badge-faculty,.badge-proctor,.badge-candidate,.badge-success{border-color:#d7d8dd;background:#f5f5f6;color:#575861}.badge-off,.badge-info{border-color:#e4e4e7;background:#fafafb;color:#777881}.badge-warning{border-color:#edddb8;background:#fff7e8;color:#9a6a19}.badge-failed{border-color:#f0c6cf;background:#fff0f3;color:#a31332}
+.tabs{gap:3px;padding:4px;border:1px solid #e7e7ea;border-radius:12px;background:#f7f7f8}.tab-btn{height:32px;border-radius:8px;color:#797a83;font-size:11px}.tab-btn.active{color:#a31332;box-shadow:0 2px 7px rgba(32,32,37,.08)}
+.user-layout,.candidate-layout{gap:18px}.side-panel{gap:12px}.rule-box{padding:16px;border-color:#e5e5e9;border-radius:16px;box-shadow:0 4px 12px rgba(31,31,36,.025)}.rule-box h4{color:#3b3c44;font-size:12px}.rule-box p{color:#85868f;font-size:11px;line-height:1.55}.fab{right:28px;bottom:28px;width:46px;height:46px;border-radius:14px;background:#a31332;box-shadow:0 10px 24px rgba(128,14,39,.22);font-size:20px}.fab:hover{background:#851026}
+.mini-upload{border-color:#dedfe4;border-radius:14px;background:#fafafb}.mini-upload:hover{border-color:#d799a7;background:#fffafb}.mini-upload i{width:32px;height:32px;border-radius:10px;background:#fcecef;color:#a31332}.assigned-row{border-color:#ebebee;border-radius:12px;background:#fff}.assigned-row:hover{border-color:#e5c6ce;background:#fffafb}.audit-toolbar{gap:8px;padding:14px 18px;border-color:#efeff1}.audit-details{border-color:#e9e9ec;border-radius:10px;background:#fafafb;color:#55565e;font-size:11px}.pagination{padding:12px 18px;border-color:#efeff1}
+.notice{border-radius:12px;font-size:11px}.notice.success{border-color:#d7d8dd;background:#f7f7f8;color:#55565e}.notice.error{border-color:#efc8d0;background:#fff4f6;color:#a31332}.empty{padding:34px 20px;color:#8d8e96;font-size:11px}.modal-backdrop{background:rgba(28,29,34,.35);backdrop-filter:blur(3px)}.modal{border-color:#e5e5e9;border-radius:18px;box-shadow:0 22px 54px rgba(22,22,27,.19)}.modal-head{padding:17px 18px;border-color:#eeeeef}.modal-title{font-size:14px;color:#34353c}.modal-body{padding:18px}.modal-actions{padding:13px 18px;border-color:#eeeeef;background:#fcfcfd}.preview-list{border-color:#e8e8eb;border-radius:12px}.skeleton{background:#ededef}.skeleton:after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent)}
+.admin-mobile-menu,.admin-mobile-scrim{display:none}
+@media(max-width:1000px){.admin-sidebar{display:flex;transform:translateX(-102%);width:264px}.admin-sidebar.mobile-open{transform:translateX(0);box-shadow:14px 0 40px rgba(25,25,30,.15)}.admin-main,.admin-sidebar.collapsed+.admin-main{margin-left:0;width:100%}.admin-sidebar.collapsed{width:264px}.admin-sidebar.collapsed .admin-brand-copy,.admin-sidebar.collapsed .admin-nav span,.admin-sidebar.collapsed .admin-side-bottom div,.admin-sidebar.collapsed .admin-nav-label{display:block}.admin-sidebar.collapsed .admin-nav button{justify-content:flex-start;padding:0 12px}.admin-sidebar.collapsed .collapse-btn{position:static;border:1px solid #e8e8ec}.admin-mobile-menu{display:grid;place-items:center;width:34px;height:34px;margin-right:10px;border:1px solid #e4e4e8;border-radius:9px;background:#fff;color:#65666f}.admin-mobile-scrim{display:block;position:fixed;inset:0;z-index:25;border:0;background:rgba(26,26,30,.32)}.admin-topbar{height:68px;padding:0 16px}.admin-content{padding:24px 16px 36px}.stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.quick-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.two-col{grid-template-columns:1fr}.hero{gap:14px}.admin-subtitle{display:none}}
+@media(max-width:640px){.stats-grid,.quick-actions{grid-template-columns:1fr}.admin-topbar .toolbar .btn{display:none}.hero h1{font-size:22px}.admin-card-head{align-items:flex-start;padding:14px 16px;gap:10px}.admin-card-body{padding:14px 16px}.data-table th,.data-table td{padding-right:14px;padding-left:14px}.tabs{overflow-x:auto}.tab-btn{white-space:nowrap}.input{min-width:0;width:100%}.toolbar{width:100%}.audit-toolbar{padding:14px 16px}.fab{right:16px;bottom:16px}.modal-backdrop{padding:12px}}
 `;
 
 function roleClass(role?: string) {
@@ -224,6 +254,7 @@ export default function AdminDashboard() {
   const signOut = useAuthStore((state) => state.signOut);
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [userRoleTab, setUserRoleTab] = useState<UserRoleTab>("Admin");
   const [statusFilter, setStatusFilter] = useState<UserStatusFilter>("ALL");
@@ -830,12 +861,13 @@ export default function AdminDashboard() {
   return (
     <div className="admin-shell">
       <style dangerouslySetInnerHTML={{ __html: css }} />
-      <aside className={`admin-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+      {mobileOpen && <button className="admin-mobile-scrim" type="button" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
+      <aside className={`admin-sidebar ${sidebarCollapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
         <div className="admin-brand">
           <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-            <div className="admin-mark">E</div>
+            <div className="admin-mark"><img src="/auth-assets/tiet-logo.png" alt="TIET" /></div>
             <div className="admin-brand-copy">
-              <strong>EXAM.TIET</strong>
+              <strong>WebAssess</strong>
               <span>Admin Portal</span>
             </div>
           </div>
@@ -851,11 +883,11 @@ export default function AdminDashboard() {
             ["candidates", "Candidate Assignment", "ti-user-plus"],
             ["audit", "Audit Logs", "ti-list-details"],
           ].map(([key, label, icon]) => (
-            <button key={key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key as AdminTab)}>
+            <button key={key} className={activeTab === key ? "active" : ""} onClick={() => { setActiveTab(key as AdminTab); setMobileOpen(false); }}>
               <i className={`ti ${icon}`} /><span>{label}</span>
             </button>
           ))}
-          <button onClick={() => navigate("/admin/proctor")}>
+          <button onClick={() => { navigate("/admin/proctor"); setMobileOpen(false); }}>
             <i className="ti ti-device-desktop" /><span>Proctor Console</span>
           </button>
         </nav>
@@ -866,7 +898,10 @@ export default function AdminDashboard() {
       </aside>
       <section className="admin-main">
         <header className="admin-topbar">
-          <div><div className="admin-title">Admin Dashboard</div><div className="admin-subtitle">Focused controls for users, candidates, schedules and live exams</div></div>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <button className="admin-mobile-menu" type="button" aria-label="Open menu" onClick={() => setMobileOpen(true)}><i className="ti ti-menu-2" /></button>
+            <div><div className="admin-title">Admin Portal</div><div className="admin-subtitle">Focused controls for users, candidates, schedules and live exams</div></div>
+          </div>
           <div className="toolbar">
             <span className="badge badge-admin">ADMIN</span>
             <button className="btn btn-secondary" onClick={signOut}>Sign out</button>
