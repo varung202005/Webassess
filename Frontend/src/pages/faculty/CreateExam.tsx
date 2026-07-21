@@ -2601,7 +2601,7 @@ export default function CreateExam() {
   const canProceed = () => {
     if (currentStep === 0) return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
     if (currentStep === 1) return selectedQuestions.length > 0 && marksMatchTarget;
-    if (currentStep === 3) return !!schedule.start_time && !!schedule.end_time;
+    if (currentStep === 4) return !!schedule.start_time && !!schedule.end_time;
     return true;
   };
 
