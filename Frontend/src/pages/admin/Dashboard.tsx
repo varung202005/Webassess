@@ -192,6 +192,11 @@ const css = `
 
 /* Keep CSV instructions contained within their drop zone at every width. */
 .admin-shell .mini-upload{display:flex;min-width:0;min-height:148px;padding:22px 18px;overflow:hidden;align-items:center;justify-content:center;gap:9px;border:1.5px dashed #e7c6ce;border-radius:18px;background:#fffafb;text-align:center;transition:border-color .16s ease,background .16s ease,transform .16s ease}.admin-shell .mini-upload:hover{border-color:#b31234;background:#fff5f7;transform:translateY(-1px)}.admin-shell .mini-upload>i{width:42px;height:42px;border-radius:14px;background:#fcecef;color:#b31234;font-size:20px}.admin-shell .mini-upload>div{min-width:0}.admin-shell .mini-upload p{color:#35363e;font-size:12px}.admin-shell .mini-upload small{display:block;max-width:100%;margin-top:4px;color:#898a93;font-size:10px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word;white-space:normal}
+
+/* Student-style grouped search and filter surfaces. */
+.admin-shell .admin-filter-bar{display:flex;align-items:center;gap:8px;width:fit-content;max-width:100%;padding:8px;border:1px solid #e3e4e8;border-radius:18px;background:rgba(255,255,255,.9);box-shadow:0 5px 15px rgba(28,29,34,.035)}.admin-shell .admin-filter-bar .input,.admin-shell .admin-filter-bar .select{height:40px;min-width:0;border:0;border-radius:13px;background:#f7f7f8;box-shadow:none;color:#4b4c54;font-size:11px;font-weight:650}.admin-shell .admin-filter-bar .input{width:220px;padding-left:14px}.admin-shell .admin-filter-bar .select{min-width:150px;padding:0 12px}.admin-shell .admin-filter-bar .input:focus,.admin-shell .admin-filter-bar .select:focus{background:#fff;box-shadow:0 0 0 3px rgba(163,19,50,.1)}.admin-shell .audit-toolbar.admin-filter-bar{display:grid;width:100%;grid-template-columns:minmax(220px,1.3fr) repeat(4,minmax(140px,.7fr));padding:8px 10px;border-bottom:1px solid #ececef}.admin-shell .audit-toolbar.admin-filter-bar .input{width:100%}
+@media(max-width:1100px){.admin-shell .admin-filter-bar,.admin-shell .audit-toolbar.admin-filter-bar{display:flex;flex-wrap:wrap;width:100%}.admin-shell .admin-filter-bar .input{flex:1 1 220px}.admin-shell .admin-filter-bar .select{flex:1 1 150px}}
+@media(max-width:640px){.admin-shell .admin-filter-bar{align-items:stretch;flex-direction:column;width:100%}.admin-shell .admin-filter-bar .input,.admin-shell .admin-filter-bar .select{width:100%;min-width:0}.admin-shell .audit-toolbar.admin-filter-bar{display:flex;padding:8px}}
 `;
 
 function roleClass(role?: string) {
@@ -585,7 +590,7 @@ export default function AdminDashboard() {
               <div className="admin-card-title"><i className="ti ti-shield-lock" /> Users and Roles</div>
               <div className="muted" style={{ marginTop: 4 }}>Role-first user management with restricted conversions.</div>
             </div>
-            <div className="toolbar">
+            <div className="toolbar admin-filter-bar">
               <input className="input" placeholder={`Search ${userRoleTab.toLowerCase()}s`} value={search} onChange={(e) => setSearch(e.target.value)} />
               <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as UserStatusFilter)}>
                 <option value="ALL">All status</option>
@@ -795,7 +800,7 @@ export default function AdminDashboard() {
         </div>
         <span className="badge badge-off">{auditData?.total ?? 0} events</span>
       </div>
-      <div className="audit-toolbar">
+      <div className="audit-toolbar admin-filter-bar">
         <input className="input" placeholder="Search action or target" value={auditSearch} onChange={(e) => { setAuditSearch(e.target.value); setAuditPage(0); }} />
         <select className="select" value={auditAction} onChange={(e) => { setAuditAction(e.target.value); setAuditPage(0); }}>
           <option value="">All actions</option>
