@@ -31,6 +31,7 @@ import type { Question } from "../../features/faculty/types";
 const STEPS = [
   { id: "info",      label: "Exam Info",   icon: "ti-info-circle"    },
   { id: "questions", label: "Questions",   icon: "ti-list-check"     },
+  { id: "proctors",  label: "Proctors",    icon: "ti-user-shield"    },
   { id: "rules",     label: "Rules",       icon: "ti-shield-check"   },
   { id: "schedule",  label: "Schedule",    icon: "ti-calendar-event" },
   { id: "preview",   label: "Preview",     icon: "ti-eye"            },
@@ -57,7 +58,6 @@ interface ExtractedQuestion {
   difficulty: Difficulty;
   confidence: number;
   needs_review: boolean;
-  approved: boolean;
   /**
    * Client-side only — the PDF/DOCX extractor never returns images, so if
    * faculty want a picture on an imported question they attach it here
@@ -1408,7 +1408,7 @@ function PdfImportPanel({
   extracted: ExtractedQuestion[]; setExtracted: Dispatch<SetStateAction<ExtractedQuestion[]>>;
   error: string; setError: (e: string) => void;
   targetMarks?: number; selectedMarksSum?: number;
-  onImported: (qs: ExtractedQuestion[]) => void;
+  onImported: (qs: ExtractedQuestion[]) => Promise<void>;
 }) {
   const [editingQuestion, setEditingQuestion] = useState<ExtractedQuestion | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1426,26 +1426,20 @@ function PdfImportPanel({
         setError("No questions could be extracted. Make sure questions are numbered (1., 2., … or Q.1, Q.2, …).");
         setStatus("idle"); return;
       }
-      setExtracted(result.map((q) => ({ ...q, approved: false })));
+      setExtracted(result);
       setStatus("review");
     } catch (e: any) {
       setError(e?.message ?? "Extraction failed. Please try again."); setStatus("idle");
     }
   }, []);
 
-  const toggleApprove = (id: string) =>
-    setExtracted((list) => list.map((q) => (q.id === id ? { ...q, approved: !q.approved } : q)));
-
-  const approveAll = () =>
-    setExtracted((list) => list.map((q) => ({ ...q, approved: true })));
-
   // Which approved rows should ALSO be selected into the exam being built
   // (as opposed to just saved to the question bank). Saving to the bank
   // never needs marks to add up — only rows checked here count toward the
   // exam's target, and only once you continue past the Questions step.
-  const [addToExam, setAddToExam] = useState<Set<string>>(new Set());
-  const toggleAddToExam = (id: string) =>
-    setAddToExam((prev) => {
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
+  const toggleSelectedQuestion = (id: string) =>
+    setSelectedQuestionIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -1455,12 +1449,17 @@ function PdfImportPanel({
   const handleAnswerSave = (updated: ExtractedQuestion) =>
     setExtracted((list) => list.map((q) => (q.id === updated.id ? updated : q)));
 
-  const saveApproved = () => {
-    const approved = extracted.filter((q) => q.approved);
-    if (!approved.length) { setError("Approve at least one question first."); return; }
-    const withExamFlag = approved.map((q) => ({ ...q, _addToExam: addToExam.has(q.id) }));
-    setStatus("saving"); onImported(withExamFlag); setStatus("idle");
-    setExtracted([]); setAddToExam(new Set()); setError("");
+  const saveSelected = async (addToExam: boolean) => {
+    const selected = extracted.filter((q) => selectedQuestionIds.has(q.id));
+    if (!selected.length) { setError("Select at least one question first."); return; }
+    setStatus("saving");
+    try {
+      await onImported(selected.map((q) => ({ ...q, _addToExam: addToExam })));
+      setStatus("idle"); setExtracted([]); setSelectedQuestionIds(new Set()); setError("");
+    } catch (e: any) {
+      setError(e?.message ?? "Could not save the selected questions. Please try again.");
+      setStatus("review");
+    }
   };
 
   const reset = () => {
@@ -1513,10 +1512,9 @@ function PdfImportPanel({
 
   // ── review ──
   if (status === "review") {
-    const approvedCount = extracted.filter((q) => q.approved).length;
-    const approvedMarksSum = extracted.filter((q) => q.approved).reduce((s, q) => s + q.marks, 0);
-    const examMarksToAdd = extracted
-      .filter((q) => q.approved && addToExam.has(q.id))
+    const selectedCount = selectedQuestionIds.size;
+    const selectedMarksSumFromImport = extracted
+      .filter((q) => selectedQuestionIds.has(q.id))
       .reduce((s, q) => s + q.marks, 0);
     const avgConf = extracted.length
       ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length)
@@ -1568,22 +1566,11 @@ function PdfImportPanel({
             <span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span>
             <span className="is-lbl">Avg Confidence</span>
           </div>
-          <div className="import-summary-card"><span className="is-val">{approvedCount}</span><span className="is-lbl">Approved</span></div>
+          <div className="import-summary-card"><span className="is-val">{selectedCount}</span><span className="is-lbl">Selected</span></div>
           <div className="import-summary-card">
-            <span className="is-val">{approvedMarksSum}</span>
-            <span className="is-lbl">Approved Marks</span>
+            <span className="is-val">{selectedMarksSumFromImport}</span>
+            <span className="is-lbl">Selected Marks</span>
           </div>
-          {examMarksToAdd > 0 && (
-            <div className="import-summary-card">
-              <span
-                className="is-val"
-                style={{ color: typeof targetMarks === "number" && (selectedMarksSum ?? 0) + examMarksToAdd > targetMarks ? "#dc2626" : undefined }}
-              >
-                {examMarksToAdd}
-              </span>
-              <span className="is-lbl">Marks Added to Exam</span>
-            </div>
-          )}
         </div>
 
         <div style={{ fontSize: 12, color: "#6b7280", margin: "-6px 0 14px" }}>
@@ -1604,8 +1591,8 @@ function PdfImportPanel({
               <i className="ti ti-pencil" />
               Click any row to view &amp; edit the answer — you can also attach an image there
             </div>
-            <button className="btn btn-sm btn-secondary" onClick={approveAll} type="button">
-              <i className="ti ti-check-all" /> Approve All
+            <button className="btn btn-sm btn-secondary" onClick={() => setSelectedQuestionIds(new Set(extracted.map((q) => q.id)))} type="button">
+              <i className="ti ti-check-all" /> Select All
             </button>
           </div>
 
@@ -1618,8 +1605,7 @@ function PdfImportPanel({
                 <th>Marks</th>
                 <th>Correct Answer(s)</th>
                 <th>Confidence</th>
-                <th>Approve</th>
-                {typeof targetMarks === "number" && <th>Add to Exam</th>}
+                <th style={{ textAlign: "center" }}>Select</th>
               </tr>
             </thead>
             <tbody>
@@ -1694,26 +1680,15 @@ function PdfImportPanel({
                         {q.confidence}%
                       </span>
                     </td>
-                    <td>
-                      <button
-                        className={`approve-btn ${q.approved ? "approved" : ""}`}
-                        onClick={(e) => { e.stopPropagation(); toggleApprove(q.id); }}
-                        type="button"
-                      >
-                        {q.approved ? <><i className="ti ti-check" /> Approved</> : "Approve"}
-                      </button>
+                    <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedQuestionIds.has(q.id)}
+                        onChange={() => toggleSelectedQuestion(q.id)}
+                        title="Select this question"
+                        aria-label={`Select question: ${q.question_text}`}
+                      />
                     </td>
-                    {typeof targetMarks === "number" && (
-                      <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          checked={addToExam.has(q.id)}
-                          disabled={!q.approved}
-                          onChange={() => toggleAddToExam(q.id)}
-                          title={q.approved ? "Also select this question into the current exam" : "Approve this question first"}
-                        />
-                      </td>
-                    )}
                   </tr>
                 );
               })}
@@ -1727,15 +1702,19 @@ function PdfImportPanel({
           <button className="btn btn-secondary" onClick={reset} type="button">Cancel</button>
           <button
             className="btn btn-primary"
-            onClick={saveApproved}
-            disabled={approvedCount === 0}
+            onClick={() => saveSelected(false)}
+            disabled={selectedCount === 0}
             type="button"
           >
-            <i className="ti ti-check" /> Save {approvedCount} Question{approvedCount !== 1 ? "s" : ""} to Repository
-            {(() => {
-              const examCount = extracted.filter((q) => q.approved && addToExam.has(q.id)).length;
-              return examCount > 0 ? ` & Add ${examCount} to Exam` : "";
-            })()}
+            <i className="ti ti-database" /> Save {selectedCount} Question{selectedCount !== 1 ? "s" : ""} to Repository
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => saveSelected(true)}
+            disabled={selectedCount === 0}
+            type="button"
+          >
+            <i className="ti ti-plus" /> Add {selectedCount} Question{selectedCount !== 1 ? "s" : ""} to Exam
           </button>
         </div>
       </div>
@@ -1966,7 +1945,7 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
           extracted={pdfExtracted} setExtracted={setPdfExtracted}
           error={pdfError} setError={setPdfError}
           targetMarks={targetMarks} selectedMarksSum={selectedMarksSum}
-          onImported={(qs) => { onImported(qs); setTab("select"); }}
+          onImported={async (qs) => { await onImported(qs); setTab("select"); }}
         />
       )}
       {tab === "auto" && (
@@ -1987,6 +1966,39 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 3: Rules
 // ─────────────────────────────────────────────────────────────────────────────
+
+function StepProctors({ proctors, selectedIds, onToggle, loading }: {
+  proctors: Array<{ id: string; full_name: string; email: string; profile_photo?: string | null }>;
+  selectedIds: Set<string>; onToggle: (id: string) => void; loading: boolean;
+}) {
+  return (
+    <div className="step-panel">
+      <div className="step-header">
+        <h3>Select Proctors</h3>
+        <p>Choose one or more existing proctors for this exam. Selected proctors will see it on their dashboard; admins can always see every exam.</p>
+      </div>
+      {loading ? (
+        <div className="loading-state"><span className="spinner" /> Loading proctors…</div>
+      ) : proctors.length === 0 ? (
+        <div className="empty-state" style={{ padding: "48px 0" }}>
+          <i className="ti ti-user-shield" style={{ fontSize: 36, color: "#ccc" }} />
+          <div className="empty-state-title">No proctors are available</div>
+          <div className="empty-state-text">No active user currently has the Proctor role.</div>
+        </div>
+      ) : (
+        <div className="q-list">
+          {proctors.map((proctor) => (
+            <label key={proctor.id} className="question-row" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
+              <input type="checkbox" checked={selectedIds.has(proctor.id)} onChange={() => onToggle(proctor.id)} />
+              <span className="q-row-main"><strong>{proctor.full_name || "Unnamed proctor"}</strong><span className="q-row-meta">{proctor.email}</span></span>
+              <span className="q-type-badge">PROCTOR</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StepRules({ rules, onChange }: {
   rules: ExamRules; onChange: (r: ExamRules) => void;
@@ -2281,6 +2293,13 @@ export default function CreateExam() {
 
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const selectedIds = new Set(selectedQuestions.map((q) => q.id));
+  const [proctors, setProctors] = useState<Array<{ id: string; full_name: string; email: string; profile_photo?: string | null }>>([]);
+  const [proctorsLoading, setProctorsLoading] = useState(true);
+  const [selectedProctorIds, setSelectedProctorIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    facultyApi.listProctors().then(setProctors).catch(() => setProctors([])).finally(() => setProctorsLoading(false));
+  }, []);
 
   // ── Load existing exam when editing ───────────────────────────────────────
   useEffect(() => {
@@ -2290,13 +2309,15 @@ export default function CreateExam() {
     (async () => {
       setEditLoading(true); setEditLoadError("");
       try {
-        const [exam, questionRows, schedules, attempts] = await Promise.all([
+        const [exam, questionRows, schedules, attempts, assignedProctors] = await Promise.all([
           facultyApi.getExam(editExamId),
           facultyApi.getExamQuestions(editExamId).catch(() => []),
           facultyApi.listSchedules({ exam_id: editExamId }).catch(() => []),
           facultyApi.getExamAttempts(editExamId).catch(() => []),
+          facultyApi.getExamProctors(editExamId).catch(() => []),
         ]);
         if (cancelled) return;
+        setSelectedProctorIds(new Set(assignedProctors.map((row) => row.proctor_id)));
 
         const scheduleRow  = schedules?.[0] ?? null;
         const now          = Date.now();
@@ -2561,6 +2582,8 @@ export default function CreateExam() {
         deleteDraft(draftId);
       }
 
+      await facultyApi.setExamProctors(targetExamId, [...selectedProctorIds]);
+
       setExamId(targetExamId);
       setJustSaved(true);
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard });
@@ -2687,12 +2710,24 @@ export default function CreateExam() {
                     />
                   )}
                   {currentStep === 2 && (
-                    <StepRules rules={rules} onChange={setRules} />
+                    <StepProctors
+                      proctors={proctors}
+                      selectedIds={selectedProctorIds}
+                      loading={proctorsLoading}
+                      onToggle={(id) => setSelectedProctorIds((prev) => {
+                        const next = new Set(prev);
+                        next.has(id) ? next.delete(id) : next.add(id);
+                        return next;
+                      })}
+                    />
                   )}
                   {currentStep === 3 && (
-                    <StepSchedule schedule={schedule} onChange={(p) => setSchedule((s) => ({ ...s, ...p }))} />
+                    <StepRules rules={rules} onChange={setRules} />
                   )}
                   {currentStep === 4 && (
+                    <StepSchedule schedule={schedule} onChange={(p) => setSchedule((s) => ({ ...s, ...p }))} />
+                  )}
+                  {currentStep === 5 && (
                     <StepPreview
                       form={form} schedule={schedule}
                       selectedQuestions={selectedQuestions}

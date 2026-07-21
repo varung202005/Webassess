@@ -46,6 +46,24 @@ def safe_dict(obj) -> dict:
     return obj if isinstance(obj, dict) else {}
 
 
+@router.get("/proctors")
+async def list_available_proctors(_: dict = Depends(require_faculty)):
+    """Return active users that already hold the Proctor role."""
+    supabase = get_supabase_admin()
+    role_rows = supabase.table("roles").select("id").eq("name", "Proctor").execute().data or []
+    if not role_rows:
+        return []
+    proctor_ids = [row["user_id"] for row in (
+        supabase.table("user_roles").select("user_id").eq("role_id", role_rows[0]["id"]).execute().data or []
+    )]
+    if not proctor_ids:
+        return []
+    return (
+        supabase.table("users").select("id,full_name,email,profile_photo")
+        .in_("id", proctor_ids).eq("is_active", True).order("full_name").execute().data or []
+    )
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard")

@@ -37,13 +37,26 @@ async def get_proctor_dashboard(current_user: dict = Depends(require_proctor)):
     # ── ALL active exam schedules ─────────────────────────────────────────────
     all_active_schedules = (
         supabase.table("exam_schedules")
-        .select("id,start_time,end_time,exams(title,courses(code))")
+        .select("id,exam_id,start_time,end_time,exams(title,courses(code))")
         .eq("is_published", True)
         .lte("start_time", now.isoformat())
         .gte("end_time",   now.isoformat())
         .execute()
         .data
     ) or []
+
+    # Admin proctor mode intentionally sees every active exam. A Proctor sees
+    # only exams that faculty explicitly assigned to them in exam_proctors.
+    if "Admin" not in current_user.get("roles", []):
+        assigned = (
+            supabase.table("exam_proctors").select("exam_id")
+            .eq("proctor_id", user_id).execute().data or []
+        )
+        assigned_exam_ids = {row["exam_id"] for row in assigned}
+        all_active_schedules = [
+            schedule for schedule in all_active_schedules
+            if schedule.get("exam_id") in assigned_exam_ids
+        ]
 
     active_sessions      = []
     all_live_attempts    = []

@@ -111,6 +111,15 @@ export const facultyApi = {
   removeQuestionFromExam: (examId: string, questionId: string) =>
     del(`/api/v1/exams/${examId}/questions/${questionId}`),
 
+  listProctors: () =>
+    get<Array<{ id: string; full_name: string; email: string; profile_photo?: string | null }>>("/api/v1/faculty/proctors"),
+
+  getExamProctors: (examId: string) =>
+    get<Array<{ proctor_id: string }>>(`/api/v1/exams/${examId}/proctors`),
+
+  setExamProctors: (examId: string, proctorIds: string[]) =>
+    post<{ proctor_ids: string[] }>(`/api/v1/exams/${examId}/proctors`, { proctor_ids: proctorIds }),
+
   // ── Exam Sections ───────────────────────────────────────────────────────────
   createExamSection: (body: Record<string, unknown>) =>
     post<ExamSection>("/api/v1/exam-sections/", body),

@@ -838,8 +838,8 @@ async def set_verdict(
     return {"message": "Verdict recorded"}
 
 
-@router.get("/flagged", dependencies=[Depends(require_proctor)])
-async def get_flagged_attempts():
+@router.get("/flagged")
+async def get_flagged_attempts(current_user: dict = Depends(require_proctor)):
     """
     Returns all attempts flagged for proctor review (PENDING verdict only).
     Attaches noise_event_count from audio_monitoring_logs to each row.
@@ -855,6 +855,25 @@ async def get_flagged_attempts():
         .execute()
         .data
     ) or []
+
+    # The admin console is intentionally unfiltered. A Proctor can only
+    # review alerts from exams assigned to that Proctor.
+    if "Admin" not in current_user.get("roles", []):
+        assigned_exams = (
+            supabase.table("exam_proctors").select("exam_id")
+            .eq("proctor_id", current_user["user_id"]).execute().data or []
+        )
+        exam_ids = [row["exam_id"] for row in assigned_exams]
+        if not exam_ids:
+            return []
+        schedules = (
+            supabase.table("exam_schedules").select("id").in_("exam_id", exam_ids).execute().data or []
+        )
+        schedule_ids = {row["id"] for row in schedules}
+        flagged = [
+            row for row in flagged
+            if (row.get("exam_attempts") or {}).get("exam_schedule_id") in schedule_ids
+        ]
 
     if not flagged:
         return []

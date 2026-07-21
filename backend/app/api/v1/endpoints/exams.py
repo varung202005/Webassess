@@ -59,6 +59,10 @@ class QuestionAdd(BaseModel):
     order_index: int = 0
 
 
+class ProctorAssignments(BaseModel):
+    proctor_ids: list[str] = []
+
+
 class ExamRulesUpsert(BaseModel):
     exam_id: str
     allow_backtrack: bool = True
@@ -222,6 +226,44 @@ async def delete_exam(exam_id: UUID, _: dict = Depends(require_faculty)):
     supabase = get_supabase_admin()
     supabase.table("exams").delete().eq("id", str(exam_id)).execute()
     return {"message": "Exam deleted"}
+
+
+@router.get("/{exam_id}/proctors")
+async def get_exam_proctors(exam_id: UUID, _: dict = Depends(require_faculty)):
+    supabase = get_supabase_admin()
+    return (
+        supabase.table("exam_proctors").select("proctor_id")
+        .eq("exam_id", str(exam_id)).execute().data or []
+    )
+
+
+@router.post("/{exam_id}/proctors")
+async def set_exam_proctors(
+    exam_id: UUID, body: ProctorAssignments, _: dict = Depends(require_faculty)
+):
+    """Replace an exam's proctor assignments, validating the Proctor role."""
+    supabase = get_supabase_admin()
+    exam_exists = supabase.table("exams").select("id").eq("id", str(exam_id)).execute().data
+    if not exam_exists:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    ids = list(dict.fromkeys(body.proctor_ids))
+    if ids:
+        role = supabase.table("roles").select("id").eq("name", "Proctor").maybe_single().execute().data
+        valid_rows = (
+            supabase.table("user_roles").select("user_id").eq("role_id", role["id"])
+            .in_("user_id", ids).execute().data or []
+        ) if role else []
+        valid_ids = {row["user_id"] for row in valid_rows}
+        if valid_ids != set(ids):
+            raise HTTPException(status_code=400, detail="Every selected user must have the Proctor role")
+
+    supabase.table("exam_proctors").delete().eq("exam_id", str(exam_id)).execute()
+    if ids:
+        supabase.table("exam_proctors").insert([
+            {"exam_id": str(exam_id), "proctor_id": proctor_id} for proctor_id in ids
+        ]).execute()
+    return {"proctor_ids": ids}
 
 
 @router.post("/{exam_id}/questions")
