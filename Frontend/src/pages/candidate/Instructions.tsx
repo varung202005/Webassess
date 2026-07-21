@@ -89,8 +89,8 @@ export default function CandidateInstructions() {
     setStarting(true);
     setError(null);
     try {
-      const result = await candidateApi.startAttempt();
-      navigate(`/exam/live/${result.schedule_id}`, { replace: true });
+      if (state?.state !== "ACTIVE") throw new Error("No active exam is available.");
+      navigate(`/exam/preflight/${state.schedule_id}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start exam. Please try again.");
       setStarting(false);

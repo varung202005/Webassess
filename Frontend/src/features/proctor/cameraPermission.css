@@ -102,6 +102,9 @@
   color: #444;
 }
 .cam-check-ok { color: #16a34a; font-size: 16px; flex-shrink: 0; }
+.check-passed i { color: #16a34a; }
+.check-failed i { color: #b31234; }
+.check-checking i { color: #2563eb; }
 
 /* ── Rules list ─────────────────────────────────────────── */
 .cam-gate-rules {

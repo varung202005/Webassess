@@ -20,7 +20,6 @@ import "./liveExam.proctor.css";
 import WebcamCapture from "../../features/proctor/WebcamCapture";
 import AudioMonitor from "../../features/proctor/AudioMonitor";
 import BrowserMonitor from "../../features/proctor/BrowserMonitor";
-import CameraPermission from "../../features/proctor/CameraPermission";
 import { useAuthStore } from "../../store/authStore";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -195,7 +194,6 @@ export default function LiveExam() {
   const [submitOpen,    setSubmitOpen]    = useState(false);
   const [submitting,    setSubmitting]    = useState(false);
   const [error,         setError]         = useState<string | null>(null);
-  const [cameraCleared, setCameraCleared] = useState(false);
   const [isFullscreen,  setIsFullscreen]  = useState(() => Boolean(document.fullscreenElement));
   const [isOnline,      setIsOnline]      = useState(navigator.onLine);
 
@@ -440,26 +438,6 @@ export default function LiveExam() {
       unanswered: values.filter((v) => !hasAnswer(v)).length,
     };
   }, [answers, questions]);
-
-  // ── Camera gate ──────────────────────────────────────────────────────────────
-  if (session && !cameraCleared) {
-    const proceedPastGate = () => {
-      if (rule.fullscreen_required && document.fullscreenElement === null) {
-        document.documentElement.requestFullscreen().catch((err) =>
-          console.warn("[LiveExam] Could not enter fullscreen on gate click:", err)
-        );
-      }
-      setCameraCleared(true);
-    };
-    return (
-      <CameraPermission
-        examTitle={session.exam.title}
-        courseCode={session.exam.courses?.code ?? ""}
-        cameraRequired
-        onProceed={proceedPastGate}
-      />
-    );
-  }
 
   // ── Loading / error states ────────────────────────────────────────────────────
   if (sessionQuery.isLoading || answersQuery.isLoading)

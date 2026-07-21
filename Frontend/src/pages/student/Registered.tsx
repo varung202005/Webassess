@@ -21,8 +21,7 @@ export default function Registered() {
     try {
       const eligibility = await studentApi.eligibility(schedule.id);
       if (!eligibility.eligible) throw new Error(eligibility.reason);
-      await studentApi.startAttempt(schedule.id);
-      navigate(`/exam/live/${schedule.id}`);
+      navigate(`/exam/preflight/${schedule.id}`);
     } catch (cause) { setError(apiMessage(cause)); }
   };
   const cancelRegistration = async (schedule: StudentSchedule) => {

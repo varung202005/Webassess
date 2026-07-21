@@ -33,6 +33,7 @@ import CandidateThankYou from "./pages/candidate/ThankYou";
 import ProctorDashboard from "./pages/proctor/Dashboard";
 import AdminDashboard from "./pages/admin/Dashboard";
 import LiveExam from "./pages/exam/LiveExam";
+import PreExamCheck from "./pages/exam/PreExamCheck";
 import NotFound from "./pages/NotFound";
 
 export default function App() {
@@ -79,6 +80,7 @@ export default function App() {
 
         {/* ── Live Exam (full-screen) — shared by Student and Candidate ── */}
         <Route path="/exam/live/:scheduleId" element={<ProtectedRoute roles={["STUDENT", "CANDIDATE"]}><LiveExam /></ProtectedRoute>} />
+        <Route path="/exam/preflight/:scheduleId" element={<ProtectedRoute roles={["STUDENT", "CANDIDATE"]}><PreExamCheck /></ProtectedRoute>} />
 
         <Route path="*" element={<NotFound />} />
 
