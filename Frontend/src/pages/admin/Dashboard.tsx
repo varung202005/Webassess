@@ -187,8 +187,8 @@ const css = `
 .admin-sidebar.collapsed .collapse-btn{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.12);color:#fff}
 @media(max-width:1000px){.admin-sidebar.mobile-open{box-shadow:14px 0 32px rgba(92,10,30,.22)}.admin-sidebar.collapsed .collapse-btn{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.12);color:#fff}}
 
-/* Admin metrics follow their content instead of reserving an empty fixed area. */
-.admin-shell .stats-grid.dashboard-stats .stat-card{align-self:start;height:auto!important;min-height:0!important;padding:15px 18px 16px}
+/* Match the Student dashboard: compact content sizing with equal grid rows. */
+.admin-shell .stats-grid.dashboard-stats .stat-card{align-self:stretch;height:auto!important;min-height:0!important;padding:15px 18px 16px}
 `;
 
 function roleClass(role?: string) {
