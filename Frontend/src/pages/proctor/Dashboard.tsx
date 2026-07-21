@@ -272,6 +272,13 @@ export default function ProctorDashboard({ returnToAdmin = false }: ProctorDashb
       ) : (
       <>
 
+      <section className="proctor-page-heading">
+        <div>
+          <h1>Live Examination Monitoring</h1>
+          <p>Monitor active candidates, integrity signals, and examination activity.</p>
+        </div>
+      </section>
+
       {/* ── Session Banner (includes the "which test" filter) ── */}
       <SessionBanner
         sessions={sessions}

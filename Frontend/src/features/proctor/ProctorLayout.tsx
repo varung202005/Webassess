@@ -48,10 +48,10 @@ export default function ProctorLayout({ activePage, children }: ProctorLayoutPro
       <aside className={`proctor-sidebar ${mobileOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-logo">
           <div className="brand-mark">
-            <i className="ti ti-shield-check" style={{ fontSize: 16 }} />
+            <img src="/auth-assets/tiet-logo.png" alt="TIET" />
           </div>
           <div className="brand-copy">
-            <strong>EXAM.TIET</strong>
+            <strong>WebAssess</strong>
             <span>Proctor Portal</span>
           </div>
           <button className="sidebar-toggle" onClick={toggleCollapsed} aria-label="Toggle sidebar">
