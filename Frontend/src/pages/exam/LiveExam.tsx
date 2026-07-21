@@ -385,17 +385,29 @@ export default function LiveExam() {
   // ── Answer helpers ───────────────────────────────────────────────────────────
   const questions = useMemo(() => {
     if (!session?.questions) return [];
-    const seedGen = xmur3(session.attempt.id);
-    const rand = mulberry32(seedGen());
-    const shuffledQuestions = [...session.questions].map(q => ({
-      ...q,
+    const { id: attemptId } = session.attempt;
+    const shuffleQuestions = session.exam.shuffle_questions === true;
+    const shuffleOptions = session.exam.shuffle_options === true;
+
+    // The attempt id makes every candidate's order different, while the
+    // deterministic seed keeps that order stable after a refresh or reconnect.
+    const orderedQuestions = session.questions.map((row) => ({
+      ...row,
       questions: {
-        ...q.questions,
-        question_options: seededShuffle([...q.questions.question_options], rand)
-      }
+        ...row.questions,
+        question_options: shuffleOptions
+          ? seededShuffle(
+              [...row.questions.question_options],
+              seededRandom(`${attemptId}:options:${row.questions.id}`),
+            )
+          : row.questions.question_options,
+      },
     }));
-    return seededShuffle(shuffledQuestions, rand);
-  }, [session?.attempt.id, session?.questions]);
+
+    return shuffleQuestions
+      ? seededShuffle(orderedQuestions, seededRandom(`${attemptId}:questions`))
+      : orderedQuestions;
+  }, [session?.attempt.id, session?.questions, session?.exam.shuffle_questions, session?.exam.shuffle_options]);
 
   const row           = questions[index];
   const question      = row?.questions;
@@ -855,6 +867,10 @@ function mulberry32(a: number) {
     t ^= t + Math.imul(t ^ t >>> 7, t | 61);
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   }
+}
+
+function seededRandom(seed: string): () => number {
+  return mulberry32(xmur3(seed)());
 }
 
 function seededShuffle<T>(array: T[], rand: () => number): T[] {

@@ -18,6 +18,8 @@ export interface Exam {
   total_marks: number;
   pass_marks: number;
   instructions?: string | null;
+  shuffle_questions?: boolean;
+  shuffle_options?: boolean;
   course_id: string;
   semester?: number | null;
   exam_rules?: ExamRule[] | ExamRule | null;
