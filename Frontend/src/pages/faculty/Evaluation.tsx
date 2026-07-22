@@ -454,7 +454,7 @@ export default function Evaluation() {
               <option key={exam.id} value={exam.id}>{exam.title}</option>
             ))}
           </select>
-          <button className="btn btn-secondary btn-sm" disabled={!selectedExamId} onClick={exportAttempts}>
+          <button className="btn btn-secondary btn-sm export-btn" disabled={!selectedExamId} onClick={exportAttempts}>
             <i className="ti ti-download" /> Export
           </button>
           <button className="btn btn-primary btn-sm" disabled={!selectedExamId || publishing} onClick={handlePublish}>

@@ -3128,6 +3128,7 @@ select:focus, input:focus {
 .btn-primary:hover:not(:disabled) { background: #97102c; box-shadow: 0 9px 18px rgba(179,18,52,.22); transform: translateY(-1px); }
 .btn-secondary { border-color: #dfdfe5; background: #fff; color: #42424d; }
 .btn-secondary:hover:not(:disabled) { border-color: #cfcfd6; background: #fbfbfc; transform: translateY(-1px); }
+.export-btn:hover:not(:disabled) { background: var(--faculty-red); border-color: var(--faculty-red); color: #fff; }
 .btn-danger { border-color: #f3cbd3; background: #fff4f5; }
 .btn-sm { min-height: 33px; border-radius: 9px; }
 

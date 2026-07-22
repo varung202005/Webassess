@@ -230,7 +230,7 @@ export default function Analytics() {
                 <option key={exam.id} value={exam.id}>{exam.title}</option>
               ))}
             </select>
-            <button className="btn btn-secondary btn-sm" disabled={!analytics} onClick={exportAnalytics}>
+            <button className="btn btn-secondary btn-sm export-btn" disabled={!analytics} onClick={exportAnalytics}>
               <i className="ti ti-download" /> Export
             </button>
           </div>

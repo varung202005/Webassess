@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 export type Role = "STUDENT" | "FACULTY" | "PROCTOR" | "ADMIN" | "CANDIDATE";
 
@@ -18,7 +17,7 @@ export function preferredRole(roles: Role[]): Role | null {
 interface AuthState {
   user: AuthUser | null;
   activeRole: Role | null;
-  /** Supabase access token — set by the auth provider on sign-in */
+  /** Supabase access token, set after the auth provider verifies the session. */
   token: string | null;
   authReady: boolean;
   setSession: (user: AuthUser, token: string) => void;
@@ -28,27 +27,20 @@ interface AuthState {
 }
 
 /**
- * Lightweight client-side auth/session store.
+ * Session state used by the UI and API client.
  *
- * In production this is populated from `supabase.auth.getSession()` /
- * `GET /auth/me` (see RESPONSIBILITY_MAP.md, section 1). Persisted to
- * localStorage only so role-based navigation can be reviewed without a
- * live backend — replace with the Supabase session listener before
- * shipping.
+ * Supabase owns token persistence and refresh. This store intentionally
+ * remains in-memory so a stale JWT cannot be restored before AuthBootstrap
+ * verifies the current Supabase session with `/auth/me`.
  */
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      user: null,
-      activeRole: null,
-      token: null,
-      authReady: false,
-      setSession: (user, token) =>
-        set({ user, token, activeRole: preferredRole(user.roles), authReady: true }),
-      setAuthReady: (authReady) => set({ authReady }),
-      setActiveRole: (role) => set({ activeRole: role }),
-      signOut: () => set({ user: null, token: null, activeRole: null, authReady: true }),
-    }),
-    { name: "exam-tiet-auth" }
-  )
-);
+export const useAuthStore = create<AuthState>()((set) => ({
+  user: null,
+  activeRole: null,
+  token: null,
+  authReady: false,
+  setSession: (user, token) =>
+    set({ user, token, activeRole: preferredRole(user.roles), authReady: true }),
+  setAuthReady: (authReady) => set({ authReady }),
+  setActiveRole: (role) => set({ activeRole: role }),
+  signOut: () => set({ user: null, token: null, activeRole: null, authReady: true }),
+}));
