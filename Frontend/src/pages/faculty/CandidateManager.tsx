@@ -184,6 +184,7 @@ interface AssignCandidatesResponse {
   emails_sent: number;
   emails_failed: number;
   emails_skipped: number;
+  emails_queued?: number;
   results: unknown[];
 }
 
@@ -234,7 +235,10 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       const sent = data?.emails_sent ?? 0;
       const failed = data?.emails_failed ?? 0;
       const skipped = data?.emails_skipped ?? 0;
-      const mailSummary = skipped
+      const queued = data?.emails_queued ?? 0;
+      const mailSummary = queued
+        ? ` Login emails are being sent in the background for ${queued} candidate(s).`
+        : skipped
         ? " Email sending is not configured, so credentials were generated but not mailed."
         : failed
           ? ` ${sent} email(s) sent, ${failed} failed.`
@@ -264,7 +268,10 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       const sent = data?.emails_sent ?? 0;
       const failed = data?.emails_failed ?? 0;
       const skipped = data?.emails_skipped ?? 0;
-      const mailSummary = skipped
+      const queued = data?.emails_queued ?? 0;
+      const mailSummary = queued
+        ? ` Login emails are being sent in the background for ${queued} candidate(s).`
+        : skipped
         ? " Email sending is not configured, so credentials were generated but not mailed."
         : failed
           ? ` ${sent} email(s) sent, ${failed} failed.`

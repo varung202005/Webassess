@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.core.security import require_faculty
@@ -923,8 +923,19 @@ def _absolute_login_url(token: str) -> str:
     return f"{settings.FRONTEND_URL.rstrip('/')}/login?token={token}"
 
 
+def _send_candidate_invitation_in_background(payload: dict) -> None:
+    """Keep email delivery from delaying or failing a completed assignment."""
+    try:
+        result = send_candidate_invitation(payload)
+        if not result.sent and not result.skipped:
+            logger.warning("Candidate invitation email failed for %s: %s", payload["candidate_email"], result.error)
+    except Exception:
+        logger.exception("Unexpected candidate invitation failure for %s", payload.get("candidate_email"))
+
+
 @router.post("/candidates/assign-csv")
 async def assign_candidates_csv(
+    background_tasks: BackgroundTasks,
     exam_schedule_id: UUID = Form(...),
     file: UploadFile = File(...),
     current_user: dict = Depends(require_faculty),
@@ -941,6 +952,7 @@ async def assign_candidates_csv(
 
     return await assign_candidates(
         AssignCandidatesRequest(exam_schedule_id=exam_schedule_id, candidates=candidates),
+        background_tasks,
         current_user,
     )
 
@@ -948,6 +960,7 @@ async def assign_candidates_csv(
 @router.post("/candidates/assign")
 async def assign_candidates(
     body: AssignCandidatesRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_faculty),
 ):
     """
@@ -1145,23 +1158,23 @@ async def assign_candidates(
             "temp_password": temp_password,
             "invitation_token": token,
         }
-        email_result = send_candidate_invitation(payload)
+        background_tasks.add_task(_send_candidate_invitation_in_background, payload)
 
         results.append({
             "email": email,
             "user_id": user_id,
             "assignment_id": assignment_id,
             "status": "assigned",
-            "email_status": "sent" if email_result.sent else "skipped" if email_result.skipped else "failed",
-            "email_error": email_result.error,
+            "email_status": "queued",
             "invitation_payload": payload,
         })
 
     return {
         "assigned": len([r for r in results if r["status"] == "assigned"]),
-        "emails_sent": len([r for r in results if r.get("email_status") == "sent"]),
-        "emails_failed": len([r for r in results if r.get("email_status") == "failed"]),
-        "emails_skipped": len([r for r in results if r.get("email_status") == "skipped"]),
+        "emails_sent": 0,
+        "emails_failed": 0,
+        "emails_skipped": 0,
+        "emails_queued": len([r for r in results if r.get("email_status") == "queued"]),
         "results": results,
     }
 
