@@ -6,6 +6,7 @@ import { studentApi } from "../../features/student/api";
 import { apiMessage, formatDate, formatTime } from "../../features/student/format";
 import { usePortalAction, useStudentPortal } from "../../features/student/hooks";
 import type { StudentSchedule } from "../../features/student/types";
+import { requestExamFullscreen } from "../../lib/fullscreen";
 
 export default function Registered() {
   const portal = useStudentPortal();
@@ -19,6 +20,9 @@ export default function Registered() {
   const start = async (schedule: StudentSchedule) => {
     setError(null);
     try {
+      // Keep this in the click handler before any network await so browsers
+      // retain the user gesture required by the Fullscreen API.
+      await requestExamFullscreen();
       const eligibility = await studentApi.eligibility(schedule.id);
       if (!eligibility.eligible) throw new Error(eligibility.reason);
       navigate(`/exam/preflight/${schedule.id}`);

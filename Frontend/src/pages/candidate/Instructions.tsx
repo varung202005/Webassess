@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 import CandidateLayout from "../../features/candidate/CandidateLayout";
 import { useCandidateExamState } from "../../features/candidate/hooks";
 import { candidateApi } from "../../features/candidate/api";
+import { requestExamFullscreen } from "../../lib/fullscreen";
 
 const css = `
 .inst-card {
@@ -90,6 +91,7 @@ export default function CandidateInstructions() {
     setError(null);
     try {
       if (state?.state !== "ACTIVE") throw new Error("No active exam is available.");
+      await requestExamFullscreen();
       navigate(`/exam/preflight/${state.schedule_id}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start exam. Please try again.");
