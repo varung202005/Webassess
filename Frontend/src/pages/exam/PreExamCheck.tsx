@@ -5,6 +5,7 @@ import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import { studentApi } from "../../features/student/api";
 import { candidateApi } from "../../features/candidate/api";
 import { useAuthStore } from "../../store/authStore";
+import { addFullscreenChangeListener, isFullscreen, requestExamFullscreen } from "../../lib/fullscreen";
 import "../../features/proctor/cameraPermission.css";
 
 type Check = "waiting" | "checking" | "passed" | "failed";
@@ -39,10 +40,11 @@ export default function PreExamCheck() {
   const schedule = portal.data?.schedules.find((item) => item.id === scheduleId);
 
   const setFullscreenCheck = useCallback(() => {
-    setScreen(document.fullscreenElement ? "passed" : "failed");
+    setScreen(isFullscreen() ? "passed" : "failed");
   }, []);
 
   useEffect(() => {
+    setFullscreenCheck();
     const bc = new BroadcastChannel(`${CHANNEL}:${scheduleId}`);
     channelRef.current = bc;
     bc.onmessage = (event) => {
@@ -51,20 +53,25 @@ export default function PreExamCheck() {
     };
     bc.postMessage({ type: "PING" });
     const timer = window.setTimeout(() => setDuplicate((current) => current === "checking" ? "passed" : current), 500);
-    document.addEventListener("fullscreenchange", setFullscreenCheck);
-    return () => { window.clearTimeout(timer); document.removeEventListener("fullscreenchange", setFullscreenCheck); bc.close(); };
+    const removeFullscreenListener = addFullscreenChangeListener(setFullscreenCheck);
+    return () => { window.clearTimeout(timer); removeFullscreenListener(); bc.close(); };
   }, [scheduleId, setFullscreenCheck]);
 
   useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), []);
 
   const enterFullscreen = async () => {
     try {
-      await document.documentElement.requestFullscreen();
+      await requestExamFullscreen();
       const extended = (window.screen as Screen & { isExtended?: boolean }).isExtended;
       if (extended) throw new Error("An additional display is connected. Disconnect it before starting the exam.");
       setScreen("passed");
     }
-    catch (cause) { setScreen("failed"); setError(cause instanceof Error ? cause.message : "Fullscreen is required before the exam can begin."); }
+    catch (cause) {
+      setScreen("failed");
+      const message = cause instanceof Error ? cause.message : "Fullscreen is required before the exam can begin.";
+      setError(message);
+      throw new Error(message);
+    }
   };
 
   const verifyCamera = async () => {
@@ -98,11 +105,15 @@ export default function PreExamCheck() {
     }
   };
 
-  const ready = camera === "passed" && framing === "passed" && screen === "passed" && duplicate === "passed";
+  const readyForStart = camera === "passed" && framing === "passed" && duplicate === "passed";
   const startExam = async () => {
-    if (!scheduleId || !ready || starting) return;
+    if (!scheduleId || !readyForStart || starting) return;
     setStarting(true); setError(null);
     try {
+      // This final, synchronous check keeps the backend attempt (and therefore
+      // its timer) from starting until the browser is actually fullscreen.
+      if (!isFullscreen()) await enterFullscreen();
+      if (!isFullscreen()) throw new Error("Fullscreen is required before the exam can begin.");
       if (currentUser?.roles?.includes("CANDIDATE")) await candidateApi.startAttempt();
       else await studentApi.startAttempt(scheduleId);
       navigate(`/exam/live/${scheduleId}`, { replace: true });
@@ -126,8 +137,7 @@ export default function PreExamCheck() {
       <p className="cam-gate-body" style={{ fontSize: 12 }}>Browser security cannot inspect unrelated tabs or desktop applications. Full kiosk enforcement requires a managed browser or native proctoring agent.</p>
       {error && <p className="cam-gate-body cam-gate-body--error">{error}</p>}
       <button className="cam-gate-btn cam-gate-btn--primary" onClick={() => void verifyCamera()}><i className="ti ti-camera" />Run camera and framing check</button>
-      <button className="cam-gate-btn cam-gate-btn--primary" onClick={() => void enterFullscreen()}><i className="ti ti-maximize" />Enter fullscreen and verify</button>
-      <button className="cam-gate-btn cam-gate-btn--start" disabled={!ready || starting} onClick={() => void startExam()}><i className="ti ti-player-play-filled" />{starting ? "Starting…" : "Start exam"}</button>
+      <button className="cam-gate-btn cam-gate-btn--start" disabled={!readyForStart || starting} onClick={() => void startExam()}><i className={screen === "passed" ? "ti ti-player-play-filled" : "ti ti-maximize"} />{starting ? "Starting…" : screen === "passed" ? "Start exam" : "Enter fullscreen & start exam"}</button>
     </div>
   </div>;
 }

@@ -478,9 +478,14 @@
 .save-state > span.saving { background: var(--exam-red); }
 .proctor-indicator { margin-left: 0; color: var(--exam-muted); font-size: 9px; }
 .proctor-dot { background: var(--exam-red); box-shadow: 0 0 0 3px rgba(165,14,45,.12); animation: none; }
-.header-submit { height: 42px; padding: 0 19px; border: 1px solid var(--exam-red); border-radius: 8px; background: var(--exam-red); color: #fff; font-size: 12px; font-weight: 750; transition: background .15s ease, transform .15s ease; }
-.header-submit:hover { background: #850a24; }
+.header-submit { height: 42px; padding: 0 19px; border: 1px solid var(--exam-red); border-radius: 8px; background: var(--exam-red); color: #fff; font-size: 12px; font-weight: 750; box-shadow: 0 1px 2px rgba(112, 6, 30, .25); transition: background .15s ease, transform .15s ease, box-shadow .15s ease; }
+.header-submit:hover:not(:disabled) { background: #850a24; box-shadow: 0 4px 10px rgba(112, 6, 30, .25); }
 .header-submit:active { transform: translateY(1px); }
+.header-submit:disabled { cursor: not-allowed; opacity: .58; box-shadow: none; }
+.header-submit:focus-visible, .modal-footer .btn-primary:focus-visible { outline: 3px solid rgba(165,14,45,.32); outline-offset: 2px; }
+.modal-footer .btn-primary { border-color: var(--exam-red); background: var(--exam-red); color: #fff; box-shadow: 0 2px 6px rgba(112, 6, 30, .2); }
+.modal-footer .btn-primary:hover:not(:disabled) { background: #850a24; }
+.modal-footer .btn-primary:disabled { cursor: not-allowed; opacity: .58; }
 .header-submit:focus-visible, .question-palette button:focus-visible, .question-tools button:focus-visible, .answer-options button:focus-visible { outline: 3px solid rgba(165,14,45,.28); outline-offset: 2px; }
 
 .live-body { background: #fff; border-top: 0; }

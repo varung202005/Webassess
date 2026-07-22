@@ -18,6 +18,7 @@
  */
 import { useEffect, useRef, useCallback } from "react";
 import { post } from "../../lib/api";
+import { addFullscreenChangeListener, isFullscreen } from "../../lib/fullscreen";
 
 export type ViolationType = "tab" | "fullscreen" | "conflict" | "clipboard" | "screenshot" | "print";
 
@@ -76,14 +77,7 @@ export default function BrowserMonitor({
     // Proactively clear clipboard on start
     navigator.clipboard?.writeText("").catch(() => undefined);
 
-    // ── 1. Fullscreen: enter immediately if required ───────────────────────
-    if (fullscreenRequired && document.fullscreenElement === null) {
-      document.documentElement.requestFullscreen().catch((err) =>
-        console.warn("[BrowserMonitor] Could not enter fullscreen:", err)
-      );
-    }
-
-    // ── 2. Tab / visibility detection ────────────────────────────────────
+    // ── 1. Tab / visibility detection ────────────────────────────────────
     const handleVisibility = () => {
       if (!activeRef.current) return;
       if (document.hidden) {
@@ -100,7 +94,7 @@ export default function BrowserMonitor({
     // ── 3. Fullscreen exit detection ──────────────────────────────────────
     const handleFullscreenChange = () => {
       if (!activeRef.current) return;
-      if (document.fullscreenElement === null && fullscreenRequired) {
+      if (!isFullscreen() && fullscreenRequired) {
         fullscreenExits.current += 1;
         console.log("[BrowserMonitor] Fullscreen exited — total:", fullscreenExits.current);
         onWarning?.(
@@ -231,7 +225,7 @@ export default function BrowserMonitor({
     };
 
     document.addEventListener("visibilitychange", handleVisibility);
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    const removeFullscreenListener = addFullscreenChangeListener(handleFullscreenChange);
     document.addEventListener("contextmenu", preventDefaultAction);
     document.addEventListener("dragstart", preventDefaultAction);
     document.addEventListener("drop", preventDefaultAction);
@@ -250,7 +244,7 @@ export default function BrowserMonitor({
       // Final sync on unmount (exam submitted)
       void syncToBackend();
       document.removeEventListener("visibilitychange", handleVisibility);
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      removeFullscreenListener();
       document.removeEventListener("contextmenu", preventDefaultAction);
       document.removeEventListener("dragstart", preventDefaultAction);
       document.removeEventListener("drop", preventDefaultAction);

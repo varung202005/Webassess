@@ -21,6 +21,7 @@ import WebcamCapture from "../../features/proctor/WebcamCapture";
 import AudioMonitor from "../../features/proctor/AudioMonitor";
 import BrowserMonitor from "../../features/proctor/BrowserMonitor";
 import { useAuthStore } from "../../store/authStore";
+import { addFullscreenChangeListener, isFullscreen, requestExamFullscreen } from "../../lib/fullscreen";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -194,7 +195,7 @@ export default function LiveExam() {
   const [submitOpen,    setSubmitOpen]    = useState(false);
   const [submitting,    setSubmitting]    = useState(false);
   const [error,         setError]         = useState<string | null>(null);
-  const [isFullscreen,  setIsFullscreen]  = useState(() => Boolean(document.fullscreenElement));
+  const [fullscreenActive, setFullscreenActive] = useState(isFullscreen);
   const [isOnline,      setIsOnline]      = useState(navigator.onLine);
 
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
@@ -234,9 +235,8 @@ export default function LiveExam() {
 
   // ── Track fullscreen ─────────────────────────────────────────────────────────
   useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
+    const onChange = () => setFullscreenActive(isFullscreen());
+    return addFullscreenChangeListener(onChange);
   }, []);
 
   // ── Navigation Lockdown ──────────────────────────────────────────────────────
@@ -288,13 +288,17 @@ export default function LiveExam() {
       await flushAnswers();
       await studentApi.computeProctoringsSummary(session.attempt.id).catch(() => undefined);
       await studentApi.submitAttempt(session.attempt.id, type);
-      navigate("/student/history", { replace: true, state: { submitted: true } });
+      const submittedAt = new Date().toISOString();
+      navigate(currentUser?.roles?.includes("CANDIDATE") ? "/candidate/thank-you" : "/student/thank-you", {
+        replace: true,
+        state: { submittedAt },
+      });
     } catch (cause) {
       submitted.current = false;
       setError(apiMessage(cause));
       setSubmitting(false);
     }
-  }, [session, navigate, flushAnswers]);
+  }, [session, navigate, flushAnswers, currentUser?.roles]);
 
   // ── Auto-submit on deadline ──────────────────────────────────────────────────
   useEffect(() => {
@@ -505,7 +509,7 @@ export default function LiveExam() {
       )}
 
       {/* Fullscreen nag bar */}
-      {rule.fullscreen_required && !isFullscreen && (
+      {rule.fullscreen_required && !fullscreenActive && (
         <div className="proctor-nag-bar">
           <i className="ti ti-maximize" />
           <span>
@@ -513,7 +517,7 @@ export default function LiveExam() {
           </span>
           <button
             className="nag-btn"
-            onClick={() => document.documentElement.requestFullscreen().catch(() => undefined)}
+            onClick={() => void requestExamFullscreen().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to enter fullscreen."))}
           >
             <i className="ti ti-maximize" /> Re-enter Fullscreen
           </button>
@@ -621,15 +625,6 @@ export default function LiveExam() {
             <span><i className="current" />Current question</span>
           </div>
 
-          {rule.fullscreen_required && (
-            <button
-              className={`btn btn-secondary fullscreen${!isFullscreen ? " fullscreen-urgent" : ""}`}
-              onClick={() => document.documentElement.requestFullscreen().catch(() => undefined)}
-            >
-              <i className="ti ti-maximize" />
-              {isFullscreen ? "Fullscreen active" : "Re-enter fullscreen"}
-            </button>
-          )}
           <div className="timer-policy">Your answers are saved automatically as you work.</div>
         </aside>
 

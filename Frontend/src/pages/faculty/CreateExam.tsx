@@ -470,19 +470,26 @@ function DraftsList({ activeDraftId, onResume, onDelete, onRefresh }: {
 function Stepper({ steps, current, onStep }: {
   steps: typeof STEPS; current: number; onStep: (i: number) => void;
 }) {
+  const progress = Math.round(((current + 1) / steps.length) * 100);
   return (
-    <div className="exam-stepper">
-      {steps.map((s, i) => (
-        <div key={s.id} className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}>
-          <button className="stepper-btn" onClick={() => i < current && onStep(i)} disabled={i > current}>
-            <div className="stepper-circle">
-              {i < current ? <i className="ti ti-check" /> : <span>{i + 1}</span>}
-            </div>
-            <span className="stepper-label">{s.label}</span>
-          </button>
-          {i < steps.length - 1 && <div className="stepper-line" />}
-        </div>
-      ))}
+    <div className="exam-progress" aria-label={`Exam creation progress: step ${current + 1} of ${steps.length}`}>
+      <div className="exam-progress-summary">
+        <span className="exam-progress-kicker">Exam setup</span>
+        <span className="exam-progress-status">{progress}% complete <span aria-hidden="true">·</span> Step {current + 1} of {steps.length}</span>
+      </div>
+      <div className="exam-stepper">
+        {steps.map((s, i) => (
+          <div key={s.id} className={`stepper-item ${i === current ? "active" : ""} ${i < current ? "done" : ""}`}>
+            <button className="stepper-btn" onClick={() => i < current && onStep(i)} disabled={i > current} aria-current={i === current ? "step" : undefined}>
+              <div className="stepper-circle">
+                {i < current ? <i className="ti ti-check" /> : <span>{i + 1}</span>}
+              </div>
+              <span className="stepper-label">{s.label}</span>
+            </button>
+            {i < steps.length - 1 && <div className="stepper-line" />}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2029,7 +2036,7 @@ function StepRules({ rules, onChange }: {
       </div>
 
       {/* Platform fullscreen notice */}
-      <div style={{
+      <div className="exam-callout exam-callout-info" style={{
         display: "flex", alignItems: "flex-start", gap: 10,
         padding: "11px 15px", background: "#f0f7ff",
         border: "1.5px solid #bfdbfe", borderRadius: 10,
@@ -2082,7 +2089,7 @@ function StepSchedule({ schedule, onChange }: {
         <h3>Exam Schedule</h3>
         <p>Set when this exam will take place. The exam will be saved as a draft — students won't see it until you hit <strong>Publish</strong> on the dashboard.</p>
       </div>
-      <div style={{
+      <div className="exam-callout exam-callout-info" style={{
         display: "flex", alignItems: "flex-start", gap: 10,
         padding: "12px 16px", background: "#f0f7ff",
         border: "1.5px solid #bfdbfe", borderRadius: 10,
@@ -2194,7 +2201,7 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
         </div>
       </div>
       {!isEditMode && (
-        <div style={{
+        <div className="exam-callout exam-callout-warning" style={{
           marginTop: 20, padding: "12px 16px",
           background: "#fff3d8", border: "1.5px solid #f5d76e",
           borderRadius: 10, fontSize: 13, color: "#5a3c00",

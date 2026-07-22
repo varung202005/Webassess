@@ -6,7 +6,7 @@
  */
 import CandidateLayout from "../../features/candidate/CandidateLayout";
 import { useAuthStore } from "../../store/authStore";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const css = `
 .ty-card {
@@ -36,6 +36,8 @@ const css = `
 export default function CandidateThankYou() {
   const signOut = useAuthStore((s) => s.signOut);
   const navigate = useNavigate();
+  const location = useLocation();
+  const submittedAt = (location.state as { submittedAt?: string } | null)?.submittedAt;
 
   const handleSignOut = () => {
     signOut();
@@ -46,12 +48,12 @@ export default function CandidateThankYou() {
     <CandidateLayout>
       <style dangerouslySetInnerHTML={{ __html: css }} />
       <div className="ty-card">
-        <div className="ty-icon">✅</div>
-        <div className="ty-title">Assessment Completed</div>
+        <div className="ty-icon"><i className="ti ti-circle-check-filled" /></div>
+        <div className="ty-title">Exam Submitted Successfully</div>
         <div className="ty-sub">
-          Thank you. Your test has been submitted successfully.
-          Results will be published soon.
+          Thank you. Your answers have been securely recorded and your examination is complete.
         </div>
+        {submittedAt && <div className="ty-note"><i className="ti ti-clock" /> Submitted {new Date(submittedAt).toLocaleString()}</div>}
         <div className="ty-note">
           You may close this window or sign out below.
         </div>

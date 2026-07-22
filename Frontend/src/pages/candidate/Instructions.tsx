@@ -69,7 +69,7 @@ const css = `
 `;
 
 const DEFAULT_RULES = [
-  { icon: "ti-clock", text: "The timer starts the moment you click Start Test. It cannot be paused." },
+  { icon: "ti-clock", text: "The timer starts when the secure exam begins and cannot be paused." },
   { icon: "ti-layout-2", text: "Do not switch browser tabs or windows. This will be logged and may result in disqualification." },
   { icon: "ti-maximize", text: "Keep the exam in fullscreen mode for the duration of the test." },
   { icon: "ti-device-laptop", text: "Use a stable internet connection. Your answers are saved automatically." },
@@ -169,12 +169,6 @@ export default function CandidateInstructions() {
               <li>
                 <i className="ti ti-camera" />
                 <strong>Proctoring is enabled.</strong> Your camera and/or microphone may be monitored.
-              </li>
-            )}
-            {exam?.rules?.max_tab_switches != null && (
-              <li>
-                <i className="ti ti-alert-triangle" />
-                Maximum tab switches allowed: <strong>{exam.rules.max_tab_switches}</strong>. Exceeding this limit may invalidate your attempt.
               </li>
             )}
           </ul>
