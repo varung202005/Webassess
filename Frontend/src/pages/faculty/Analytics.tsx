@@ -205,7 +205,7 @@ export default function Analytics() {
         title="Exam Analytics"
         subtitle={analytics ? `${analytics.exam_title} · ${analytics.course_name}` : "Select an exam to view analytics"}
         actions={
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div className="exam-action-bar">
             <select className="select-filter" value={selectedExamId} onChange={(e) => handleExamChange(e.target.value)} style={{ minWidth: 240 }}>
               <option value="">Select an exam…</option>
               {allExams.map((exam: any) => (

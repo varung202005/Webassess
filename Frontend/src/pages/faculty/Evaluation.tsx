@@ -437,7 +437,7 @@ export default function Evaluation() {
           <h1>Evaluation</h1>
           <p>Review student attempts and publish results</p>
         </div>
-        <div className="heading-actions">
+        <div className="heading-actions exam-action-bar">
           <select className="select-filter" value={selectedExamId} onChange={(e) => handleExamChange(e.target.value)} style={{ minWidth: 240 }}>
             <option value="">Select an exam…</option>
             {allExams.map((exam: any) => (
