@@ -12,7 +12,7 @@ export default function Dashboard() {
 
   // Registered upcoming (not yet ended, not attempted)
   const registeredUpcoming = data?.schedules.filter((item) =>
-    item.registration?.status === "REGISTERED" &&
+    item.registration?.status === "REGISTERE" &&
     new Date(item.end_time).getTime() > now
   ) ?? [];
 
