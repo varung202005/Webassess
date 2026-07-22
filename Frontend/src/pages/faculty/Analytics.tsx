@@ -209,7 +209,7 @@ export default function Analytics() {
             <select className="select-filter" value={selectedExamId} onChange={(e) => handleExamChange(e.target.value)} style={{ minWidth: 240 }}>
               <option value="">Select an exam…</option>
               {allExams.map((exam: any) => (
-                <option key={exam.id} value={exam.id}>{exam.title} ({exam.courses?.code ?? ""})</option>
+                <option key={exam.id} value={exam.id}>{exam.title}</option>
               ))}
             </select>
             <button className="btn btn-secondary btn-sm" disabled={!analytics}>
