@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
+import * as blazeface from "@tensorflow-models/blazeface";
 import { studentApi } from "../../features/student/api";
 import { candidateApi } from "../../features/candidate/api";
 import { useAuthStore } from "../../store/authStore";
@@ -9,16 +10,6 @@ import { addFullscreenChangeListener, isFullscreen, requestExamFullscreen } from
 import "../../features/proctor/cameraPermission.css";
 
 type Check = "waiting" | "checking" | "passed" | "failed";
-
-interface BrowserFaceDetector {
-  detect(source: ImageBitmapSource): Promise<Array<{ boundingBox: DOMRectReadOnly }>>;
-}
-
-declare global {
-  interface Window {
-    FaceDetector?: new (options?: { fastMode?: boolean; maxDetectedFaces?: number }) => BrowserFaceDetector;
-  }
-}
 
 const CHANNEL = "exam-preflight";
 
@@ -89,14 +80,18 @@ export default function PreExamCheck() {
 
       // A face plus a person that extends well below the face is the enforceable
       // browser-side approximation of the requested head-to-waist framing.
-      const detector = window.FaceDetector ? new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 }) : null;
-      if (!detector) throw new Error("This browser cannot run the required face check. Please use the latest Chrome or Edge.");
-      const [faces, model] = await Promise.all([detector.detect(video), cocoSsd.load()]);
-      const people = (await model.detect(video)).filter((prediction) => prediction.class === "person" && prediction.score >= 0.6);
-      const face = faces[0]?.boundingBox;
+      // Both models run entirely through TensorFlow.js, so this works on any
+      // modern browser (Chrome, Firefox, Safari, Edge) rather than relying on
+      // the experimental, Chromium-only window.FaceDetector API.
+      const [faceModel, personModel] = await Promise.all([blazeface.load(), cocoSsd.load()]);
+      const faces = await faceModel.estimateFaces(video, false);
+      const people = (await personModel.detect(video)).filter((prediction) => prediction.class === "person" && prediction.score >= 0.6);
+      const faceBox = faces[0];
       const person = people[0]?.bbox;
-      const faceClearlyVisible = Boolean(face && face.width >= video.videoWidth * 0.08 && face.width <= video.videoWidth * 0.5);
-      const waistVisible = Boolean(person && face && person[1] <= face.y + face.height && person[1] + person[3] >= video.videoHeight * 0.78);
+      const faceWidth = faceBox ? (faceBox.bottomRight as number[])[0] - (faceBox.topLeft as number[])[0] : 0;
+      const faceBottom = faceBox ? (faceBox.bottomRight as number[])[1] : 0;
+      const faceClearlyVisible = Boolean(faceBox && faceWidth >= video.videoWidth * 0.08 && faceWidth <= video.videoWidth * 0.5);
+      const waistVisible = Boolean(person && faceBox && person[1] <= faceBottom && person[1] + person[3] >= video.videoHeight * 0.78);
       if (!faceClearlyVisible || !waistVisible) throw new Error("Keep your face clear and position the camera so your upper body down to your waist is visible, then run the check again.");
       setFraming("passed");
     } catch (cause) {
