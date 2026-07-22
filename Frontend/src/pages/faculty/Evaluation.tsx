@@ -8,6 +8,7 @@ import {
   useFacultyDashboard,
 } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
+import { downloadExcel } from "../../lib/exportExcel";
 import { useQuery } from "@tanstack/react-query";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -430,6 +431,15 @@ export default function Evaluation() {
     return base;
   })();
 
+  const exportAttempts = () => {
+    const examTitle = allExams.find((exam: any) => exam.id === selectedExamId)?.title ?? "exam-attempts";
+    downloadExcel(`${examTitle}-attempts`, [{ name: "Attempts", rows: displayedAttempts.map((attempt) => ({
+      Student: attempt.users?.full_name ?? "", Roll_Number: attempt.students?.roll_number ?? "", Email: attempt.users?.email ?? "",
+      Status: attempt.status ?? "", Started_At: attempt.started_at ?? "", Submitted_At: attempt.submitted_at ?? "",
+      Score: attempt.total_score ?? attempt.score ?? "", Percentage: attempt.percentage ?? "",
+    })) }]);
+  };
+
   return (
     <FacultyLayout activePage="evaluation">
       <div className="page-heading">
@@ -444,7 +454,7 @@ export default function Evaluation() {
               <option key={exam.id} value={exam.id}>{exam.title}</option>
             ))}
           </select>
-          <button className="btn btn-secondary btn-sm" disabled={!selectedExamId}>
+          <button className="btn btn-secondary btn-sm" disabled={!selectedExamId} onClick={exportAttempts}>
             <i className="ti ti-download" /> Export
           </button>
           <button className="btn btn-primary btn-sm" disabled={!selectedExamId || publishing} onClick={handlePublish}>

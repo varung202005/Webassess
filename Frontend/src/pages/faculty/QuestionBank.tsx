@@ -4,6 +4,7 @@ import { Loading, ErrorBlock, EmptyState, PageHeading } from "../../features/fac
 import { useQuestions, useFacultyDashboard, useFacultyAction } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
 import { statusBadgeClass, statusLabel, difficultyBadge, typeBadge } from "../../features/faculty/format";
+import { downloadExcel } from "../../lib/exportExcel";
 import type { Question } from "../../features/faculty/types";
 
 /* ── Helpers ───────────────────────────────────────────────── */
@@ -455,6 +456,14 @@ export default function QuestionBank() {
     ...(filterDifficulty ? [filterDifficulty] : []),
   ];
 
+  const exportQuestions = () => {
+    downloadExcel("question-bank", [{ name: "Questions", rows: filtered.map((question) => ({
+      Question: question.question_text ?? "", Type: question.question_type ?? "", Difficulty: question.difficulty ?? "",
+      Marks: question.marks ?? "", Negative_Marks: question.negative_marks ?? "", Course: question.courses?.name ?? "",
+      Course_Code: question.courses?.code ?? "", Active: question.is_active !== false ? "Yes" : "No",
+    })) }]);
+  };
+
   return (
     <FacultyLayout activePage="question-bank">
       <PageHeading
@@ -606,7 +615,7 @@ export default function QuestionBank() {
               ))}
             </select>
             <div style={{ flex: 1 }} />
-            <button className="btn btn-secondary btn-sm">
+            <button className="btn btn-secondary btn-sm" onClick={exportQuestions}>
               <i className="ti ti-download" /> Export
             </button>
           </div>

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
 import { Loading, ErrorBlock, EmptyState, PageHeading } from "../../features/faculty/components";
 import { useExams, useExamAnalytics, useFacultyDashboard } from "../../features/faculty/hooks";
+import { downloadExcel } from "../../lib/exportExcel";
 
 /* ── Color helpers ────────────────────────────────────────── */
 const GRADE_COLORS: Record<string, string> = {
@@ -191,6 +192,23 @@ export default function Analytics() {
     setActiveTab("overview");
   };
 
+  const exportAnalytics = () => {
+    if (!analytics) return;
+    downloadExcel(`${analytics.exam_title}-analytics`, [
+      { name: "Overview", rows: [{
+        Exam: analytics.exam_title, Course: analytics.course_name, Course_Code: analytics.course_code,
+        Total_Marks: analytics.total_marks, Pass_Marks: analytics.pass_marks, Duration_Minutes: analytics.duration_minutes,
+        Registered: analytics.total_registered, Appeared: analytics.total_appeared, Passed: analytics.passed, Failed: analytics.failed,
+        Pass_Rate_Percent: analytics.pass_rate, Average_Score: analytics.average_score, Average_Percentage: analytics.average_percentage,
+        Highest_Score: analytics.highest_score, Highest_Scorer: analytics.highest_scorer, Lowest_Score: analytics.lowest_score,
+        Lowest_Scorer: analytics.lowest_scorer, Median_Score: analytics.median_score,
+      }] },
+      { name: "Question Performance", rows: (analytics.question_performance ?? []).map(({ option_distribution: _options, ...question }) => question) },
+      { name: "Top Students", rows: analytics.topper_list ?? [] },
+      { name: "Topic Performance", rows: analytics.topic_performance ?? [] },
+    ]);
+  };
+
   const gradeData = analytics?.grade_distribution
     ? Object.entries(analytics.grade_distribution).map(([label, value]) => ({ label, value: value as number, color: gradeColor(label) }))
     : [];
@@ -212,7 +230,7 @@ export default function Analytics() {
                 <option key={exam.id} value={exam.id}>{exam.title}</option>
               ))}
             </select>
-            <button className="btn btn-secondary btn-sm" disabled={!analytics}>
+            <button className="btn btn-secondary btn-sm" disabled={!analytics} onClick={exportAnalytics}>
               <i className="ti ti-download" /> Export
             </button>
           </div>
