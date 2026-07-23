@@ -165,6 +165,7 @@ def decode_token(token: str) -> dict:
             algorithms=algorithms,         # pin to the single algorithm resolved above
             audience=EXPECTED_AUDIENCE,
             issuer=EXPECTED_ISSUER,
+            leeway=30,
             options={
                 "require": ["exp", "iat", "sub", "aud", "iss"],
                 "verify_signature": True,
