@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import * as blazeface from "@tensorflow-models/blazeface";
 import { studentApi } from "../../features/student/api";
 import { candidateApi } from "../../features/candidate/api";
@@ -78,21 +77,15 @@ export default function PreExamCheck() {
       await video.play();
       setCamera("passed");
 
-      // A face plus a person that extends well below the face is the enforceable
-      // browser-side approximation of the requested head-to-waist framing.
-      // Both models run entirely through TensorFlow.js, so this works on any
-      // modern browser (Chrome, Firefox, Safari, Edge) rather than relying on
-      // the experimental, Chromium-only window.FaceDetector API.
-      const [faceModel, personModel] = await Promise.all([blazeface.load(), cocoSsd.load()]);
+      // A clearly visible, well-framed face is the enforceable browser-side
+      // check — this runs entirely through TensorFlow.js (blazeface), so it
+      // works on any modern browser rather than relying on a native API.
+      const faceModel = await blazeface.load();
       const faces = await faceModel.estimateFaces(video, false);
-      const people = (await personModel.detect(video)).filter((prediction) => prediction.class === "person" && prediction.score >= 0.6);
       const faceBox = faces[0];
-      const person = people[0]?.bbox;
       const faceWidth = faceBox ? (faceBox.bottomRight as number[])[0] - (faceBox.topLeft as number[])[0] : 0;
-      const faceBottom = faceBox ? (faceBox.bottomRight as number[])[1] : 0;
       const faceClearlyVisible = Boolean(faceBox && faceWidth >= video.videoWidth * 0.08 && faceWidth <= video.videoWidth * 0.5);
-      const waistVisible = Boolean(person && faceBox && person[1] <= faceBottom && person[1] + person[3] >= video.videoHeight * 0.78);
-      if (!faceClearlyVisible || !waistVisible) throw new Error("Keep your face clear and position the camera so your upper body down to your waist is visible, then run the check again.");
+      if (!faceClearlyVisible) throw new Error("Keep your face clearly visible in the camera, then run the check again.");
       setFraming("passed");
     } catch (cause) {
       setCamera("failed"); setFraming("failed");
@@ -125,7 +118,7 @@ export default function PreExamCheck() {
       <div className="cam-preview-wrap"><video ref={videoRef} autoPlay muted playsInline className="cam-preview-video" /><div className="cam-preview-live"><div className="cam-live-dot" />LIVE PREVIEW</div></div>
       <div className="cam-gate-checklist">
         <div className={`cam-check-item check-${camera}`}><i className={`ti ${icon(camera)}`} /><span>Camera connection {camera === "passed" ? "verified" : "required"}</span></div>
-        <div className={`cam-check-item check-${framing}`}><i className={`ti ${icon(framing)}`} /><span>Clear face and head-to-waist framing {framing === "passed" ? "verified" : "required"}</span></div>
+        <div className={`cam-check-item check-${framing}`}><i className={`ti ${icon(framing)}`} /><span>Clear face visibility {framing === "passed" ? "verified" : "required"}</span></div>
         <div className={`cam-check-item check-${screen}`}><i className={`ti ${icon(screen)}`} /><span>Fullscreen mode {screen === "passed" ? "verified" : "required"}</span></div>
         <div className={`cam-check-item check-${duplicate}`}><i className={`ti ${icon(duplicate)}`} /><span>Other exam tab/window {duplicate === "passed" ? "not detected" : "checking"}</span></div>
       </div>
