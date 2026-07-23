@@ -135,26 +135,44 @@ async def auto_submit_expired_attempts():
 async def start_attempt(
     body: StartAttemptRequest,
     request: Request,
-    current_user: dict = Depends(require_student),
+    current_user: dict = Depends(require_exam_taker),   # was require_student — Candidates were rejected here
 ):
     """
     Creates a new IN_PROGRESS attempt.
     BACKEND validates eligibility, creates attempt, logs EXAM_STARTED event.
+
+    Handles both:
+      - Students   → eligibility via exam_registrations (status == REGISTERED)
+      - Candidates → eligibility via candidate_exam_assignments (status == INVITED),
+                     flipped to STARTED once the attempt is created — mirrors
+                     how /submit already flips it to COMPLETED.
     """
     supabase = get_supabase_admin()
     student_id = current_user["user_id"]
     schedule_id = str(body.exam_schedule_id)
+    is_candidate = "Candidate" in current_user.get("roles", [])
 
-    # Eligibility re-check (don't trust frontend alone)
-    reg = (
-        supabase.table("exam_registrations")
-        .select("status, exam_schedules(is_published, start_time, end_time)")
-        .eq("exam_schedule_id", schedule_id)
-        .eq("student_id", student_id)
-        .execute()
-    )
-    if not reg.data or reg.data[0]["status"] != "REGISTERED":
-        raise HTTPException(status_code=403, detail="Not eligible to attempt this exam")
+    # ── Eligibility re-check (don't trust frontend alone) ──────────────────
+    if is_candidate:
+        reg = (
+            supabase.table("candidate_exam_assignments")
+            .select("status, exam_schedules(is_published, start_time, end_time)")
+            .eq("exam_schedule_id", schedule_id)
+            .eq("candidate_id", student_id)
+            .execute()
+        )
+        if not reg.data or reg.data[0]["status"] != "INVITED":
+            raise HTTPException(status_code=403, detail="Not eligible to attempt this exam")
+    else:
+        reg = (
+            supabase.table("exam_registrations")
+            .select("status, exam_schedules(is_published, start_time, end_time)")
+            .eq("exam_schedule_id", schedule_id)
+            .eq("student_id", student_id)
+            .execute()
+        )
+        if not reg.data or reg.data[0]["status"] != "REGISTERED":
+            raise HTTPException(status_code=403, detail="Not eligible to attempt this exam")
 
     sched = reg.data[0]["exam_schedules"]
     now = datetime.now(timezone.utc)
@@ -209,13 +227,18 @@ async def start_attempt(
         "metadata": f'{{"schedule_id": "{schedule_id}"}}',
     }).execute()
 
+    # Candidate bookkeeping — mirror what /submit does on the way out
+    if is_candidate:
+        supabase.table("candidate_exam_assignments").update({
+            "status": "STARTED",
+        }).eq("exam_schedule_id", schedule_id).eq("candidate_id", student_id).execute()
+
     return {
         "attempt_id": attempt["id"],
         "started_at": attempt["started_at"],
         "effective_deadline": _effective_deadline(supabase, attempt).isoformat(),
         "timer_policy": "EARLIEST_OF_DURATION_OR_SCHEDULE_CLOSE",
     }
-
 
 @router.post("/submit")
 async def submit_attempt(
