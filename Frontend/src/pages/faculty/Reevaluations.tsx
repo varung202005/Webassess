@@ -7,7 +7,7 @@ import { relativeTime, statusBadgeClass, statusLabel } from "../../features/facu
 
 function useResolveReevaluation() {
   return useFacultyAction(
-    ({ requestId, ...body }: { requestId: string; status: string; faculty_notes: string }) =>
+    ({ requestId, ...body }: { requestId: string; status: string; reviewer_notes: string }) =>
       facultyApi.resolveReevaluation(requestId, body),
     [["faculty-pending-reevaluations"]],
   );
@@ -25,7 +25,7 @@ export default function Reevaluations() {
   const resolved = allRequests.filter((r) => r.status !== "PENDING");
 
   const handleResolve = async (requestId: string, status: string) => {
-    await resolveMut.mutateAsync({ requestId, status, faculty_notes: notes });
+    await resolveMut.mutateAsync({ requestId, status, reviewer_notes: notes });
     setExpandedId(null);
     setNotes("");
     refetch();
@@ -60,17 +60,17 @@ export default function Reevaluations() {
             ) : (
               <div>
                 {pending.map((r) => {
-                  const studentName = (r as any).users?.full_name ?? "Unknown";
-                  const studentEmail = (r as any).users?.email ?? "";
-                  const resultInfo = (r as any).results ?? {};
-                  const examTitle = resultInfo.exams?.title ?? "";
+                  const studentName = r.users?.full_name ?? "Unknown";
+                  const studentEmail = r.users?.email ?? "";
+                  const resultInfo = r.results;
+                  const examTitle = resultInfo?.exams?.title ?? "";
                   return (
                     <div key={r.id}>
                       <div className="re-eval-item" onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}>
                         <div style={{ flex: 1 }}>
                           <div className="re-eval-student">{studentName}</div>
                           <div className="re-eval-meta">
-                            {examTitle} · Score: {resultInfo.total_score}/{resultInfo.max_score}
+                            {examTitle} · Score: {resultInfo?.total_score}/{resultInfo?.max_score}
                             {studentEmail && ` · ${studentEmail}`}
                           </div>
                         </div>
@@ -131,9 +131,9 @@ export default function Reevaluations() {
                 {resolved.map((r) => (
                   <div className="re-eval-item" key={r.id}>
                     <div style={{ flex: 1 }}>
-                      <div className="re-eval-student">{(r as any).users?.full_name ?? "Unknown"}</div>
+                      <div className="re-eval-student">{r.users?.full_name ?? "Unknown"}</div>
                       <div className="re-eval-meta">
-                        {(r as any).results?.exams?.title ?? ""} · Status: {r.status}
+                        {r.results?.exams?.title ?? ""} · Status: {r.status}
                       </div>
                     </div>
                     <span className={`badge ${r.status === "RESOLVED" ? "badge-resolved" : "badge-draft"}`}>

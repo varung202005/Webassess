@@ -106,9 +106,10 @@ function SessionBanner({ sessions }: { sessions: FacultyDashboard["activeSession
 function DashboardStats({ portal }: { portal: FacultyDashboard }) {
   return (
     <StatsRow
+      className="faculty-dashboard-stats"
       items={[
-        { label: "Total Questions", value: portal.questionStats?.total ?? 0, icon: "ti ti-books", meta: `${portal.questionStats?.active ?? 0} active` },
-        { label: "Active Exams", value: portal.examCounts?.total ?? 0, icon: "ti ti-file-description", meta: `${portal.examCounts?.published ?? 0} published · ${portal.examCounts?.draft ?? 0} draft` },
+        { label: "Total Questions", value: portal.questionStats?.total ?? 0, icon: "ti ti-books", color: "info", meta: `${portal.questionStats?.active ?? 0} active` },
+        { label: "Active Exams", value: portal.examCounts?.total ?? 0, icon: "ti ti-file-description", color: "success", meta: `${portal.examCounts?.published ?? 0} published · ${portal.examCounts?.draft ?? 0} draft` },
         { label: "Re-evaluations", value: portal.pendingReevaluations ?? 0, icon: "ti ti-refresh-alert", color: "danger", meta: "Awaiting review" },
       ]}
     />
@@ -541,6 +542,7 @@ function PassRateSection({ exams }: { exams: FacultyDashboard["recentExams"] }) 
 
 /* ── Re-evaluation Requests ────────────────────────────── */
 function ReevalSection({ requests }: { requests: FacultyDashboard["reevaluationRequests"] }) {
+  const navigate = useNavigate();
   if (!requests || requests.length === 0) {
     return (
       <div className="panel">
@@ -564,8 +566,8 @@ function ReevalSection({ requests }: { requests: FacultyDashboard["reevaluationR
         {requests.map((r) => (
           <div className="re-eval-item" key={r.id}>
             <div>
-              <div className="re-eval-student">{(r.users as any)?.full_name ?? "Unknown"}</div>
-              <div className="re-eval-meta">{(r.results as any)?.exams?.title ?? ""} · Score: {(r.results as any)?.total_score ?? "-"}</div>
+              <div className="re-eval-student">{r.users?.full_name ?? "Unknown"}</div>
+              <div className="re-eval-meta">{r.results?.exams?.title ?? ""} · Score: {r.results?.total_score ?? "-"}</div>
             </div>
             <div className="re-eval-reason">"{r.reason?.slice(0, 40)}{r.reason && r.reason.length > 40 ? "…" : ""}"</div>
             <span className="badge badge-pending" style={{ flexShrink: 0, marginLeft: "auto" }}>Pending</span>
@@ -573,7 +575,7 @@ function ReevalSection({ requests }: { requests: FacultyDashboard["reevaluationR
         ))}
       </div>
       <div style={{ padding: "10px 17px", borderTop: "1px solid #eceef2", textAlign: "center" }}>
-        <button className="btn btn-sm btn-secondary" style={{ width: "100%" }} onClick={() => window.location.hash = "#/faculty/reevaluations"}>
+        <button className="btn btn-sm btn-secondary" style={{ width: "100%" }} onClick={() => navigate("/faculty/reevaluations")}>
           <i className="ti ti-list-check" /> Review All Requests
         </button>
       </div>
