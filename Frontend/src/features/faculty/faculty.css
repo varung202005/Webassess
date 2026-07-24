@@ -793,6 +793,17 @@
 .badge-archived, .badge-absent, .badge-rejected, .badge-invalidated,
 .badge-danger { background: #ffe6ea; color: #a30f2e; }
 .badge-auto_submitted { background: #eef0ff; color: #4f55a8; }
+.badge-live { background: #e7f0ff; color: #1d5fd6; display: inline-flex; align-items: center; gap: 5px; }
+.badge-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: badgeLivePulse 1.6s ease-in-out infinite;
+}
+@keyframes badgeLivePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.badge-completed { background: #f2eefb; color: #6d3fa0; }
 
 /* Question type badges */
 .badge-mcq, .badge-msq, .badge-true_false { background: #f0f4ff; color: #2152b3; }
