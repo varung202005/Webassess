@@ -131,12 +131,44 @@ function DashboardStats({ portal }: { portal: FacultyDashboard }) {
  * "Remove from list" is client-side only (see HIDDEN_EXAMS_KEY above) —
  * it never calls the backend and never affects any other page.
  */
+// Derives the *displayed* status for a published exam by cross-referencing
+// its schedule window against "now" — the raw exam.status only ever says
+// DRAFT/REVIEW/PUBLISHED/ARCHIVED, it has no concept of "currently running"
+// or "already finished", so we compute that here instead of adding a new
+// backend field.
+function getExamDisplayStatus(
+  exam: { status: string },
+  schedule: { start_time?: string | null; end_time?: string | null } | undefined,
+): { label: string; cls: string } {
+  if (exam.status !== "PUBLISHED") {
+    return { label: statusLabel(exam.status), cls: `badge ${statusBadgeClass(exam.status)}` };
+  }
+  const now = Date.now();
+  if (schedule) {
+    const start = schedule.start_time ? new Date(schedule.start_time).getTime() : null;
+    const end = schedule.end_time ? new Date(schedule.end_time).getTime() : null;
+    if (start !== null && now < start) {
+      // Published but the scheduled window hasn't opened yet
+      return { label: "Published", cls: "badge badge-published" };
+    }
+    if (end !== null && now > end) {
+      return { label: "Completed", cls: "badge badge-completed" };
+    }
+    return { label: "Ongoing", cls: "badge badge-live" };
+  }
+  // Not present in the "live or upcoming" schedule set the dashboard fetched
+  // → its window already closed.
+  return { label: "Completed", cls: "badge badge-completed" };
+}
+
 function ExamsTable({
   exams,
+  schedules,
   onView,
   onPublished,
 }: {
   exams: FacultyDashboard["recentExams"];
+  schedules: FacultyDashboard["upcomingSchedules"];
   onView: (id: string) => void;
   onPublished: () => void;
 }) {
@@ -147,6 +179,11 @@ function ExamsTable({
   const [hiddenIds, setHiddenIdsState] = useState<string[]>(() => getHiddenExamIds());
   const [showHidden, setShowHidden] = useState(false);
   const [unpublishTarget, setUnpublishTarget] = useState<any | null>(null);
+
+  const scheduleByExam = new Map<string, FacultyDashboard["upcomingSchedules"][number]>();
+  for (const s of schedules ?? []) {
+    if (!scheduleByExam.has(s.exam_id)) scheduleByExam.set(s.exam_id, s);
+  }
 
   const handlePublish = async (exam: any, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -269,6 +306,7 @@ function ExamsTable({
                 const isDraft = exam.status === "DRAFT" || !exam.status;
                 const isPublished = exam.status === "PUBLISHED";
                 const isBusy = publishing === exam.id;
+                const displayStatus = getExamDisplayStatus(exam, scheduleByExam.get(exam.id));
                 return (
                   <tr key={exam.id}>
                     <td>
@@ -276,8 +314,8 @@ function ExamsTable({
                       <div className="table-exam-meta">{exam.courses?.code} · {exam.courses?.name}</div>
                     </td>
                     <td>
-                      <span className={`badge ${statusBadgeClass(exam.status)}`}>
-                        {statusLabel(exam.status)}
+                      <span className={displayStatus.cls}>
+                        {displayStatus.label}
                       </span>
                     </td>
                     <td>{exam.questions_count ?? "-"}</td>
@@ -700,6 +738,7 @@ export default function Dashboard() {
                 </div>
                 <ExamsTable
                   exams={portal.recentExams}
+                  schedules={portal.upcomingSchedules}
                   onView={(id) => navigate(`/faculty/evaluation?examId=${id}`)}
                   onPublished={invalidateAll}
                 />
