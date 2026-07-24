@@ -66,6 +66,14 @@ async def list_available_proctors(_: dict = Depends(require_faculty)):
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+# PERFORMANCE FIX: the previous version looped per-exam and per-schedule,
+# issuing a fresh Supabase query inside each loop iteration (N+1 pattern).
+# With N exams and M schedules that meant roughly N + N*M + N*M*2 + N requests
+# for a single page load — which is why the dashboard was timing out with
+# 100+ network requests. This version fetches each table ONCE with `.in_()`
+# batched filters and does the grouping/aggregation in Python instead.
+
 @router.get("/dashboard")
 async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     """Full dashboard data for the faculty portal homepage."""
@@ -105,6 +113,7 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
         logger.warning("Dashboard: exams fetch failed: %s", e)
 
     exam_ids = [e["id"] for e in exams]
+    exam_by_id = {e["id"]: e for e in exams}
     status_counts = Counter(e.get("status") for e in exams)
 
     questions = []
@@ -121,39 +130,58 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     active_qs = [q for q in questions if q.get("is_active")]
     by_type = Counter(q["question_type"] for q in active_qs) if active_qs else Counter()
 
-    # Active sessions
-    active_sessions = []
-    try:
-        for exam in exams:
-            scheds = (
+    # ── Schedules for ALL exams in ONE query (was: 1 query per exam) ──────────
+    all_schedules = []
+    if exam_ids:
+        try:
+            all_schedules = (
                 supabase.table("exam_schedules")
-                .select("id,start_time,end_time")
-                .eq("exam_id", exam["id"])
+                .select("*,departments(name),exams(title,duration_minutes,exam_type,status,courses(name,code))")
+                .in_("exam_id", exam_ids)
+                .order("start_time")
                 .execute().data
             ) or []
-            for s in scheds:
-                active = (
-                    supabase.table("exam_attempts")
-                    .select("id")
-                    .eq("exam_schedule_id", s["id"])
-                    .eq("status", "IN_PROGRESS")
+        except Exception as e:
+            logger.warning("Dashboard: schedules fetch failed: %s", e)
+
+    schedule_ids = [s["id"] for s in all_schedules]
+    schedule_by_id = {s["id"]: s for s in all_schedules}
+
+    # ── Active sessions: batch attempts + registrations across ALL schedules ──
+    # (was: 1 attempts query + 1 registrations query PER schedule)
+    active_sessions = []
+    try:
+        if schedule_ids:
+            in_progress_attempts = (
+                supabase.table("exam_attempts")
+                .select("id,exam_schedule_id")
+                .in_("exam_schedule_id", schedule_ids)
+                .eq("status", "IN_PROGRESS")
+                .execute().data
+            ) or []
+            active_by_schedule = Counter(a["exam_schedule_id"] for a in in_progress_attempts)
+
+            schedules_with_activity = [sid for sid in active_by_schedule if active_by_schedule[sid] > 0]
+            if schedules_with_activity:
+                registrations = (
+                    supabase.table("exam_registrations")
+                    .select("id,exam_schedule_id")
+                    .in_("exam_schedule_id", schedules_with_activity)
+                    .eq("status", "REGISTERED")
                     .execute().data
                 ) or []
-                if active:
-                    total_reg = (
-                        supabase.table("exam_registrations")
-                        .select("id", count="exact")
-                        .eq("exam_schedule_id", s["id"])
-                        .eq("status", "REGISTERED")
-                        .execute()
-                    )
+                reg_by_schedule = Counter(r["exam_schedule_id"] for r in registrations)
+
+                for sid in schedules_with_activity:
+                    s = schedule_by_id.get(sid, {})
+                    exam = exam_by_id.get(s.get("exam_id"), {})
                     active_sessions.append({
-                        "schedule_id": s["id"],
+                        "schedule_id": sid,
                         "exam_title": exam.get("title", ""),
                         "course_code": safe_dict(exam.get("courses")).get("code", ""),
                         "started_at": s.get("start_time"),
-                        "active_students": len(active),
-                        "total_students": total_reg.count or 0,
+                        "active_students": active_by_schedule.get(sid, 0),
+                        "total_students": reg_by_schedule.get(sid, 0),
                         "ends_at": s.get("end_time"),
                     })
     except Exception as e:
@@ -171,7 +199,6 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
             ) or []
             result_ids = [r["id"] for r in results]
             if result_ids:
-                # Use explicit FK hint — re_evaluation_requests has two FKs to users
                 raw_reeval = (
                     supabase.table("re_evaluation_requests")
                     .select("*,users!re_evaluation_requests_student_id_fkey(full_name,email),results(total_score,max_score,exam_id,exams(title))")
@@ -196,34 +223,31 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
     except Exception as e:
         logger.warning("Dashboard: notifications failed: %s", e)
 
+    # ── Question counts for recent exams in ONE query (was: 1 count query per exam) ──
     recent_exams = exams[:10]
     try:
-        for exam in recent_exams:
-            cnt = (
+        recent_ids = [e["id"] for e in recent_exams]
+        if recent_ids:
+            eq_rows = (
                 supabase.table("exam_questions")
-                .select("id", count="exact")
-                .eq("exam_id", exam["id"])
-                .execute()
-            )
-            exam["questions_count"] = cnt.count or 0
+                .select("exam_id")
+                .in_("exam_id", recent_ids)
+                .execute().data
+            ) or []
+            counts_by_exam = Counter(r["exam_id"] for r in eq_rows)
+            for exam in recent_exams:
+                exam["questions_count"] = counts_by_exam.get(exam["id"], 0)
     except Exception as e:
         logger.warning("Dashboard: question counts failed: %s", e)
 
+    # ── Upcoming schedules: reuse the already-fetched all_schedules (was: re-queried per exam) ──
     upcoming = []
     try:
         now = datetime.now(timezone.utc)
-        for exam in exams:
-            scheds = (
-                supabase.table("exam_schedules")
-                .select("*,departments(name),exams(title,duration_minutes,exam_type,status,courses(name,code))")
-                .eq("exam_id", exam["id"])
-                .order("start_time")
-                .execute().data
-            ) or []
-            for s in scheds:
-                end_dt = safe_dt(s.get("end_time"))
-                if end_dt and end_dt >= now:
-                    upcoming.append(s)
+        for s in all_schedules:
+            end_dt = safe_dt(s.get("end_time"))
+            if end_dt and end_dt >= now:
+                upcoming.append(s)
     except Exception as e:
         logger.warning("Dashboard: upcoming schedules failed: %s", e)
 
@@ -259,7 +283,6 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
         "departments": departments,
         "courses": courses,
     }
-
 
 @router.get("/dashboard/summary")
 async def get_faculty_summary(current_user: dict = Depends(require_faculty)):
