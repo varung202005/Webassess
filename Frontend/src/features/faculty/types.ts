@@ -148,7 +148,7 @@ export interface Result {
   is_published: boolean;
   published_at?: string | null;
   faculty_remarks?: string | null;
-  exam?: { title: string } | null;
+  exams?: { title: string } | null;
   users?: { full_name?: string } | null;
 }
 
@@ -157,7 +157,7 @@ export interface ReevaluationRequest {
   result_id: string;
   student_id: string;
   reason: string;
-  status: "PENDING" | "REVIEWED" | "RESOLVED";
+  status: "PENDING" | "REVIEWING" | "RESOLVED" | "REJECTED";
   reviewer_notes?: string | null;
   updated_score?: number | null;
   requested_at: string;
