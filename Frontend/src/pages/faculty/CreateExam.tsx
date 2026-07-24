@@ -2219,23 +2219,27 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EditLockedNotice
+// (Redesigned: previously reused the generic `.empty-state` block built for
+// small dashboard placeholders, which made the icon, spacing, and button all
+// scale up awkwardly inside the full-width workspace card. Now has its own
+// compact, purpose-built layout.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EditLockedNotice({ title, reason }: { title: string; reason: string }) {
   const navigate = useNavigate();
   return (
     <div className="workspace-card">
-      <div className="workspace-body">
-        <div className="empty-state" style={{ padding: "50px 20px" }}>
-          <i className="ti ti-lock" style={{ fontSize: 40, color: "#dc2626" }} />
-          <div className="empty-state-title" style={{ marginTop: 10 }}>Editing locked</div>
-          <div className="empty-state-text" style={{ maxWidth: 420, margin: "6px auto 0" }}>
-            <strong>{title}</strong> can no longer be edited. {reason}
-          </div>
-          <button className="btn btn-primary" style={{ marginTop: 18 }} onClick={() => navigate("/faculty/dashboard")}>
-            <i className="ti ti-arrow-left" /> Back to Dashboard
-          </button>
+      <div className="edit-locked-card">
+        <div className="edit-locked-icon">
+          <i className="ti ti-lock" />
         </div>
+        <h3 className="edit-locked-title">Editing locked</h3>
+        <p className="edit-locked-text">
+          <strong>{title}</strong> can no longer be edited. {reason}
+        </p>
+        <button className="btn btn-secondary btn-sm" onClick={() => navigate("/faculty/dashboard")} type="button">
+          <i className="ti ti-arrow-left" /> Back to Dashboard
+        </button>
       </div>
     </div>
   );

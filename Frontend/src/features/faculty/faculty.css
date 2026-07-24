@@ -493,8 +493,8 @@
 }
 
 .stat-card {
-  background: #fff;
-  border: 1px solid #e5e7ed;
+  background: var(--soft, #fde8ec);
+  border: 1px solid color-mix(in srgb, var(--accent, #b31234) 22%, #e5e7ed);
   border-radius: 18px;
   box-shadow: 0 5px 18px rgba(27, 31, 44, 0.035);
   padding: 17px;
@@ -505,14 +505,14 @@
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
-  width: 3px;
+  width: 4px;
   background: var(--accent, #b31234);
 }
 .stat-card .stat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: #747888;
+  color: color-mix(in srgb, var(--accent, #b31234) 62%, #46484f);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -522,21 +522,23 @@
   width: 34px;
   height: 34px;
   border-radius: 11px;
-  background: var(--soft, #fde8ec);
+  background: #fff;
   color: var(--accent, #b31234);
   display: grid;
   place-items: center;
   font-size: 18px;
+  box-shadow: 0 3px 8px rgba(27, 31, 44, 0.08);
 }
 .stat-card .stat-value {
   font-size: 28px;
   font-weight: 800;
   margin: 8px 0 2px;
   letter-spacing: -0.7px;
+  color: color-mix(in srgb, var(--accent, #b31234) 78%, #1c1d22);
 }
 .stat-card .stat-meta {
   font-size: 11px;
-  color: #8a8e9d;
+  color: color-mix(in srgb, var(--accent, #b31234) 40%, #6b6f7c);
 }
 .stat-card .stat-trend {
   font-size: 10px;
@@ -701,7 +703,49 @@
 .table-actions {
   display: flex;
   gap: 6px;
+  opacity: 0.32;
+  transition: opacity 0.15s ease;
 }
+.data-table tr:hover .table-actions,
+.data-table tr:focus-within .table-actions {
+  opacity: 1;
+}
+/* Touch devices have no hover — keep actions fully visible */
+@media (hover: none) {
+  .table-actions { opacity: 1; }
+}
+
+/* ── Edit-locked exam notice ─────────────────────────── */
+.edit-locked-card {
+  max-width: 380px;
+  margin: 0 auto;
+  padding: 44px 20px 40px;
+  text-align: center;
+}
+.edit-locked-icon {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 16px;
+  border-radius: 13px;
+  background: #fde8ec;
+  color: #a30f2e;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+}
+.edit-locked-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1c1d22;
+  margin: 0 0 6px;
+}
+.edit-locked-text {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #6b7280;
+  margin: 0 0 22px;
+}
+.edit-locked-text strong { color: #3d3e46; }
 
 .action-btn {
   width: 30px;
@@ -3141,7 +3185,7 @@ select:focus, input:focus {
 .panel-body, .card-body { padding: 20px; }
 .panel-header h2, .card-header .card-title, .panel-title, .chart-title { font-weight: 740; color: #27272f; }
 .stats-grid { gap: 16px; margin-bottom: 20px; }
-.stat-card { padding: 18px; border-color: var(--faculty-line); border-radius: 16px; box-shadow: 0 6px 17px rgba(24,24,32,.035); transition: transform .18s ease, box-shadow .18s ease; }
+.stat-card { padding: 18px; border-radius: 16px; box-shadow: 0 6px 17px rgba(24,24,32,.035); transition: transform .18s ease, box-shadow .18s ease; }
 .stat-card:hover { transform: translateY(-2px); box-shadow: 0 13px 24px rgba(24,24,32,.07); }
 .stat-card .stat-value, .stats-row.analytics .stat-val { margin-top: 13px; font-size: 29px; letter-spacing: -.055em; }
 .stat-card .stat-icon { width: 36px; height: 36px; border-radius: 11px; }
@@ -3214,7 +3258,7 @@ select:focus, input:focus {
 
 /* Faculty shell — exact WebAssess Student portal treatment. */
 .faculty-shell{--side:264px;background:#f5f6f8}.faculty-sidebar{background:linear-gradient(180deg,#97132f 0%,#7f0e27 100%);box-shadow:14px 0 32px rgba(92,10,30,.1)}.faculty-shell .sidebar-logo{height:80px;padding:0 20px;border-bottom-color:rgba(255,255,255,.15)}.faculty-shell .brand-mark{position:relative;overflow:hidden;width:34px;height:34px;padding:0;border-radius:10px;background:#fff;box-shadow:none}.faculty-shell .brand-mark img{position:absolute;top:0;left:50%;display:block;width:160px;max-width:none;height:auto;transform:translateX(-50%)}.faculty-shell .brand-copy strong{font-size:16px;letter-spacing:-.035em}.faculty-shell .brand-copy span{opacity:.66}.faculty-shell .sidebar-toggle{width:30px;height:30px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.12)}.faculty-shell .sidebar-nav{padding:22px 12px}.faculty-shell .nav-group{margin-bottom:24px}.faculty-shell .nav-label{padding:0 12px 8px;color:rgba(255,255,255,.52);font-size:10px;font-weight:750;letter-spacing:.1em;opacity:1}.faculty-shell .nav-item{min-height:42px;margin:2px 0;border-radius:12px;font-size:13px;font-weight:620}.faculty-shell .nav-item i{font-size:18px}.faculty-shell .nav-item:hover{background:rgba(255,255,255,.12)}.faculty-shell .nav-item.active{box-shadow:0 10px 22px rgba(60,4,18,.18);font-weight:750}.faculty-shell .sidebar-bottom{margin:12px;padding:12px;border:1px solid rgba(255,255,255,.2);border-radius:13px;background:rgba(82,5,25,.16)}.faculty-shell .user-avatar{border-radius:50%}.faculty-shell .sidebar-logout:hover{border-radius:8px;background:rgba(255,255,255,.12)}
-.faculty-header{height:80px;padding:0 40px;background:rgba(255,255,255,.76);border-bottom-color:rgba(225,225,230,.78);backdrop-filter:blur(18px)}.faculty-header .breadcrumbs{font-size:12px}.faculty-header .header-avatar{width:32px;height:32px;border-radius:50%;background:#f9e8ed;color:#a31332}.faculty-header .header-user-name{font-size:12px;font-weight:700}.faculty-content{max-width:1460px;padding:32px 36px 44px}.page-heading{margin-bottom:26px}.page-heading h1{font-size:27px;font-weight:760;letter-spacing:-.04em}.page-heading p{font-size:14px}.btn{min-height:36px;border-radius:13px}.panel,.card,.chart-card,.split-right,.repo-overview,.workspace-card{border-radius:20px}.panel-header,.card-header{min-height:57px;padding:0 19px}.panel-body,.card-body{padding:16px 19px}.faculty-shell .stats-grid{gap:16px;margin-bottom:28px}.faculty-shell .stat-card{padding:15px 18px 16px!important;border-color:rgba(223,225,230,.94);border-radius:20px;box-shadow:0 7px 18px rgba(30,32,38,.06)}.faculty-shell .stat-card:hover{transform:translateY(-3px);box-shadow:0 14px 28px rgba(30,32,38,.09)}.faculty-shell .stat-card .stat-icon{width:36px;height:36px;border-radius:13px}.session-banner{border-radius:20px;box-shadow:0 11px 24px rgba(117,12,34,.18)}
+.faculty-header{height:80px;padding:0 40px;background:rgba(255,255,255,.76);border-bottom-color:rgba(225,225,230,.78);backdrop-filter:blur(18px)}.faculty-header .breadcrumbs{font-size:12px}.faculty-header .header-avatar{width:32px;height:32px;border-radius:50%;background:#f9e8ed;color:#a31332}.faculty-header .header-user-name{font-size:12px;font-weight:700}.faculty-content{max-width:1460px;padding:32px 36px 44px}.page-heading{margin-bottom:26px}.page-heading h1{font-size:27px;font-weight:760;letter-spacing:-.04em}.page-heading p{font-size:14px}.btn{min-height:36px;border-radius:13px}.panel,.card,.chart-card,.split-right,.repo-overview,.workspace-card{border-radius:20px}.panel-header,.card-header{min-height:57px;padding:0 19px}.panel-body,.card-body{padding:16px 19px}.faculty-shell .stats-grid{gap:16px;margin-bottom:28px}.faculty-shell .stat-card{padding:15px 18px 16px!important;border-radius:20px;box-shadow:0 7px 18px rgba(30,32,38,.06)}.faculty-shell .stat-card:hover{transform:translateY(-3px);box-shadow:0 14px 28px rgba(30,32,38,.09)}.faculty-shell .stat-card .stat-icon{width:36px;height:36px;border-radius:13px}.session-banner{border-radius:20px;box-shadow:0 11px 24px rgba(117,12,34,.18)}
 @media(max-width:900px){.faculty-header{padding:0 28px}.faculty-content{padding:28px}}@media(max-width:768px){.faculty-header{height:66px;padding:0 18px}.faculty-content{padding:24px 16px}.page-heading h1{font-size:25px}}
 
 /* Empty operational panels should stay compact, not act as tall placeholders. */
