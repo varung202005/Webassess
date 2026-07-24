@@ -88,7 +88,14 @@ async def pending_requests():
     supabase = get_supabase_admin()
     return (
         supabase.table("re_evaluation_requests")
-        .select("*, results(exam_id, total_score, max_score, exams(title)), users(full_name)")
+        # `re_evaluation_requests` has TWO foreign keys into `users`
+        # (student_id and reviewed_by), so PostgREST can't infer which
+        # relationship "users(...)" refers to. Disambiguate explicitly
+        # using the FK constraint name — we want the requesting student.
+        .select(
+            "*, results(exam_id, total_score, max_score, exams(title)), "
+            "users!re_evaluation_requests_student_id_fkey(full_name, email)"
+        )
         .eq("status", "PENDING")
         .execute()
         .data
