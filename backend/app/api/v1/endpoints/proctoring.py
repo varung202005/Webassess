@@ -11,7 +11,9 @@ CHANGES vs previous version:
   - POST /browser: now also upserts into browser_activity_summary — the table
     the dashboard (proctor.py) actually reads cumulative counts from.
   - POST /face: now syncs proctoring_summary LIVE on every face event.
-  - POST /audio-transcript: transcribes via Groq Whisper, checks exam
+  - POST /audio-transcript: transcribes via OpenRouter's Whisper endpoint
+    (was api.groq.com, which 401s against the OpenRouter key actually
+    configured — see _transcribe_audio for details), checks exam
     relevance via fuzzy-match through exam_questions -> questions join,
     flags immediately if speech matches exam content.
   - _check_exam_relevance: fixed to join exam_questions (junction table) ->
@@ -117,16 +119,23 @@ def _hard_violation(tab_switch_count: int, tab_limit: int, session_conflict: boo
 
 def _transcribe_audio(audio_url: str) -> Optional[str]:
     """
-    Downloads the recorded speech clip and sends it to Groq's Whisper
-    transcription endpoint. Returns the transcript text, or None if the
-    key isn't configured or the request fails.
+    Downloads the recorded speech clip and sends it to OpenRouter's
+    OpenAI-compatible audio transcription endpoint. Returns the transcript
+    text, or None if the key isn't configured or the request fails.
 
-    Uses the same GROQ_API_KEY and requests-based style already used in
-    questions.py — no self-hosted server, no ffmpeg, no VPS needed.
+    NOTE: this previously called Groq's api.groq.com/... directly, which
+    requires a real Groq key. The key actually configured in this project
+    (settings.GROQ_API_KEY, despite the name) is an OpenRouter key, which
+    Groq's endpoint rejects with 401 — that's why transcription silently
+    stopped working. OpenRouter exposes a compatible
+    /api/v1/audio/transcriptions endpoint that accepts the same multipart
+    file upload and the same "Authorization: Bearer <key>" auth, so we hit
+    that instead. (Consider renaming GROQ_API_KEY -> TRANSCRIPTION_API_KEY
+    in core/config.py at some point, since it's not actually a Groq key.)
     """
     api_key = settings.GROQ_API_KEY.strip()
     if not api_key:
-        logger.warning("GROQ_API_KEY not set — skipping audio transcription")
+        logger.warning("GROQ_API_KEY (OpenRouter key) not set — skipping audio transcription")
         return None
 
     try:
@@ -134,25 +143,42 @@ def _transcribe_audio(audio_url: str) -> Optional[str]:
         clip_resp.raise_for_status()
         audio_bytes = clip_resp.content
 
+        # Filename/extension just needs to match the actual clip format for
+        # Whisper to parse it correctly — AudioMonitor.tsx now records in
+        # whatever format the student's browser supports (webm/mp4/ogg),
+        # not always webm.
+        ext = "webm"
+        lowered = audio_url.lower()
+        if ".m4a" in lowered or ".mp4" in lowered:
+            ext = "m4a"
+        elif ".ogg" in lowered:
+            ext = "ogg"
+
         resp = requests.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
+            "https://openrouter.ai/api/v1/audio/transcriptions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "User-Agent":    "Mozilla/5.0 (compatible; ExamPortal/1.0)",
             },
-            files={"file": ("clip.webm", audio_bytes, "audio/webm")},
+            files={"file": (f"clip.{ext}", audio_bytes, f"audio/{ext}")},
             data={
-                "model":           "whisper-large-v3-turbo",
+                "model":           "openai/whisper-large-v3",
                 "response_format": "json",
             },
-            timeout=30,
+            timeout=45,
         )
-        print(f"### Groq transcription status: {resp.status_code}", flush=True)
+        print(f"### OpenRouter transcription status: {resp.status_code}", flush=True)
+        if resp.status_code == 401:
+            print(
+                "### OpenRouter transcription 401 — the configured key is invalid/expired "
+                "or doesn't have credit. Check GROQ_API_KEY in the backend env.",
+                flush=True,
+            )
         resp.raise_for_status()
         text = (resp.json().get("text") or "").strip()
         return text or None
     except Exception as exc:
-        print(f"### Groq transcription failed (non-fatal): {exc}", flush=True)
+        print(f"### OpenRouter transcription failed (non-fatal): {exc}", flush=True)
         return None
 
 
@@ -264,7 +290,8 @@ class AudioLog(BaseModel):
 
 class AudioTranscriptRequest(BaseModel):
     attempt_id: UUID
-    audio_url: str
+    audio_url: Optional[str] = None
+    transcript: Optional[str] = None   # ← free, browser-side SpeechRecognition text; when present, no paid API is called
 
 
 class ProctoringVerdictBody(BaseModel):
@@ -572,12 +599,23 @@ async def log_audio_transcript(
     _: dict = Depends(require_exam_taker),
 ):
     """
-    Phase 2 — called by AudioMonitor.tsx only when its client-side VAD
-    detects sustained speech, with a short clip already uploaded to
-    Supabase Storage.
+    Called by AudioMonitor.tsx when its client-side VAD detects sustained
+    speech, with a short clip already uploaded to Supabase Storage (for
+    post-exam playback only) and — normally — a transcript the browser's
+    own free SpeechRecognition API already produced.
+
+    Cost model (important): this endpoint NEVER calls a paid transcription
+    API unless body.transcript is empty/absent AND a fallback key is
+    explicitly configured AND ENABLE_PAID_TRANSCRIPTION_FALLBACK=true. By
+    default that setting is False/unset, so this pipeline costs $0
+    regardless of what's sitting in GROQ_API_KEY. Only turn the fallback on
+    if you're OK with occasional paid calls (e.g. covering Firefox/Safari
+    students where SpeechRecognition isn't available).
 
     Flow:
-      1. Transcribe clip via Groq Whisper (whisper-large-v3-turbo).
+      1. Use body.transcript if the browser supplied one (free, no cost).
+         Otherwise, optionally fall back to a paid Whisper-compatible API —
+         only if explicitly enabled.
       2. Fuzzy-match transcript against exam's own question text via
          exam_questions -> questions join (free, deterministic, no LLM).
       3. Log result to audio_monitoring_logs (requires migration — see below).
@@ -593,10 +631,15 @@ async def log_audio_transcript(
     supabase = get_supabase_admin()
     aid = str(body.attempt_id)
 
-    # Step 1: transcribe
-    transcript = _transcribe_audio(body.audio_url)
+    # Step 1: prefer the free, browser-transcribed text. Only touch a paid
+    # API if that's missing AND the fallback is explicitly turned on.
+    transcript = (body.transcript or "").strip() or None
+    used_paid_fallback = False
+    if not transcript and getattr(settings, "ENABLE_PAID_TRANSCRIPTION_FALLBACK", False) and body.audio_url:
+        transcript = _transcribe_audio(body.audio_url)
+        used_paid_fallback = transcript is not None
 
-    # Step 2: check exam relevance
+    # Step 2: check exam relevance (free, deterministic — no LLM call)
     exam_relevant = False
     matched_snippet: Optional[str] = None
     if transcript:
@@ -608,8 +651,10 @@ async def log_audio_transcript(
         notes = f"Speech matched exam content: \"{matched_snippet}\""
     elif transcript:
         notes = f"Speech detected (not exam-related): \"{transcript[:80]}\""
+    elif body.audio_url:
+        notes = "Speech detected — no transcript available (browser doesn't support live transcription, and paid fallback is off)"
     else:
-        notes = "Speech detected — transcription unavailable (GROQ_API_KEY not configured or request failed)"
+        notes = "Speech detected"
 
     try:
         supabase.table("audio_monitoring_logs").insert({
@@ -652,7 +697,7 @@ async def log_audio_transcript(
                 "proctor_verdict":    proctor_verdict,
             }).eq("attempt_id", aid).execute()
 
-    return {"logged": True, "transcript": transcript, "exam_relevant": exam_relevant}
+    return {"logged": True, "transcript": transcript, "exam_relevant": exam_relevant, "used_paid_fallback": used_paid_fallback}
 
 
 # ── Summary computation (called on exam submission) ───────────────────────────
