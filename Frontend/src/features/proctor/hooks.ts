@@ -13,7 +13,8 @@ export function useProctorDashboard() {
     queryKey: DASHBOARD_KEY,
     queryFn:  () => proctorApi.dashboard(),
     staleTime: 5_000,
-    refetchInterval: 10_000,   // refresh every 10s — matches webcam capture interval
+    refetchInterval: 10_000,            // refresh every 10s — matches webcam capture interval
+    refetchIntervalInBackground: true,  // keep polling even if the proctor tabs away
   });
 }
 
@@ -25,7 +26,8 @@ export function useFlaggedAttempts() {
     queryKey: FLAGGED_KEY,
     queryFn:  () => proctorApi.flagged(),
     staleTime: 5_000,
-    refetchInterval: 10_000,   // refresh every 10s
+    refetchInterval: 10_000,            // refresh every 10s
+    refetchIntervalInBackground: true,
   });
 
   useEffect(() => {
