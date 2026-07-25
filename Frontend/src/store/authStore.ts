@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { supabase } from "../lib/supabase";
 
 export type Role = "STUDENT" | "FACULTY" | "PROCTOR" | "ADMIN" | "CANDIDATE";
 
@@ -44,3 +45,28 @@ export const useAuthStore = create<AuthState>()((set) => ({
   setActiveRole: (role) => set({ activeRole: role }),
   signOut: () => set({ user: null, token: null, activeRole: null, authReady: true }),
 }));
+
+/**
+ * Keep token in sync with Supabase's SDK for the lifetime of the app.
+ *
+ * Without this, token was only ever set once by setSession() at login and
+ * never updated again — Supabase silently rotates the access token in the
+ * background roughly every hour, and this store had no way of finding out.
+ * Any request that fired after a rotation but before the user's next
+ * login/refresh would go out with an expired JWT and get a 401, even
+ * though the user's session was, from Supabase's point of view, perfectly
+ * valid the whole time. This is the actual cause of the intermittent
+ * 401s (as opposed to api.ts's retry-on-401, which only papers over it
+ * after the fact).
+ *
+ * Registered once at module load (this file is a singleton import).
+ */
+supabase.auth.onAuthStateChange((event, session) => {
+  if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") {
+    if (session?.access_token) {
+      useAuthStore.setState({ token: session.access_token });
+    }
+  } else if (event === "SIGNED_OUT") {
+    useAuthStore.setState({ user: null, token: null, activeRole: null });
+  }
+});
