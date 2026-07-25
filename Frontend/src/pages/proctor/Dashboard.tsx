@@ -52,8 +52,9 @@ interface ProctorDashboardProps {
 
 export default function ProctorDashboard({ returnToAdmin = false }: ProctorDashboardProps) {
   const navigate = useNavigate();
-  const { data: portal, isLoading: portalLoading, isError: portalError } = useProctorDashboard();
+  const { data: portal, isLoading: portalLoading, isError: portalError, dataUpdatedAt } = useProctorDashboard();
   const { data: flaggedData, isLoading: flaggedLoading } = useFlaggedAttempts();
+  const [lastRefreshLabel, setLastRefreshLabel] = useState("just now");
   const setVerdict = useSetVerdict();
   const recompute  = useRecomputeSummary();
 
@@ -200,6 +201,18 @@ export default function ProctorDashboard({ returnToAdmin = false }: ProctorDashb
     };
   }, []);
 
+  // ── "Last updated" ticker for the LIVE badge ──────────────────────────────
+  useEffect(() => {
+    const tick = () => {
+      if (!dataUpdatedAt) { setLastRefreshLabel("just now"); return; }
+      const secs = Math.max(0, Math.floor((Date.now() - dataUpdatedAt) / 1000));
+      setLastRefreshLabel(secs < 2 ? "just now" : `${secs}s ago`);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [dataUpdatedAt]);
+
   // ── Verdict handler ────────────────────────────────────────────────────────
   const handleVerdict = (attemptId: string, verdict: ProctoringVerdict) => {
     setPendingId(attemptId);
@@ -272,11 +285,27 @@ export default function ProctorDashboard({ returnToAdmin = false }: ProctorDashb
       ) : (
       <>
 
-      <section className="proctor-page-heading">
+      <section className="proctor-page-heading" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div>
           <h1>Live Examination Monitoring</h1>
           <p>Monitor active candidates, integrity signals, and examination activity.</p>
         </div>
+        <div
+          title="Dashboard auto-refreshes every 10 seconds"
+          style={{
+            display: "flex", alignItems: "center", gap: 7,
+            background: "#f0fdf4", border: "1px solid #a7e8cf", color: "#166534",
+            fontSize: 12, fontWeight: 700, padding: "6px 12px", borderRadius: 20,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span style={{
+            width: 7, height: 7, borderRadius: "50%", background: "#22c55e",
+            boxShadow: "0 0 0 3px rgba(34,197,94,.25)", animation: "livePulse 1.4s infinite",
+          }} />
+          LIVE · updated {lastRefreshLabel}
+        </div>
+        <style>{`@keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }`}</style>
       </section>
 
       {/* ── Session Banner (includes the "which test" filter) ── */}
