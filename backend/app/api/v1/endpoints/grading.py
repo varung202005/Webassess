@@ -7,6 +7,13 @@ WHO DOES WHAT:
   - Submit manual score             → BACKEND (PATCH /grading/score)
   - Grading log (audit trail)       → BACKEND (auto-appended on every score change)
   - Grade dashboard / progress      → FRONTEND (renders grading queue) + BACKEND (query)
+
+PASS/FAIL NOTE:
+  exams.pass_marks is nullable. NULL means "No Pass Marks" was selected at
+  exam-creation time — every student who completes that exam is treated as
+  passed, regardless of score. When pass_marks is set, a student passes iff
+  total_score >= pass_marks. This file recomputes `results.passed` on every
+  manual score change so subjective grading stays consistent with pass/fail.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -60,6 +67,27 @@ async def get_pending_grading(exam_id: UUID, _: dict = Depends(require_faculty))
     return result.data
 
 
+def _get_exam_pass_marks(supabase, attempt_id: str) -> Optional[int]:
+    """
+    Walks attempt_id -> exam_schedules -> exams to fetch pass_marks.
+    Returns None if the exam has "No Pass Marks" set (or if it can't be
+    resolved, in which case callers should treat it as "cannot fail").
+    """
+    attempt = (
+        supabase.table("exam_attempts")
+        .select("exam_schedules!inner(exams!inner(pass_marks))")
+        .eq("id", attempt_id)
+        .single()
+        .execute()
+    )
+    if not attempt.data:
+        return None
+    try:
+        return attempt.data["exam_schedules"]["exams"]["pass_marks"]
+    except (KeyError, TypeError):
+        return None
+
+
 @router.patch("/score")
 async def set_manual_score(
     body: ManualScoreUpdate,
@@ -68,6 +96,7 @@ async def set_manual_score(
     """
     Faculty sets marks for a subjective answer.
     Also writes to grading_logs as an immutable audit trail.
+    Recomputes results.total_score, percentage, grade, and passed.
     BACKEND responsibility.
     """
     supabase = get_supabase_admin()
@@ -139,10 +168,16 @@ async def set_manual_score(
         from app.services.grading_service import calculate_grade
         grade = calculate_grade(percentage)
 
+        # Pass/fail: NULL pass_marks on the exam means "No Pass Marks" was
+        # chosen at creation time — everyone passes regardless of score.
+        pass_marks = _get_exam_pass_marks(supabase, answer.data["attempt_id"])
+        passed = True if pass_marks is None else new_total >= pass_marks
+
         supabase.table("results").update({
             "total_score": new_total,
             "percentage": percentage,
             "grade": grade,
+            "passed": passed,
         }).eq("id", result.data["id"]).execute()
 
     return {"message": "Score updated", "new_score": new_score}

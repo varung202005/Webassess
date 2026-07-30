@@ -13,6 +13,9 @@
  *   • max_fullscreen_exits added to rules (default 3; 0 = log-only).
  *   • PDF import review state lifted to StepQuestions so switching tabs
  *     mid-review (e.g. to "Select Existing") no longer wipes it.
+ *   • Pass Marks / No Pass Marks toggle added to Exam Info step — faculty
+ *     explicitly choose "Pass Marks" (enter a passing score) or
+ *     "No Pass Marks" (every student who completes the exam passes).
  */
 
 import { useState, useRef, useCallback, useEffect, type Dispatch, type SetStateAction, type ChangeEvent, type DragEvent, type MouseEvent } from "react";
@@ -82,7 +85,8 @@ interface ExamForm {
   exam_type: string;
   duration_minutes: number;
   total_marks: number;
-  pass_marks: number;
+  has_pass_marks: boolean;
+  pass_marks: number | null;
   instructions: string;
   shuffle_questions: boolean;
   shuffle_options: boolean;
@@ -164,6 +168,7 @@ const defaultForm = (): ExamForm => ({
   exam_type: "MID_SEMESTER",
   duration_minutes: 120,
   total_marks: 80,
+  has_pass_marks: true,
   pass_marks: 32,
   instructions: "",
   shuffle_questions: false,
@@ -533,11 +538,94 @@ function StepExamInfo({ form, onChange }: {
           <input type="number" className="form-input" min={1} value={form.total_marks}
             onChange={(e) => onChange({ total_marks: +e.target.value })} />
         </div>
+
+        {/* ── Pass Marks / No Pass Marks toggle ── */}
         <div className="form-field">
-          <label>Pass Marks *</label>
-          <input type="number" className="form-input" min={1} value={form.pass_marks}
-            onChange={(e) => onChange({ pass_marks: +e.target.value })} />
+          <label>Passing Criteria *</label>
+          <div
+            role="radiogroup"
+            aria-label="Passing criteria"
+            style={{
+              display: "flex",
+              border: "1.5px solid #e5e7eb",
+              borderRadius: 8,
+              overflow: "hidden",
+              width: "fit-content",
+            }}
+          >
+            <button
+              type="button"
+              role="radio"
+              aria-checked={form.has_pass_marks}
+              onClick={() => onChange({
+                has_pass_marks: true,
+                // restore a sensible default if it was cleared out
+                pass_marks: form.pass_marks ?? (Math.round(form.total_marks * 0.4) || 1),
+              })}
+              style={{
+                padding: "8px 16px",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+                background: form.has_pass_marks ? "#8b1a1a" : "#fff",
+                color: form.has_pass_marks ? "#fff" : "#374151",
+              }}
+            >
+              Pass Marks
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!form.has_pass_marks}
+              onClick={() => onChange({ has_pass_marks: false, pass_marks: null })}
+              style={{
+                padding: "8px 16px",
+                border: "none",
+                borderLeft: "1.5px solid #e5e7eb",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: 600,
+                background: !form.has_pass_marks ? "#8b1a1a" : "#fff",
+                color: !form.has_pass_marks ? "#fff" : "#374151",
+              }}
+            >
+              No Pass Marks
+            </button>
+          </div>
+
+          {form.has_pass_marks ? (
+            <div style={{ marginTop: 10 }}>
+              <input
+                type="number"
+                className="form-input"
+                min={1}
+                max={form.total_marks}
+                value={form.pass_marks ?? ""}
+                placeholder="e.g. 32"
+                onChange={(e) => onChange({ pass_marks: e.target.value === "" ? null : +e.target.value })}
+              />
+              <span className="field-hint">
+                Students scoring {form.pass_marks ?? "—"} or more out of {form.total_marks} will pass.
+              </span>
+              {form.pass_marks !== null && form.pass_marks > form.total_marks && (
+                <div className="form-error" style={{ marginTop: 4 }}>
+                  Pass marks cannot exceed total marks ({form.total_marks}).
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{
+              marginTop: 10, padding: "10px 14px",
+              background: "#f0fdf4", border: "1px solid #bbf7d0",
+              borderRadius: 8, fontSize: 13, color: "#065f46",
+            }}>
+              <i className="ti ti-info-circle" style={{ marginRight: 6 }} />
+              No pass marks set — every student who completes this exam will be marked as passed, regardless of score.
+            </div>
+          )}
         </div>
+
         <div className="form-field">
           <label>&nbsp;</label>
           <div className="checkbox-group">
@@ -1865,7 +1953,6 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
     <div className="step-panel">
       <div className="step-header">
         <h3>Question Management</h3>
-        <p>Select questions from your repository, create new ones, or import from a PDF.</p>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <div className="selected-count-badge">
             {selectedIds.size} question{selectedIds.size !== 1 ? "s" : ""} selected for this exam
@@ -2179,7 +2266,10 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
             <div className="preview-row"><span>Duration</span><strong>{form.duration_minutes} min</strong></div>
             <div className="preview-row"><span>Total Marks</span><strong>{form.total_marks}</strong></div>
             <div className="preview-row"><span>Questions Marks Sum</span><strong>{totalMarks}</strong></div>
-            <div className="preview-row"><span>Pass Marks</span><strong>{form.pass_marks}</strong></div>
+            <div className="preview-row">
+              <span>Pass Marks</span>
+              <strong>{form.has_pass_marks ? form.pass_marks : "No Pass Marks (everyone passes)"}</strong>
+            </div>
           </div>
         </div>
         <div className="preview-card">
@@ -2352,7 +2442,8 @@ export default function CreateExam() {
           exam_type:         (exam as any).exam_type ?? defaultForm().exam_type,
           duration_minutes:  exam.duration_minutes ?? defaultForm().duration_minutes,
           total_marks:       exam.total_marks      ?? defaultForm().total_marks,
-          pass_marks:        exam.pass_marks       ?? defaultForm().pass_marks,
+          has_pass_marks:    exam.pass_marks !== null && exam.pass_marks !== undefined,
+          pass_marks:        exam.pass_marks       ?? null,
           instructions:      exam.instructions     ?? "",
           shuffle_questions: exam.shuffle_questions ?? false,
           shuffle_options:   exam.shuffle_options  ?? false,
@@ -2528,16 +2619,16 @@ export default function CreateExam() {
     setSaving(true); setSaveError("");
     try {
       const examFields = {
-        title:             form.title,
-        course_id:         form.course_id || null,
-        exam_type:         form.exam_type,
-        total_marks:       form.total_marks,
-        pass_marks:        form.pass_marks,
-        duration_minutes:  form.duration_minutes,
-        shuffle_questions: form.shuffle_questions,
-        shuffle_options:   form.shuffle_options,
-        instructions:      form.instructions || null,
-      };
+  title:             form.title,
+  course_id:         form.course_id || null,
+  exam_type:         form.exam_type,
+  total_marks:       form.total_marks,
+  pass_marks:        form.has_pass_marks ? form.pass_marks : null,
+  duration_minutes:  form.duration_minutes,
+  shuffle_questions: form.shuffle_questions,
+  shuffle_options:   form.shuffle_options,
+  instructions:      form.instructions || null,
+};
 
       // Always force require_fullscreen true — platform-level rule
       const rulesPayload = { ...rules, require_fullscreen: true };
@@ -2609,12 +2700,17 @@ export default function CreateExam() {
   const selectedMarksSum = selectedQuestions.reduce((s, q) => s + q.marks, 0);
   const marksMatchTarget = selectedMarksSum === form.total_marks;
 
-  const canProceed = () => {
-    if (currentStep === 0) return form.title.trim() && form.total_marks > 0 && form.pass_marks > 0;
-    if (currentStep === 1) return selectedQuestions.length > 0 && marksMatchTarget;
-    if (currentStep === 4) return !!schedule.start_time && !!schedule.end_time;
-    return true;
-  };
+const canProceed = () => {
+  if (currentStep === 0)
+    return (
+      form.title.trim() &&
+      form.total_marks > 0 &&
+      (!form.has_pass_marks || (form.pass_marks !== null && form.pass_marks > 0 && form.pass_marks <= form.total_marks))
+    );
+  if (currentStep === 1) return selectedQuestions.length > 0 && marksMatchTarget;
+  if (currentStep === 4) return !!schedule.start_time && !!schedule.end_time;
+  return true;
+};
 
   const next = () => {
     if (currentStep < STEPS.length - 1) setCurrentStep((s) => s + 1);
