@@ -161,6 +161,17 @@ function getExamDisplayStatus(
   return { label: "Completed", cls: "badge badge-completed" };
 }
 
+/* ── Exams Table ────────────────────────────────────────── */
+type SortKey = "updated" | "title" | "duration" | "questions";
+type SortDir = "asc" | "desc";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  updated: "Last Updated",
+  title: "Alphabetical",
+  duration: "Duration",
+  questions: "Questions",
+};
+
 function ExamsTable({
   exams,
   schedules,
@@ -179,6 +190,22 @@ function ExamsTable({
   const [hiddenIds, setHiddenIdsState] = useState<string[]>(() => getHiddenExamIds());
   const [showHidden, setShowHidden] = useState(false);
   const [unpublishTarget, setUnpublishTarget] = useState<any | null>(null);
+
+  // ── Search / sort / filter state ──────────────────────────
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [sortKey, setSortKey] = useState<SortKey>("updated");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // sensible default direction per key
+      setSortDir(key === "title" ? "asc" : "desc");
+    }
+  };
 
   const scheduleByExam = new Map<string, FacultyDashboard["upcomingSchedules"][number]>();
   for (const s of schedules ?? []) {
@@ -253,7 +280,50 @@ function ExamsTable({
 
   const visibleExamsAll = exams.filter((e) => !hiddenIds.includes(e.id));
   const hiddenExams = exams.filter((e) => hiddenIds.includes(e.id));
-  const displayedExams = showAll ? visibleExamsAll : visibleExamsAll.slice(0, 5);
+
+  // ── Apply search + status filter ───────────────────────────
+  const q = search.trim().toLowerCase();
+  const filteredExams = visibleExamsAll.filter((exam) => {
+    const matchesSearch =
+      !q ||
+      exam.title?.toLowerCase().includes(q) ||
+      exam.courses?.code?.toLowerCase().includes(q) ||
+      exam.courses?.name?.toLowerCase().includes(q);
+
+    if (!matchesSearch) return false;
+
+    if (statusFilter === "ALL") return true;
+    const displayStatus = getExamDisplayStatus(exam, scheduleByExam.get(exam.id));
+    return displayStatus.label.toUpperCase() === statusFilter;
+  });
+
+  // ── Apply sort ──────────────────────────────────────────────
+  const sortedExams = [...filteredExams].sort((a, b) => {
+    let cmp = 0;
+    switch (sortKey) {
+      case "title":
+        cmp = (a.title ?? "").localeCompare(b.title ?? "");
+        break;
+      case "duration":
+        cmp = (a.duration_minutes ?? 0) - (b.duration_minutes ?? 0);
+        break;
+      case "questions":
+        cmp = (a.questions_count ?? 0) - (b.questions_count ?? 0);
+        break;
+      case "updated":
+      default:
+        cmp = new Date(a.updated_at ?? 0).getTime() - new Date(b.updated_at ?? 0).getTime();
+        break;
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const displayedExams = showAll ? sortedExams : sortedExams.slice(0, 5);
+
+  // Distinct status labels actually present, for the filter dropdown
+  const statusOptions = Array.from(
+    new Set(visibleExamsAll.map((exam) => getExamDisplayStatus(exam, scheduleByExam.get(exam.id)).label.toUpperCase())),
+  );
 
   return (
     <>
@@ -275,6 +345,65 @@ function ExamsTable({
         </div>
       )}
 
+      {/* ── Search / Sort / Filter toolbar ─────────────────────── */}
+      {visibleExamsAll.length > 0 && (
+        <div className="filter-bar" style={{ margin: "0 16px 12px", boxShadow: "none" }}>
+          <div className="search-input-wrap">
+            <i className="ti ti-search" />
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Search exams…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          <select
+            className="select-filter"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            title="Filter by status"
+          >
+            <option value="ALL">All Statuses</option>
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>
+            ))}
+          </select>
+
+          <select
+            className="select-filter"
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as SortKey)}
+            title="Sort by"
+          >
+            {Object.entries(SORT_LABELS).map(([key, label]) => (
+              <option key={key} value={key}>Sort: {label}</option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+            title={sortDir === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+          >
+            <i className={`ti ${sortDir === "asc" ? "ti-sort-ascending" : "ti-sort-descending"}`} />
+            {sortDir === "asc" ? "Asc" : "Desc"}
+          </button>
+
+          {(search || statusFilter !== "ALL" || sortKey !== "updated" || sortDir !== "desc") && (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => { setSearch(""); setStatusFilter("ALL"); setSortKey("updated"); setSortDir("desc"); }}
+            >
+              <i className="ti ti-x" /> Reset
+            </button>
+          )}
+        </div>
+      )}
+
       {visibleExamsAll.length === 0 ? (
         <div className="panel-body">
           <div className="empty-state" style={{ padding: "30px 20px" }}>
@@ -288,16 +417,32 @@ function ExamsTable({
             )}
           </div>
         </div>
+      ) : sortedExams.length === 0 ? (
+        <div className="panel-body">
+          <div className="empty-state" style={{ padding: "30px 20px" }}>
+            <i className="ti ti-search-off" />
+            <div className="empty-state-title">No exams match your search</div>
+            <div className="empty-state-text">Try a different search term or clear the filters.</div>
+          </div>
+        </div>
       ) : (
         <div className="data-table-wrap" style={{ maxHeight: showAll ? 480 : "none", overflowY: showAll ? "auto" : "visible" }}>
           <table className="data-table">
             <thead>
               <tr>
-                <th>Exam</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("title")}>
+                  Exam {sortKey === "title" && <i className={`ti ${sortDir === "asc" ? "ti-arrow-up" : "ti-arrow-down"}`} style={{ fontSize: 11 }} />}
+                </th>
                 <th>Status</th>
-                <th>Questions</th>
-                <th>Duration</th>
-                <th>Updated</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("questions")}>
+                  Questions {sortKey === "questions" && <i className={`ti ${sortDir === "asc" ? "ti-arrow-up" : "ti-arrow-down"}`} style={{ fontSize: 11 }} />}
+                </th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("duration")}>
+                  Duration {sortKey === "duration" && <i className={`ti ${sortDir === "asc" ? "ti-arrow-up" : "ti-arrow-down"}`} style={{ fontSize: 11 }} />}
+                </th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("updated")}>
+                  Updated {sortKey === "updated" && <i className={`ti ${sortDir === "asc" ? "ti-arrow-up" : "ti-arrow-down"}`} style={{ fontSize: 11 }} />}
+                </th>
                 <th />
               </tr>
             </thead>
@@ -391,14 +536,14 @@ function ExamsTable({
         </div>
       )}
 
-      {(visibleExamsAll.length > 5 || hiddenExams.length > 0) && (
+      {(sortedExams.length > 5 || hiddenExams.length > 0) && (
         <div style={{ padding: "10px 17px", borderTop: "1px solid #eceef2", display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-          {visibleExamsAll.length > 5 && (
+          {sortedExams.length > 5 && (
             <button className="btn btn-sm btn-secondary" style={{ flex: 1, minWidth: 160 }} onClick={() => setShowAll((p) => !p)}>
               {showAll ? (
                 <><i className="ti ti-chevron-up" /> Show less</>
               ) : (
-                <><i className="ti ti-chevron-down" /> Show all {visibleExamsAll.length} exams</>
+                <><i className="ti ti-chevron-down" /> Show all {sortedExams.length} exams</>
               )}
             </button>
           )}
@@ -438,7 +583,6 @@ function ExamsTable({
     </>
   );
 }
-
 /* ── Upcoming Schedules ────────────────────────────────── */
 function UpcomingSchedules({ schedules }: { schedules: FacultyDashboard["upcomingSchedules"] }) {
   if (!schedules || schedules.length === 0) {
