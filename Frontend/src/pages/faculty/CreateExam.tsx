@@ -1943,7 +1943,7 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
   const marksMatch       = remainingMarks === 0;
 
   const tabs = [
-    { id: "select", label: "Select Existing", icon: "ti-list-search"  },
+    { id: "select", label: "Question Bank", icon: "ti-list-search"  },
     { id: "create", label: "Create Question", icon: "ti-pencil-plus"  },
     { id: "import", label: "Import from PDF", icon: "ti-file-upload"  },
     { id: "auto",   label: "Auto-Generate",   icon: "ti-wand"         },
