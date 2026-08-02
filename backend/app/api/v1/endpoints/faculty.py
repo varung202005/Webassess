@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from app.core.security import require_faculty
 from app.db.supabase import get_supabase_admin
 from app.core.config import settings
-from app.services.email_service import send_candidate_invitation
+from app.services.email_service import send_candidate_invitation, send_account_credentials
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1291,6 +1291,350 @@ async def list_exam_candidates(
             "submitted_at": attempt["submitted_at"] if attempt else None,
             "score": result["total_score"] if result and result.get("is_published") else None,
             "percentage": result["percentage"] if result and result.get("is_published") else None,
+        })
+
+    return enriched
+
+
+# ── Student Invitations (Any Exam Type) ────────────────────────────────────────
+#
+# Mirrors the Candidate CSV-upload flow above, but for exam types other than
+# ENTRANCE. Faculty upload the same name/email/phone/temp_password CSV; each
+# row is created (or reused) as a STUDENT-role account, invited by email, and
+# lands on the ordinary student dashboard where they can self-register for the
+# exam (same as any other student) rather than being auto-assigned like an
+# entrance candidate. If the email address has no account yet, one is created
+# so the invite link still lets them log in and register.
+#
+# The invited_by / status bookkeeping reuses candidate_exam_assignments purely
+# as an "invitation log" — it is safe alongside the ENTRANCE candidate flow
+# because every read of that table for the candidate portal explicitly filters
+# on exam_type == ENTRANCE (see candidate.py), so rows created here for other
+# exam types are invisible to that logic.
+
+PRIVILEGED_ROLE_NAMES = {"Faculty", "Admin", "Proctor"}
+
+
+def _send_student_invitation_in_background(payload: dict) -> None:
+    try:
+        result = send_account_credentials(payload)
+        if not result.sent and not result.skipped:
+            logger.warning("Student invitation email failed for %s: %s", payload["email"], result.error)
+    except Exception:
+        logger.exception("Unexpected student invitation failure for %s", payload.get("email"))
+
+
+def _login_url() -> str:
+    return f"{settings.FRONTEND_URL.rstrip('/')}/login"
+
+
+@router.post("/students/assign-csv")
+async def assign_students_csv(
+    background_tasks: BackgroundTasks,
+    exam_schedule_id: UUID = Form(...),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_faculty),
+):
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+
+    entries = _parse_candidate_csv(await file.read())
+    if not entries:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid rows found. CSV must include an email column.",
+        )
+
+    return await assign_students(
+        AssignCandidatesRequest(exam_schedule_id=exam_schedule_id, candidates=entries),
+        background_tasks,
+        current_user,
+    )
+
+
+@router.post("/students/assign")
+async def assign_students(
+    body: AssignCandidatesRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_faculty),
+):
+    """
+    Invite students (any non-ENTRANCE exam type) from the same CSV format used
+    for entrance candidates.
+
+    For each row:
+      1. Find or create the user account.
+      2. Skip (with an error entry) if the account already holds a Faculty,
+         Admin, or Proctor role — this flow must never grant/alter those roles.
+      3. Grant the Student role (idempotent).
+      4. Log the invitation (for the faculty-facing list) and email the
+         person their login link, whether they were just created or already
+         existed. Even unregistered brand-new accounts get the email so they
+         can log in and self-register for the exam from their dashboard.
+    """
+    supabase = get_supabase_admin()
+    faculty_id = current_user["user_id"]
+    schedule_id = str(body.exam_schedule_id)
+    entries = [
+        entry for entry in body.candidates
+        if entry.email and "@" in entry.email.strip()
+    ]
+    if not entries:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid rows found. Upload a CSV with at least one email address.",
+        )
+
+    sched = (
+        supabase.table("exam_schedules")
+        .select("id,exam_id,exams(title,duration_minutes,created_by,exam_type)")
+        .eq("id", schedule_id)
+        .single()
+        .execute()
+        .data
+    )
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if sched["exams"]["created_by"] != faculty_id:
+        raise HTTPException(status_code=403, detail="You do not own this exam")
+
+    student_role_row = (
+        supabase.table("roles")
+        .select("id")
+        .eq("name", "Student")
+        .single()
+        .execute()
+        .data
+    )
+    if not student_role_row:
+        raise HTTPException(status_code=500, detail="Student role not found.")
+    student_role_id = student_role_row["id"]
+
+    privileged_role_ids = {
+        row["id"] for row in (
+            supabase.table("roles").select("id,name").in_("name", list(PRIVILEGED_ROLE_NAMES)).execute().data or []
+        )
+    }
+
+    results = []
+    for entry in entries:
+        email = entry.email.strip().lower()
+        full_name = entry.full_name.strip()
+        temp_password = entry.temp_password or _generate_temp_password()
+
+        existing = (
+            supabase.table("users").select("id,full_name,email").eq("email", email).execute().data
+        )
+
+        if not existing:
+            try:
+                auth_users = supabase.auth.admin.list_users()
+                matched = next((u for u in (auth_users or []) if (u.email or "").lower() == email), None)
+                if matched:
+                    user_id = str(matched.id)
+                    supabase.table("users").upsert({
+                        "id": user_id,
+                        "full_name": full_name,
+                        "email": email,
+                        "password_hash": "managed_by_supabase_auth",
+                        "is_active": True,
+                        "is_verified": True,
+                    }, on_conflict="id").execute()
+                    existing = [{"id": user_id, "full_name": full_name, "email": email}]
+            except Exception as e:
+                logger.warning("Auth users lookup failed for %s: %s", email, e)
+
+        if existing:
+            user_id = existing[0]["id"]
+
+            # Never touch accounts that already hold a privileged role.
+            current_role_ids = {
+                r["role_id"] for r in (
+                    supabase.table("user_roles").select("role_id").eq("user_id", user_id).execute().data or []
+                )
+            }
+            if current_role_ids & privileged_role_ids:
+                results.append({
+                    "email": email,
+                    "status": "skipped",
+                    "error": "Account already has a Faculty/Admin/Proctor role and was left unchanged.",
+                })
+                continue
+
+            try:
+                supabase.auth.admin.update_user_by_id(user_id, {"password": temp_password})
+            except Exception as e:
+                logger.warning("Auth password update failed for %s: %s", email, e)
+                results.append({"email": email, "status": "error", "error": f"Could not set password: {e}"})
+                continue
+        else:
+            try:
+                auth_resp = supabase.auth.admin.create_user({
+                    "email": email,
+                    "password": temp_password,
+                    "email_confirm": True,
+                    "user_metadata": {"full_name": full_name, "role": "student"},
+                })
+                user_id = auth_resp.user.id
+            except Exception as e:
+                logger.warning("Auth user creation failed for %s: %s", email, e)
+                results.append({"email": email, "status": "error", "error": str(e)})
+                continue
+
+            supabase.table("users").upsert({
+                "id": user_id,
+                "full_name": full_name,
+                "email": email,
+                "phone": entry.phone,
+                "password_hash": "managed_by_supabase_auth",
+                "is_active": True,
+                "is_verified": True,
+            }, on_conflict="id").execute()
+
+        # Grant Student role (idempotent). Never assigned Candidate/Faculty/Admin/Proctor here.
+        supabase.table("user_roles").upsert(
+            {"user_id": user_id, "role_id": student_role_id},
+            on_conflict="user_id,role_id",
+        ).execute()
+
+        # Invitation log entry (list/status tracking only — see module note above).
+        existing_invite = (
+            supabase.table("candidate_exam_assignments")
+            .select("id")
+            .eq("exam_schedule_id", schedule_id)
+            .eq("candidate_id", user_id)
+            .execute()
+            .data
+        )
+        if existing_invite:
+            assignment_id = existing_invite[0]["id"]
+        else:
+            assignment_row = (
+                supabase.table("candidate_exam_assignments")
+                .insert({
+                    "exam_schedule_id": schedule_id,
+                    "candidate_id": user_id,
+                    "invited_by": faculty_id,
+                    "status": "INVITED",
+                })
+                .execute()
+                .data[0]
+            )
+            assignment_id = assignment_row["id"]
+
+        login_url = _login_url()
+        payload = {
+            "full_name": full_name,
+            "email": email,
+            "password": temp_password,
+            "role": "Student",
+            "login_url": login_url,
+        }
+        background_tasks.add_task(_send_student_invitation_in_background, payload)
+
+        results.append({
+            "email": email,
+            "user_id": user_id,
+            "assignment_id": assignment_id,
+            "status": "assigned",
+            "email_status": "queued",
+        })
+
+    return {
+        "assigned": len([r for r in results if r["status"] == "assigned"]),
+        "skipped": len([r for r in results if r["status"] == "skipped"]),
+        "emails_queued": len([r for r in results if r.get("email_status") == "queued"]),
+        "results": results,
+    }
+
+
+@router.get("/students/{exam_schedule_id}")
+async def list_invited_students(
+    exam_schedule_id: UUID,
+    current_user: dict = Depends(require_faculty),
+):
+    """
+    Faculty-facing list of everyone invited (via this flow) for a non-ENTRANCE
+    schedule, with their real registration/attempt status computed live from
+    exam_registrations + exam_attempts (rather than the static invite-log
+    status, since students register/attempt through the normal student flow).
+    """
+    supabase = get_supabase_admin()
+    faculty_id = current_user["user_id"]
+    schedule_id = str(exam_schedule_id)
+
+    sched = (
+        supabase.table("exam_schedules")
+        .select("id,exam_id,exams(title,created_by)")
+        .eq("id", schedule_id)
+        .single()
+        .execute()
+        .data
+    )
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if sched["exams"]["created_by"] != faculty_id:
+        raise HTTPException(status_code=403, detail="You do not own this exam")
+
+    invites = (
+        supabase.table("candidate_exam_assignments")
+        .select("id,candidate_id,created_at,users!cea_candidate_fkey(full_name,email,phone)")
+        .eq("exam_schedule_id", schedule_id)
+        .order("created_at")
+        .execute()
+        .data
+    ) or []
+
+    student_ids = [i["candidate_id"] for i in invites]
+    reg_map: dict = {}
+    attempt_map: dict = {}
+    if student_ids:
+        regs = (
+            supabase.table("exam_registrations")
+            .select("student_id,status")
+            .eq("exam_schedule_id", schedule_id)
+            .in_("student_id", student_ids)
+            .execute()
+            .data
+        ) or []
+        reg_map = {r["student_id"]: r for r in regs}
+
+        attempts = (
+            supabase.table("exam_attempts")
+            .select("student_id,status,submitted_at,total_score")
+            .eq("exam_schedule_id", schedule_id)
+            .in_("student_id", student_ids)
+            .execute()
+            .data
+        ) or []
+        attempt_map = {a["student_id"]: a for a in attempts}
+
+    enriched = []
+    for i in invites:
+        sid = i["candidate_id"]
+        reg = reg_map.get(sid)
+        attempt = attempt_map.get(sid)
+        if attempt and attempt["status"] in ("SUBMITTED", "AUTO_SUBMITTED"):
+            status = "COMPLETED"
+        elif attempt and attempt["status"] == "IN_PROGRESS":
+            status = "STARTED"
+        elif reg and reg.get("status") == "REGISTERED":
+            status = "REGISTERED"
+        else:
+            status = "INVITED"
+        enriched.append({
+            "assignment_id": i["id"],
+            "candidate_id": sid,
+            "full_name": (i.get("users") or {}).get("full_name", ""),
+            "email": (i.get("users") or {}).get("email", ""),
+            "phone": (i.get("users") or {}).get("phone"),
+            "invitation_status": status,
+            "login_url": "/login",
+            "assigned_at": i["created_at"],
+            "attempt_status": attempt["status"] if attempt else None,
+            "submitted_at": attempt.get("submitted_at") if attempt else None,
+            "score": attempt.get("total_score") if attempt else None,
+            "percentage": None,
         })
 
     return enriched

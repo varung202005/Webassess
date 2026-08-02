@@ -105,6 +105,10 @@ interface CandidateRow {
 interface Props {
   examScheduleId: string;
   examTitle: string;
+  /** Determines which invite flow to use. ENTRANCE uses the Candidate
+   *  portal flow; any other exam type invites people as Students who
+   *  self-register from their normal student dashboard. */
+  examType?: string;
 }
 
 interface ManualEntry {
@@ -188,7 +192,12 @@ interface AssignCandidatesResponse {
   results: unknown[];
 }
 
-export default function FacultyCandidateManager({ examScheduleId, examTitle }: Props) {
+export default function FacultyCandidateManager({ examScheduleId, examTitle, examType = "ENTRANCE" }: Props) {
+  const isEntrance = examType === "ENTRANCE";
+  const listPath = isEntrance ? "candidates" : "students";
+  const assignPath = isEntrance ? "candidates/assign" : "students/assign";
+  const assignCsvPath = isEntrance ? "candidates/assign-csv" : "students/assign-csv";
+  const noun = isEntrance ? "candidate" : "student";
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<"list" | "add" | "csv">("list");
   const [entry, setEntry] = useState<ManualEntry>(emptyEntry());
@@ -200,8 +209,8 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: candidates = [], isLoading } = useQuery<CandidateRow[]>({
-    queryKey: ["faculty", "candidates", examScheduleId],
-    queryFn: () => get<CandidateRow[]>(`/api/v1/faculty/candidates/${examScheduleId}`),
+    queryKey: ["faculty", listPath, examScheduleId],
+    queryFn: () => get<CandidateRow[]>(`/api/v1/faculty/${listPath}/${examScheduleId}`),
     enabled: Boolean(examScheduleId),
   });
 
@@ -220,7 +229,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
         throw new Error("No valid candidates found. Upload a CSV with at least an email column.");
       }
 
-      return post<AssignCandidatesResponse>("/api/v1/faculty/candidates/assign", {
+      return post<AssignCandidatesResponse>(`/api/v1/faculty/${assignPath}`, {
         exam_schedule_id: examScheduleId,
         candidates: cleaned.map((e) => ({
           full_name: e.full_name,
@@ -237,22 +246,22 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       const skipped = data?.emails_skipped ?? 0;
       const queued = data?.emails_queued ?? 0;
       const mailSummary = queued
-        ? ` Login emails are being sent in the background for ${queued} candidate(s).`
+        ? ` Login emails are being sent in the background for ${queued} ${noun}(s).`
         : skipped
         ? " Email sending is not configured, so credentials were generated but not mailed."
         : failed
           ? ` ${sent} email(s) sent, ${failed} failed.`
           : ` ${sent} email(s) sent.`;
-      setNotice({ type: "success", msg: `${assigned} candidate login(s) prepared.${mailSummary}` });
+      setNotice({ type: "success", msg: `${assigned} ${noun} login(s) prepared.${mailSummary}` });
       setEntry(emptyEntry());
       setCSVRows([]);
       setCSVFile(null);
       if (fileRef.current) fileRef.current.value = "";
-      qc.invalidateQueries({ queryKey: ["faculty", "candidates", examScheduleId] });
+      qc.invalidateQueries({ queryKey: ["faculty", listPath, examScheduleId] });
       setActiveTab("list");
     },
     onError: (err: Error) => {
-      setNotice({ type: "error", msg: err.message || "Failed to assign candidates." });
+      setNotice({ type: "error", msg: err.message || `Failed to assign ${noun}s.` });
     },
   });
 
@@ -261,7 +270,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       const formData = new FormData();
       formData.append("exam_schedule_id", examScheduleId);
       formData.append("file", file);
-      return apiFile<AssignCandidatesResponse>("/api/v1/faculty/candidates/assign-csv", formData);
+      return apiFile<AssignCandidatesResponse>(`/api/v1/faculty/${assignCsvPath}`, formData);
     },
     onSuccess: (data: any) => {
       const assigned = data?.assigned ?? 0;
@@ -270,21 +279,21 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
       const skipped = data?.emails_skipped ?? 0;
       const queued = data?.emails_queued ?? 0;
       const mailSummary = queued
-        ? ` Login emails are being sent in the background for ${queued} candidate(s).`
+        ? ` Login emails are being sent in the background for ${queued} ${noun}(s).`
         : skipped
         ? " Email sending is not configured, so credentials were generated but not mailed."
         : failed
           ? ` ${sent} email(s) sent, ${failed} failed.`
           : ` ${sent} email(s) sent.`;
-      setNotice({ type: "success", msg: `${assigned} candidate login(s) prepared from CSV.${mailSummary}` });
+      setNotice({ type: "success", msg: `${assigned} ${noun} login(s) prepared from CSV.${mailSummary}` });
       setCSVRows([]);
       setCSVFile(null);
       if (fileRef.current) fileRef.current.value = "";
-      qc.invalidateQueries({ queryKey: ["faculty", "candidates", examScheduleId] });
+      qc.invalidateQueries({ queryKey: ["faculty", listPath, examScheduleId] });
       setActiveTab("list");
     },
     onError: (err: Error) => {
-      setNotice({ type: "error", msg: err.message || "Failed to upload candidate CSV." });
+      setNotice({ type: "error", msg: err.message || `Failed to upload ${noun} CSV.` });
     },
   });
 
@@ -314,8 +323,8 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
 
       <div className="cm-header">
         <div>
-          <div className="cm-title">Candidate Management</div>
-          <div className="cm-subtitle">{examTitle} — {candidates.length} candidate(s) assigned</div>
+          <div className="cm-title">{isEntrance ? "Candidate Management" : "Student Invitations"}</div>
+          <div className="cm-subtitle">{examTitle} — {candidates.length} {noun}(s) {isEntrance ? "assigned" : "invited"}</div>
         </div>
       </div>
 
@@ -329,7 +338,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
 
       <div className="cm-tabs">
         <button className={`cm-tab ${activeTab === "list" ? "active" : ""}`} onClick={() => setActiveTab("list")}>
-          <i className="ti ti-users" /> Candidates ({candidates.length})
+          <i className="ti ti-users" /> {isEntrance ? "Candidates" : "Students"} ({candidates.length})
         </button>
         <button className={`cm-tab ${activeTab === "add" ? "active" : ""}`} onClick={() => setActiveTab("add")}>
           <i className="ti ti-user-plus" /> Add Manually
@@ -347,7 +356,8 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
           ) : candidates.length === 0 ? (
             <div className="cm-empty">
               <i className="ti ti-user-off" />
-              No candidates assigned yet. Use "Add Manually" or "Upload CSV" to send login credentials.
+              No {noun}s {isEntrance ? "assigned" : "invited"} yet. Use "Add Manually" or "Upload CSV" to send login credentials.
+              {!isEntrance && " Invited students will see this exam on their dashboard and can register for it themselves."}
             </div>
           ) : (
             <div className="cm-table-wrap">
@@ -358,7 +368,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
                     <th>Status</th>
                     <th>Attempt</th>
                     <th>Score</th>
-                    <th>Login Page</th>
+                    <th>{isEntrance ? "Login Page" : "Login"}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -386,7 +396,7 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
                       </td>
                       <td>
                         <button className="btn btn-ghost" onClick={() => copyLink(c.login_url)}>
-                          <i className="ti ti-copy" /> Copy Login
+                          <i className="ti ti-copy" /> {isEntrance ? "Copy Login" : "Copy Login URL"}
                         </button>
                       </td>
                     </tr>
@@ -446,15 +456,20 @@ export default function FacultyCandidateManager({ examScheduleId, examTitle }: P
             onClick={() => fileRef.current?.click()}
           >
             <i className="ti ti-upload" />
-            <p>Drag & drop a candidate CSV file, or click to browse</p>
+            <p>Drag & drop a {noun} CSV file, or click to browse</p>
             <small>Format: <code>name,email,phone,temp_password</code> — phone and temp_password are optional</small>
+            {!isEntrance && (
+              <small style={{ display: "block", marginTop: 4 }}>
+                Same format as candidate CSVs. Rows are invited as students — never as faculty, admin, or proctor.
+              </small>
+            )}
             <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCSVFile(f); }} />
           </div>
 
           {csvRows.length > 0 && (
             <div className="cm-csv-preview">
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-gray-700)", marginBottom: 10 }}>
-                {csvRows.length} candidate(s) found — review before importing:
+                {csvRows.length} {noun}(s) found — review before importing:
               </div>
               <table>
                 <thead>

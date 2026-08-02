@@ -648,43 +648,44 @@ function CandidateAssessments({
   schedules: FacultyDashboard["upcomingSchedules"];
   onManage: (schedule: ExamSchedule) => void;
 }) {
-  const entranceSchedules = (schedules ?? []).filter((schedule) => {
+  const inviteableSchedules = (schedules ?? []).filter((schedule) => {
     const exam = schedule.exams;
-    return exam?.exam_type === "ENTRANCE" && exam?.status === "PUBLISHED";
+    return exam?.status === "PUBLISHED";
   });
 
   return (
     <div className="panel" style={{ margin: 0 }}>
       <div className="panel-header">
-        <div className="card-title"><i className="ti ti-users-plus" /> Candidate Assessments</div>
+        <div className="card-title"><i className="ti ti-users-plus" /> Candidate / Student Upload</div>
       </div>
 
-      {entranceSchedules.length === 0 ? (
+      {inviteableSchedules.length === 0 ? (
         <div className="panel-body">
           <div className="empty-state" style={{ padding: "30px 20px" }}>
             <i className="ti ti-user-plus" />
-            <div className="empty-state-title">No entrance assessment ready</div>
-            <div className="empty-state-text">Create and publish an entrance exam schedule to upload candidate CSVs.</div>
+            <div className="empty-state-title">No published exam yet</div>
+            <div className="empty-state-text">Publish an exam schedule to upload a candidate/student CSV.</div>
           </div>
         </div>
       ) : (
         <div className="candidate-assessment-list">
-          {entranceSchedules.map((schedule) => {
+          {inviteableSchedules.map((schedule) => {
+            const isEntrance = schedule.exams?.exam_type === "ENTRANCE";
             const start = schedule.start_time ? new Date(schedule.start_time) : null;
             const end = schedule.end_time ? new Date(schedule.end_time) : null;
             return (
               <div className="candidate-assessment-item" key={schedule.id}>
                 <div className="candidate-assessment-main">
-                  <div className="candidate-assessment-title">{schedule.exams?.title ?? "Entrance Assessment"}</div>
+                  <div className="candidate-assessment-title">{schedule.exams?.title ?? (isEntrance ? "Entrance Assessment" : "Assessment")}</div>
                   <div className="candidate-assessment-meta">
                     {start && <span>{formatDate(start.toISOString())} at {formatTime(start.toISOString())}</span>}
                     {end && <span>Ends {formatTime(end.toISOString())}</span>}
-                    <span>{schedule.candidate_count ?? 0} candidates</span>
+                    <span>{schedule.candidate_count ?? 0} invited</span>
                   </div>
                 </div>
-                <span className="badge badge-published">Entrance</span>
+                <span className="badge badge-published">{isEntrance ? "Entrance" : "Student Invite"}</span>
                 <button className="btn btn-sm btn-primary" onClick={() => onManage(schedule)}>
-                  <i className="ti ti-upload" /> Manage Candidates
+                  <i className="ti ti-upload" /> {isEntrance ? "Manage Candidates" : "Invite Students"}
                 </button>
               </div>
             );
@@ -904,7 +905,7 @@ export default function Dashboard() {
               <div className="modal-backdrop" role="presentation" onClick={() => setCandidateSchedule(null)}>
                 <div className="modal candidate-manager-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
                   <div className="modal-header">
-                    <h2>Manage Candidates</h2>
+                    <h2>{candidateSchedule.exams?.exam_type === "ENTRANCE" ? "Manage Candidates" : "Invite Students"}</h2>
                     <button className="modal-close" onClick={() => setCandidateSchedule(null)} aria-label="Close">
                       <i className="ti ti-x" />
                     </button>
@@ -912,7 +913,8 @@ export default function Dashboard() {
                   <div className="modal-body">
                     <CandidateManager
                       examScheduleId={candidateSchedule.id}
-                      examTitle={candidateSchedule.exams?.title ?? "Entrance Assessment"}
+                      examTitle={candidateSchedule.exams?.title ?? "Assessment"}
+                      examType={candidateSchedule.exams?.exam_type ?? "ENTRANCE"}
                     />
                   </div>
                 </div>
