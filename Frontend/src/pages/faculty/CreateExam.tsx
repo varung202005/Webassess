@@ -134,6 +134,24 @@ function toLocalInputString(iso: string | null | undefined): string {
   return `${ist.getUTCFullYear()}-${pad(ist.getUTCMonth() + 1)}-${pad(ist.getUTCDate())}T${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}`;
 }
 
+// API/database numeric columns can occasionally be serialised as strings.
+// Coerce at the calculation boundary so totals never concatenate values such
+// as "2" and "5" into "025". Rounding also keeps supported fractional marks
+// (for example 0.5) from failing an equality check due to floating precision.
+function markValue(value: unknown): number {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+}
+
+function sumMarks(questions: Array<{ marks: unknown }>): number {
+  const total = questions.reduce((sum, question) => sum + markValue(question.marks), 0);
+  return Math.round(total * 100) / 100;
+}
+
+function marksEqual(left: unknown, right: unknown): boolean {
+  return Math.abs(markValue(left) - markValue(right)) < 0.001;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Draft helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1608,9 +1626,9 @@ function PdfImportPanel({
   // ── review ──
   if (status === "review") {
     const selectedCount = selectedQuestionIds.size;
-    const selectedMarksSumFromImport = extracted
-      .filter((q) => selectedQuestionIds.has(q.id))
-      .reduce((s, q) => s + q.marks, 0);
+    const selectedMarksSumFromImport = sumMarks(
+      extracted.filter((q) => selectedQuestionIds.has(q.id)),
+    );
     const avgConf = extracted.length
       ? Math.round(extracted.reduce((s, q) => s + q.confidence, 0) / extracted.length)
       : 0;
@@ -1938,9 +1956,9 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
     return matchSearch && matchType && matchDiff;
   });
 
-  const selectedMarksSum = selectedQuestions.reduce((s, q) => s + q.marks, 0);
+  const selectedMarksSum = sumMarks(selectedQuestions);
   const remainingMarks   = targetMarks - selectedMarksSum;
-  const marksMatch       = remainingMarks === 0;
+  const marksMatch       = marksEqual(selectedMarksSum, targetMarks);
 
   const tabs = [
     { id: "select", label: "Question Bank", icon: "ti-list-search"  },
@@ -2218,7 +2236,7 @@ function StepPreview({ form, schedule, selectedQuestions, examId, isEditMode, ju
   form: ExamForm; schedule: ScheduleForm; selectedQuestions: Question[];
   examId: string | null; isEditMode: boolean; justSaved: boolean;
 }) {
-  const totalMarks = selectedQuestions.reduce((s, q) => s + q.marks, 0);
+  const totalMarks = sumMarks(selectedQuestions);
   const byType     = selectedQuestions.reduce(
     (acc, q) => { acc[q.question_type] = (acc[q.question_type] ?? 0) + 1; return acc; },
     {} as Record<string, number>,
@@ -2697,8 +2715,8 @@ export default function CreateExam() {
     }
   };
 
-  const selectedMarksSum = selectedQuestions.reduce((s, q) => s + q.marks, 0);
-  const marksMatchTarget = selectedMarksSum === form.total_marks;
+  const selectedMarksSum = sumMarks(selectedQuestions);
+  const marksMatchTarget = marksEqual(selectedMarksSum, form.total_marks);
 
 const canProceed = () => {
   if (currentStep === 0)
