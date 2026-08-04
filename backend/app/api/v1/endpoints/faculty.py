@@ -172,8 +172,15 @@ async def get_faculty_dashboard(current_user: dict = Depends(require_faculty)):
                 ) or []
                 reg_by_schedule = Counter(r["exam_schedule_id"] for r in registrations)
 
+                now = datetime.now(timezone.utc)
                 for sid in schedules_with_activity:
                     s = schedule_by_id.get(sid, {})
+                    # An attempt may remain IN_PROGRESS until its cleanup job
+                    # runs, but it must not keep an already-ended exam in the
+                    # dashboard's live-session tile.
+                    end_dt = safe_dt(s.get("end_time"))
+                    if end_dt is not None and end_dt < now:
+                        continue
                     exam = exam_by_id.get(s.get("exam_id"), {})
                     active_sessions.append({
                         "schedule_id": sid,

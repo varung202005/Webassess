@@ -26,7 +26,7 @@
  * Drop this file at:  src/pages/faculty/Dashboard.tsx
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
@@ -70,12 +70,20 @@ function setHiddenExamIds(ids: string[]) {
 
 /* ── Session Banner ────────────────────────────────────── */
 function SessionBanner({ sessions }: { sessions: FacultyDashboard["activeSessions"] }) {
-  if (!sessions || sessions.length === 0) return null;
-  const s = sessions[0];
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const liveSessions = (sessions ?? []).filter((session) =>
+    !session.ends_at || new Date(session.ends_at).getTime() > now,
+  );
+  if (liveSessions.length === 0) return null;
+  const s = liveSessions[0];
   const endsIn = s.ends_at
     ? (() => {
-        const diff = new Date(s.ends_at).getTime() - Date.now();
-        if (diff <= 0) return "Ending now";
+        const diff = new Date(s.ends_at).getTime() - now;
         const h = Math.floor(diff / 3600000);
         const m = Math.floor((diff % 3600000) / 60000);
         return `Ends in ${h}h ${m}m`;
