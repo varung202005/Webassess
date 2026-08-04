@@ -28,7 +28,7 @@ class ExamCreate(BaseModel):
     course_id: Optional[str] = None
     exam_type: str = "MID_SEMESTER"
     total_marks: int
-    pass_marks: Optional[int] = None
+    pass_marks: int = 0
     duration_minutes: int
     shuffle_questions: bool = False
     shuffle_options: bool = False
