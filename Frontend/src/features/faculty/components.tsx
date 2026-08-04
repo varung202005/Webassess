@@ -149,6 +149,7 @@ export function FilterChip({
 /** Stats overview row (matches student's stat-card pattern) */
 export function StatsRow({
   items,
+  className,
 }: {
   items: Array<{
     label: string;
@@ -158,15 +159,16 @@ export function StatsRow({
     meta?: string;
     trend?: { value: string; up?: boolean };
   }>;
+  className?: string;
 }) {
   return (
-    <div className="stats-grid">
+    <div className={`stats-grid ${className ?? ""}`}>
       {items.map((item, i) => (
         <div key={i} className="stat-card" style={{ "--accent": accentColor(item.color), "--soft": softColor(item.color) } as React.CSSProperties}>
           <div className="stat-header">
             <div className="stat-label">{item.label}</div>
             {item.icon && (
-              <div className="stat-icon">
+              <div className="stat-icon" style={{ background: softColor(item.color), color: accentColor(item.color) }}>
                 <i className={item.icon} />
               </div>
             )}

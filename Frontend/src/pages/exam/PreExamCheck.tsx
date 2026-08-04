@@ -67,7 +67,7 @@ export default function PreExamCheck() {
   const verifyCamera = async () => {
     setError(null); setCamera("checking"); setFraming("checking");
     try {
-      const rawRules = Array.isArray(schedule?.exam?.exam_rules)
+      const rawRules: any = Array.isArray(schedule?.exam?.exam_rules)
         ? schedule.exam.exam_rules[0]
         : schedule?.exam?.exam_rules;
       const micRequired = rawRules?.microphone_required ?? false;

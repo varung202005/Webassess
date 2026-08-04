@@ -122,3 +122,367 @@
 
 /* Keep the account/logout control visible; only the navigation list scrolls. */
 .student-sidebar{position:fixed!important;inset:0 auto 0 0!important;height:100dvh!important;overflow:hidden!important}.student-sidebar .student-brand{flex-shrink:0}.student-sidebar .student-nav{min-height:0;flex:1 1 0;overscroll-behavior:contain}.student-sidebar .sidebar-profile{margin-top:auto;flex-shrink:0}
+
+/* ── Faculty-matched Design Language for Student Portal ── */
+.student-app .stats-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 13px !important;
+  margin-bottom: 18px !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+@media (max-width: 1024px) {
+  .student-app .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+@media (max-width: 640px) {
+  .student-app .stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.student-app .stat-card {
+  background: #fff !important;
+  border: 1px solid #e5e7ed !important;
+  border-radius: 18px !important;
+  box-shadow: 0 5px 18px rgba(27, 31, 44, 0.035) !important;
+  padding: 17px !important;
+  position: relative !important;
+  overflow: hidden !important;
+  min-height: 0 !important;
+}
+.student-app .stat-card::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 auto 0 0 !important;
+  width: 4px !important;
+  height: 100% !important;
+  background: var(--accent, #b31234) !important;
+}
+.student-app .stat-card::after {
+  display: none !important;
+}
+
+.student-app .stat-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  color: color-mix(in srgb, var(--accent, #b31234) 62%, #46484f) !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.6px !important;
+  font-weight: 800 !important;
+}
+
+.student-app .stat-icon {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 11px !important;
+  display: grid !important;
+  place-items: center !important;
+  font-size: 18px !important;
+}
+
+.student-app .stat-value {
+  font-size: 28px !important;
+  font-weight: 800 !important;
+  margin: 8px 0 2px !important;
+  letter-spacing: -0.7px !important;
+  color: color-mix(in srgb, var(--accent, #b31234) 78%, #1c1d22) !important;
+}
+
+.student-app .stat-meta {
+  font-size: 11px !important;
+  color: color-mix(in srgb, var(--accent, #b31234) 40%, #6b6f7c) !important;
+}
+
+.student-app .content-grid {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.8fr) !important;
+  gap: 16px !important;
+  margin-bottom: 16px !important;
+  align-items: start !important;
+}
+@media (max-width: 1100px) {
+  .student-app .content-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.student-app .panel, .student-app .card {
+  background: #fff !important;
+  border: 1px solid #e5e7ed !important;
+  border-radius: 18px !important;
+  box-shadow: 0 5px 18px rgba(27, 31, 44, 0.035) !important;
+  overflow: hidden !important;
+  margin-bottom: 16px !important;
+  padding: 0 !important;
+}
+
+/* Compact empty state inside panels — no giant blank void */
+.student-app .panel .empty-state,
+.student-app .panel-body .empty-state {
+  padding: 28px 20px !important;
+  min-height: 0 !important;
+  border: 1px dashed #e2e4e9 !important;
+  border-radius: 12px !important;
+  background: #fafbfc !important;
+  margin: 14px !important;
+}
+
+.student-app .panel-header, .student-app .card-header {
+  min-height: 56px !important;
+  padding: 0 17px !important;
+  display: flex !important;
+  align-items: center !important;
+  border-bottom: 1px solid #eceef2 !important;
+  gap: 8px !important;
+}
+
+.student-app .card-title, .student-app .panel-header h2 {
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.student-app .panel-header a, .student-app .panel-header button, .student-app .card-action {
+  margin-left: auto !important;
+  color: #a30f2e !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  border: 0 !important;
+  background: transparent !important;
+  cursor: pointer !important;
+}
+
+.student-app .filter-bar {
+  padding: 12px !important;
+  margin-bottom: 16px !important;
+  background: #fff !important;
+  border: 1px solid #e5e7ed !important;
+  border-radius: 18px !important;
+  box-shadow: 0 5px 18px rgba(27, 31, 44, 0.035) !important;
+  display: flex !important;
+  gap: 9px !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+}
+
+.student-app .search-input-wrap {
+  position: relative !important;
+  flex: 1 !important;
+  min-width: 200px !important;
+}
+.student-app .search-input-wrap i {
+  position: absolute !important;
+  left: 12px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  color: #9ca0ae !important;
+  font-size: 15px !important;
+}
+
+.student-app .search-input {
+  padding-left: 36px !important;
+  height: 39px !important;
+  border: 1px solid #dfe2e9 !important;
+  border-radius: 11px !important;
+  background: #fafbfc !important;
+  color: #373a48 !important;
+  font: inherit !important;
+  outline: none !important;
+  width: 100% !important;
+}
+
+.student-app .select-filter {
+  height: 39px !important;
+  border: 1px solid #dfe2e9 !important;
+  border-radius: 11px !important;
+  padding: 0 12px !important;
+  background: #fafbfc !important;
+  color: #373a48 !important;
+  font: inherit !important;
+  outline: none !important;
+  min-width: 150px !important;
+  cursor: pointer !important;
+}
+
+.student-app .schedule-list {
+  padding: 4px 0 !important;
+}
+.student-app .schedule-item {
+  display: grid !important;
+  grid-template-columns: auto auto minmax(0, 1fr) auto !important;
+  gap: 12px !important;
+  align-items: center !important;
+  padding: 14px 17px !important;
+  border-bottom: 1px solid #edf0f4 !important;
+  transition: 0.12s !important;
+}
+.student-app .schedule-item:last-child { border-bottom: 0 !important; }
+.student-app .schedule-item:hover { background: #fafbfc !important; }
+.student-app .schedule-date { text-align: center !important; flex: none !important; }
+.student-app .schedule-date .day {
+  font-size: 22px !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  color: #222536 !important;
+}
+.student-app .schedule-date .month {
+  font-size: 9px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.8px !important;
+  color: #878b9a !important;
+  font-weight: 700 !important;
+  margin-top: 2px !important;
+}
+.student-app .schedule-divider {
+  width: 2px !important;
+  height: 36px !important;
+  border-radius: 999px !important;
+  background: #e5e7ed !important;
+  flex: none !important;
+}
+.student-app .schedule-info { min-width: 0 !important; }
+.student-app .schedule-name { font-size: 14px !important; font-weight: 600 !important; }
+.student-app .schedule-meta {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 10px !important;
+  color: #777b8a !important;
+  font-size: 11px !important;
+  margin-top: 3px !important;
+}
+.student-app .schedule-meta-item { display: inline-flex !important; align-items: center !important; gap: 4px !important; }
+
+.student-app .candidate-assessment-list { display: flex !important; flex-direction: column !important; }
+.student-app .candidate-assessment-item {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 14px 17px !important;
+  border-bottom: 1px solid #edf0f4 !important;
+  cursor: pointer !important;
+}
+.student-app .candidate-assessment-item:last-child { border-bottom: 0 !important; }
+.student-app .candidate-assessment-item:hover { background: #fafbfc !important; }
+.student-app .candidate-assessment-main { min-width: 0 !important; }
+.student-app .candidate-assessment-title { font-size: 14px !important; font-weight: 700 !important; color: #222536 !important; }
+.student-app .candidate-assessment-meta { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 4px !important; color: #777b8a !important; font-size: 11px !important; }
+
+.student-app .badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  border-radius: 999px !important;
+  padding: 4px 8px !important;
+  font-size: 9px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.4px !important;
+  background: #f1f2f5 !important;
+  color: #616573 !important;
+  white-space: nowrap !important;
+}
+.student-app .badge-live {
+  background: #e7f0ff !important;
+  color: #1d5fd6 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+.student-app .badge-live::before {
+  content: "" !important;
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 50% !important;
+  background: currentColor !important;
+  animation: badgeLivePulse 1.6s ease-in-out infinite !important;
+}
+.student-app .badge-registered, .student-app .badge-published {
+  background: #def8ee !important;
+  color: #08775b !important;
+}
+.student-app .badge-danger {
+  background: #ffe6ea !important;
+  color: #a30f2e !important;
+}
+.student-app .role-badge {
+  background: #fde8ec !important;
+  color: #a30f2e !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  padding: 4px 9px !important;
+  border-radius: 999px !important;
+  letter-spacing: 0.5px !important;
+  white-space: nowrap !important;
+}
+.student-app .breadcrumbs {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+}
+.student-app .breadcrumbs .sep { color: #c4c6ce !important; margin-left: 6px !important; }
+.student-app .breadcrumbs .current { font-weight: 600 !important; color: #222536 !important; }
+.student-app .header-user {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  border: 0 !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  padding: 4px 8px 4px 4px !important;
+  border-radius: 12px !important;
+  transition: 0.15s !important;
+}
+.student-app .header-user:hover { background: #f4f5f8 !important; }
+.student-app .header-avatar {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 10px !important;
+  background: #fde8ec !important;
+  color: #a30f2e !important;
+  display: grid !important;
+  place-items: center !important;
+  font-weight: 800 !important;
+  font-size: 11px !important;
+}
+.student-app .header-user-name {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: #343746 !important;
+}
+.student-app .icon-btn {
+  position: relative !important;
+  width: 38px !important;
+  height: 38px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: #f4f5f8 !important;
+  color: #565a69 !important;
+  font-size: 18px !important;
+  cursor: pointer !important;
+  display: grid !important;
+  place-items: center !important;
+  transition: 0.15s !important;
+}
+.student-app .icon-btn:hover { background: #ecedf0 !important; }
+.student-app .notif-dot {
+  position: absolute !important;
+  right: -2px !important;
+  top: -2px !important;
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #b31234 !important;
+  border: 2px solid #fff !important;
+}
+

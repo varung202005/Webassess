@@ -127,15 +127,16 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
           <button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open menu">
             <i className="ti ti-menu-2" />
           </button>
-          <div className="topbar-title">
+          <div className="breadcrumbs">
             <span>Student Portal</span>
-            <strong>{routeTitles[location.pathname] ?? "Exam"}</strong>
+            <span className="sep">/</span>
+            <span className="current">{routeTitles[location.pathname] ?? "Dashboard"}</span>
           </div>
           <div className="topbar-actions">
             <div className="notif-wrapper" ref={notifRef}>
-              <button className="topbar-icon" onClick={() => setNotifOpen((o) => !o)} aria-label="Notifications">
+              <button className="icon-btn" onClick={() => setNotifOpen((o) => !o)} aria-label="Notifications">
                 <i className="ti ti-bell" />
-                {unread > 0 && <span>{unread > 9 ? "9+" : unread}</span>}
+                {unread > 0 && <span className="notif-dot" />}
               </button>
               {notifOpen && (
                 <div className="notif-dropdown">
@@ -186,11 +187,12 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
                 </div>
               )}
             </div>
-            <button className="topbar-user" onClick={() => navigate("/student/profile")}>
+            <span className="role-badge">STUDENT</span>
+            <button className="header-user" onClick={() => navigate("/student/profile")}>
               {profile?.profile_photo
-                ? <img src={profile.profile_photo} alt="" className="avatar small" />
-                : <div className="avatar small">{initials(profile?.full_name)}</div>}
-              <span>{profile?.full_name || "Student"}</span>
+                ? <img src={profile.profile_photo} alt="" className="header-avatar" />
+                : <div className="header-avatar">{initials(profile?.full_name)}</div>}
+              <span className="header-user-name">{profile?.full_name?.split(" ")[0] || "Student"}</span>
             </button>
           </div>
         </header>
