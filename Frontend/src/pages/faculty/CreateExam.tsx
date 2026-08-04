@@ -16,6 +16,11 @@
  *   • Pass Marks / No Pass Marks toggle added to Exam Info step — faculty
  *     explicitly choose "Pass Marks" (enter a passing score) or
  *     "No Pass Marks" (every student who completes the exam passes).
+ *   • PDF import duplicate detection — approved rows are matched against
+ *     the existing question bank by normalized text (+ course); a match is
+ *     reused instead of creating a duplicate row, and the review table
+ *     flags matches ("Already in bank") before saving so faculty aren't
+ *     surprised. Matched rows are still added to the exam when flagged.
  */
 
 import { useState, useRef, useCallback, useEffect, type Dispatch, type SetStateAction, type ChangeEvent, type DragEvent, type MouseEvent } from "react";
@@ -151,6 +156,36 @@ function sumMarks(questions: Array<{ marks: unknown }>): number {
 
 function marksEqual(left: unknown, right: unknown): boolean {
   return Math.abs(markValue(left) - markValue(right)) < 0.001;
+}
+
+// Normalize question text for duplicate comparison — case/whitespace
+// insensitive so "What is 2+2?" and "what is   2+2?  " are treated as the
+// same underlying question when checking the bank for an existing match.
+function normalizeQuestionText(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Find an existing bank question that matches an extracted/imported
+ * question by normalized text (and course, when the exam is scoped to
+ * one). Used to avoid creating duplicate rows on PDF import — a match is
+ * reused instead of calling createQuestion again.
+ */
+function findExistingMatch(
+  candidateText: string,
+  courseId: string,
+  pool: Question[],
+): Question | undefined {
+  const normalizedIncoming = normalizeQuestionText(candidateText);
+  if (!normalizedIncoming) return undefined;
+  return pool.find((existing) => {
+    if (normalizeQuestionText(existing.question_text) !== normalizedIncoming) return false;
+    // If this exam is scoped to a course, only treat same-course (or
+    // course-less) bank questions as duplicates — a question banked under a
+    // different course is left alone even if the wording matches.
+    if (courseId) return !existing.course_id || existing.course_id === courseId;
+    return true;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1515,12 +1550,16 @@ function PdfImportPanel({
   extracted, setExtracted,
   error, setError,
   targetMarks, selectedMarksSum,
+  existingQuestions, courseId,
   onImported,
 }: {
   status: ImportStatus; setStatus: (s: ImportStatus) => void;
   extracted: ExtractedQuestion[]; setExtracted: Dispatch<SetStateAction<ExtractedQuestion[]>>;
   error: string; setError: (e: string) => void;
   targetMarks?: number; selectedMarksSum?: number;
+  /** Full current question bank — used to flag rows that already exist. */
+  existingQuestions: Question[];
+  courseId: string;
   onImported: (qs: ExtractedQuestion[]) => Promise<void>;
 }) {
   const [editingQuestion, setEditingQuestion] = useState<ExtractedQuestion | null>(null);
@@ -1635,6 +1674,15 @@ function PdfImportPanel({
     const setQuestionMarks = (id: string, marks: number) =>
       setExtracted((list) => list.map((q) => (q.id === id ? { ...q, marks } : q)));
 
+    // Pre-compute, per extracted row, whether it already exists in the bank —
+    // used to render the "Already in bank" hint and the summary count below.
+    const duplicateMatches = new Map<string, Question>();
+    for (const q of extracted) {
+      const match = findExistingMatch(q.question_text, courseId, existingQuestions);
+      if (match) duplicateMatches.set(q.id, match);
+    }
+    const duplicateCount = duplicateMatches.size;
+
     return (
       <div className="import-review">
         <style>{`
@@ -1656,6 +1704,13 @@ function PdfImportPanel({
           .row-hint {
             font-size: 12px; color: #9ca3af; margin-bottom: 10px;
             display: flex; align-items: center; gap: 6px;
+          }
+          .dup-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            font-size: 10.5px; font-weight: 600; color: #0369a1;
+            background: #f0f9ff; border: 1px solid #bae6fd;
+            border-radius: 5px; padding: 1px 6px; margin-left: 8px;
+            vertical-align: middle; white-space: nowrap;
           }
         `}</style>
 
@@ -1679,6 +1734,12 @@ function PdfImportPanel({
             <span className="is-val" style={{ color: confColor(avgConf) }}>{avgConf}%</span>
             <span className="is-lbl">Avg Confidence</span>
           </div>
+          {duplicateCount > 0 && (
+            <div className="import-summary-card">
+              <span className="is-val" style={{ color: "#0369a1" }}>{duplicateCount}</span>
+              <span className="is-lbl">Already in Bank</span>
+            </div>
+          )}
           <div className="import-summary-card"><span className="is-val">{selectedCount}</span><span className="is-lbl">Selected</span></div>
           <div className="import-summary-card">
             <span className="is-val">{selectedMarksSumFromImport}</span>
@@ -1689,6 +1750,7 @@ function PdfImportPanel({
         <div style={{ fontSize: 12, color: "#6b7280", margin: "-6px 0 14px" }}>
           <i className="ti ti-info-circle" style={{ marginRight: 4 }} />
           Approved questions are always saved to your question bank — marks don't need to add up to anything for that.
+          Rows matching a question you already have will be reused instead of creating a duplicate.
           {typeof targetMarks === "number" && (
             <>
               {" "}Check <strong>Add to Exam</strong> on the questions you also want in this exam
@@ -1725,6 +1787,7 @@ function PdfImportPanel({
               {extracted.map((q) => {
                 const isShortAnswer = q.question_type === "SHORT_ANSWER";
                 const correctAnswers = q.options.filter((o) => o.is_correct).map((o) => o.text);
+                const duplicateOf = duplicateMatches.get(q.id);
                 return (
                   <tr
                     key={q.id}
@@ -1752,6 +1815,14 @@ function PdfImportPanel({
                           <i className="ti ti-photo" style={{ fontSize: 10 }} /> Image
                         </span>
                       )}
+                      {duplicateOf && (
+                        <span
+                          className="dup-chip"
+                          title={`Matches an existing question already in your bank (${duplicateOf.marks} mark${duplicateOf.marks !== 1 ? "s" : ""}, ${duplicateOf.difficulty}). It will be reused instead of creating a duplicate.`}
+                        >
+                          <i className="ti ti-recycle" style={{ fontSize: 10 }} /> Already in bank
+                        </span>
+                      )}
                     </td>
                     <td><span className="q-type-badge">{isShortAnswer ? "FILL-BLANK" : q.question_type}</span></td>
                     <td onClick={(e) => e.stopPropagation()}>
@@ -1762,7 +1833,7 @@ function PdfImportPanel({
                         value={q.marks}
                         onChange={(e) => setQuestionMarks(q.id, +e.target.value)}
                         style={{ width: 56, padding: "4px 6px", border: "1px solid #e5e7eb", borderRadius: 6, fontSize: 13 }}
-                        title="Adjust marks for this question"
+                        title={duplicateOf ? "This question already exists in the bank — its own saved marks will be used, not this value" : "Adjust marks for this question"}
                       />
                     </td>
                     <td className="ans-cell">
@@ -2057,6 +2128,7 @@ function StepQuestions({ courseId, selectedIds, selectedQuestions, targetMarks, 
           extracted={pdfExtracted} setExtracted={setPdfExtracted}
           error={pdfError} setError={setPdfError}
           targetMarks={targetMarks} selectedMarksSum={selectedMarksSum}
+          existingQuestions={allQuestions} courseId={courseId}
           onImported={async (qs) => { await onImported(qs); setTab("select"); }}
         />
       )}
@@ -2603,36 +2675,56 @@ export default function CreateExam() {
     queryClient.invalidateQueries({ queryKey: QUERY_KEYS.questions() });
   };
 
+  // Imported PDF/DOCX rows that were approved by faculty are saved to the
+  // question bank — but never as duplicates. Each row is first checked
+  // against the current bank (server-fetched + locally-added, via
+  // allQuestions) by normalized text + course. A match is reused as-is
+  // instead of calling createQuestion again; only genuinely new questions
+  // get a new row. Either way, rows flagged "Add to Exam" during review end
+  // up selected into this exam's question list.
   const handleImported = async (qs: ExtractedQuestion[]) => {
     for (const q of qs) {
       try {
-        const res  = await facultyApi.createQuestion({
-          course_id: form.course_id || null, question_type: q.question_type,
-          question_text: q.question_text, marks: q.marks, negative_marks: 0,
-          difficulty: q.difficulty,
-          // For SHORT_ANSWER, q.options holds at most one entry (the
-          // expected answer text with is_correct=true) — same shape as
-          // MCQ options, so no special-casing is needed here.
-          options: q.options.map((o, i) => ({ option_text: o.text, is_correct: o.is_correct, order_index: i })),
-          topics: [],
-        });
+        const existingMatch = findExistingMatch(q.question_text, form.course_id, allQuestions);
 
-        // If faculty attached an image during review (via the answer
-        // editor sidebar's image uploader), upload it now that the
-        // question row exists and has an id. Non-fatal on failure — the
-        // question itself is still saved either way.
-        if (q._imageFile) {
-          try {
-            await facultyApi.uploadQuestionImage(res.question_id, q._imageFile);
-          } catch (imgErr) {
-            console.error("Image upload failed for imported question:", q.question_text, imgErr);
+        let full: Question;
+
+        if (existingMatch) {
+          // Reuse the bank's existing question instead of creating a
+          // duplicate. Its own saved marks/options/image win — the PDF's
+          // extracted values for this row are discarded.
+          full = existingMatch;
+        } else {
+          const res = await facultyApi.createQuestion({
+            course_id: form.course_id || null, question_type: q.question_type,
+            question_text: q.question_text, marks: q.marks, negative_marks: 0,
+            difficulty: q.difficulty,
+            // For SHORT_ANSWER, q.options holds at most one entry (the
+            // expected answer text with is_correct=true) — same shape as
+            // MCQ options, so no special-casing is needed here.
+            options: q.options.map((o, i) => ({ option_text: o.text, is_correct: o.is_correct, order_index: i })),
+            topics: [],
+          });
+
+          // If faculty attached an image during review (via the answer
+          // editor sidebar's image uploader), upload it now that the
+          // question row exists and has an id. Non-fatal on failure — the
+          // question itself is still saved either way.
+          if (q._imageFile) {
+            try {
+              await facultyApi.uploadQuestionImage(res.question_id, q._imageFile);
+            } catch (imgErr) {
+              console.error("Image upload failed for imported question:", q.question_text, imgErr);
+            }
           }
+
+          full = await facultyApi.getQuestion(res.question_id);
         }
 
-        const full = await facultyApi.getQuestion(res.question_id);
-        // Every approved question is saved to the repository regardless of
-        // marks. Only the ones explicitly flagged "Add to Exam" during
-        // review are also selected into this exam's question list.
+        // Every approved question ends up in the repository regardless of
+        // marks — whether it was just created or already existed there.
+        // Only the ones explicitly flagged "Add to Exam" during review are
+        // also selected into this exam's question list.
         handleAddNew(full, !!q._addToExam);
       } catch (e) {
         console.error("Failed to save imported question:", q.question_text, e);
