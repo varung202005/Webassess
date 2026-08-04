@@ -1410,9 +1410,9 @@ async def assign_students(
         raise HTTPException(status_code=500, detail="Student role not found.")
     student_role_id = student_role_row["id"]
 
-    privileged_role_ids = {
+    restricted_role_ids = {
         row["id"] for row in (
-            supabase.table("roles").select("id,name").in_("name", list(PRIVILEGED_ROLE_NAMES)).execute().data or []
+            supabase.table("roles").select("id,name").in_("name", ["Faculty", "Admin"]).execute().data or []
         )
     }
 
@@ -1447,17 +1447,17 @@ async def assign_students(
         if existing:
             user_id = existing[0]["id"]
 
-            # Never touch accounts that already hold a privileged role.
+            # Never touch accounts that already hold a Faculty or Admin role.
             current_role_ids = {
                 r["role_id"] for r in (
                     supabase.table("user_roles").select("role_id").eq("user_id", user_id).execute().data or []
                 )
             }
-            if current_role_ids & privileged_role_ids:
+            if current_role_ids & restricted_role_ids:
                 results.append({
                     "email": email,
                     "status": "skipped",
-                    "error": "Account already has a Faculty/Admin/Proctor role and was left unchanged.",
+                    "error": "Account already has a Faculty/Admin role and was left unchanged.",
                 })
                 continue
 

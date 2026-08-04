@@ -288,8 +288,8 @@ export default function LiveExam() {
       await flushAnswers();
       await studentApi.computeProctoringsSummary(session.attempt.id).catch(() => undefined);
       await studentApi.submitAttempt(session.attempt.id, type);
-      const submittedAt = new Date().toISOString();
-      navigate(currentUser?.roles?.includes("CANDIDATE") ? "/candidate/thank-you" : "/student/thank-you", {
+      const isEntrance = session?.exam?.exam_type?.toUpperCase() === "ENTRANCE";
+      navigate(isEntrance ? "/candidate/thank-you" : "/student/thank-you", {
         replace: true,
         state: { submittedAt },
       });

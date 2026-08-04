@@ -102,7 +102,7 @@ export default function PreExamCheck() {
       // its timer) from starting until the browser is actually fullscreen.
       if (!isFullscreen()) await enterFullscreen();
       if (!isFullscreen()) throw new Error("Fullscreen is required before the exam can begin.");
-      if (currentUser?.roles?.includes("CANDIDATE")) await candidateApi.startAttempt();
+      if (currentUser?.roles?.includes("CANDIDATE") && !schedule) await candidateApi.startAttempt();
       else await studentApi.startAttempt(scheduleId);
       navigate(`/exam/live/${scheduleId}`, { replace: true });
     }
