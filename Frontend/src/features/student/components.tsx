@@ -127,3 +127,72 @@ export function downloadResult(result: Result) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+export function StatsRow({
+  items,
+  className,
+}: {
+  items: Array<{
+    label: string;
+    value: string | number;
+    color?: string;
+    icon?: string;
+    meta?: string;
+    trend?: { value: string; up?: boolean };
+  }>;
+  className?: string;
+}) {
+  return (
+    <div className={`stats-grid ${className ?? ""}`}>
+      {items.map((item, i) => (
+        <div key={i} className="stat-card" style={{ "--accent": accentColor(item.color), "--soft": softColor(item.color) } as React.CSSProperties}>
+          <div className="stat-header">
+            <div className="stat-label">{item.label}</div>
+            {item.icon && (
+              <div className="stat-icon" style={{ background: softColor(item.color), color: accentColor(item.color) }}>
+                <i className={`ti ${item.icon}`} />
+              </div>
+            )}
+          </div>
+          <div className="stat-value">{item.value}</div>
+          <div className="stat-meta">
+            {item.trend && (
+              <span className="stat-trend">
+                <i className={`ti ti-${item.trend.up ? "trending-up" : "trending-down"}`} style={{ fontSize: 12 }} />
+                {item.trend.value}
+              </span>
+            )}
+            {item.meta && <span>{item.meta}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function accentColor(color?: string): string {
+  const map: Record<string, string> = {
+    navy: "#4f55a8",
+    red: "#b31234",
+    primary: "#b31234",
+    warning: "#94600a",
+    danger: "#a30f2e",
+    success: "#08775b",
+    info: "#2152b3",
+  };
+  return map[color ?? ""] ?? "#b31234";
+}
+
+function softColor(color?: string): string {
+  const map: Record<string, string> = {
+    navy: "#eeefff",
+    red: "#fde8ec",
+    primary: "#fde8ec",
+    warning: "#fff3d8",
+    danger: "#ffe6ea",
+    success: "#def8ee",
+    info: "#f0f4ff",
+  };
+  return map[color ?? ""] ?? "#fde8ec";
+}
+
