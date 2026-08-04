@@ -2123,7 +2123,14 @@ function StepRules({ rules, onChange }: {
         <div className="rule-label">{label}</div>
         {type === "bool" ? (
           <label className="toggle-switch">
-            <input type="checkbox" checked={!!rules[key]} onChange={(e) => onChange({ ...rules, [key]: e.target.checked })} />
+            <input type="checkbox" checked={!!rules[key]} onChange={(e) => {
+              const checked = e.target.checked;
+              onChange(
+                key === "enable_proctoring"
+                  ? { ...rules, enable_proctoring: checked, camera_required: checked, microphone_required: checked }
+                  : { ...rules, [key]: checked },
+              );
+            }} />
             <span className="toggle-slider" />
           </label>
         ) : (
@@ -2165,8 +2172,9 @@ function StepRules({ rules, onChange }: {
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-shield" /> Proctoring</h4>
           {rule("enable_proctoring",   "Enable AI proctoring")}
-          {rule("camera_required",     "Require camera access")}
-          {rule("microphone_required", "Require microphone")}
+          <span className="field-hint" style={{ display: "block", marginTop: -4, fontSize: 12, color: "#888" }}>
+            Enabling AI proctoring automatically requires camera and microphone access.
+          </span>
         </div>
         <div className="rules-section">
           <h4 className="rules-section-title"><i className="ti ti-browser" /> Browser Integrity</h4>
@@ -2650,7 +2658,12 @@ export default function CreateExam() {
 };
 
       // Always force require_fullscreen true — platform-level rule
-      const rulesPayload = { ...rules, require_fullscreen: true };
+      const rulesPayload = {
+        ...rules,
+        require_fullscreen: true,
+        camera_required: rules.enable_proctoring,
+        microphone_required: rules.enable_proctoring,
+      };
 
       let targetExamId: string;
 
