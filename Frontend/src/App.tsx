@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ProtectedRoute from "./routes/ProtectedRoute";
 
 import Login from "./pages/auth/Login";
@@ -36,9 +36,11 @@ import LiveExam from "./pages/exam/LiveExam";
 import PreExamCheck from "./pages/exam/PreExamCheck";
 import NotFound from "./pages/NotFound";
 
-export default function App() {
+function AppRoutes() {
+  const location = useLocation();
+
   return (
-    <BrowserRouter>
+    <div className="route-transition" key={location.pathname}>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
@@ -85,6 +87,10 @@ export default function App() {
         <Route path="*" element={<NotFound />} />
 
       </Routes>
-    </BrowserRouter>
+    </div>
   );
+}
+
+export default function App() {
+  return <BrowserRouter><AppRoutes /></BrowserRouter>;
 }

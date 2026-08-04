@@ -4,6 +4,8 @@
 
 html, body, #root { height: 100%; }
 
+html { scroll-behavior: smooth; }
+
 body {
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
@@ -14,6 +16,41 @@ body {
 button { font-family: var(--font); cursor: pointer; }
 
 a { color: inherit; text-decoration: none; }
+
+/* A light interaction layer shared by every portal. Motion is intentionally
+   brief and functional: route changes and expandable UI feel responsive
+   without turning the assessment experience into a distracting animation. */
+.route-transition { animation: page-enter 180ms ease-out both; }
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+
+button:not(:disabled):active,
+a:active { transform: translateY(1px); }
+
+/* Native disclosure widgets are used for compact issue/help panels where
+   present; the marker and content ease in rather than abruptly appearing. */
+details > summary { cursor: pointer; }
+details[open] > :not(summary) { animation: issue-reveal 160ms ease-out both; }
+
+@keyframes issue-reveal {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 /* ----------------------------------------------------------------
    Shared status badge classes — used across exam/result/attempt
