@@ -23,6 +23,7 @@ export interface Exam {
   course_id: string;
   semester?: number | null;
   exam_rules?: ExamRule[] | ExamRule | null;
+  exam_type?: string;   // e.g. "REGULAR" | "ENTRANCE" — used to branch post-submit routing
   courses?: { name: string; code: string };
 }
 
@@ -30,6 +31,9 @@ export interface ExamRule {
   auto_save_interval_sec?: number;
   fullscreen_required?: boolean;
   tab_switch_limit?: number;
+  enable_proctoring?: boolean;   // single toggle — camera + mic both derive from this
+  max_tab_switches?: number;
+  max_fullscreen_exits?: number;
 }
 
 export interface Registration {

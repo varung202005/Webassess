@@ -7,6 +7,11 @@
  *     the answer options — fullscreen-safe, zoom-on-click, anti-screenshot
  *     watermark inherits from the parent overlay.
  *   • All proctoring, force-submit, and browser-monitor logic is unchanged.
+ *   • NEW: `examEnding` flag stops rendering WebcamCapture / AudioMonitor /
+ *     BrowserMonitor the instant submission begins, instead of waiting for
+ *     the post-submit navigate() to unmount the page. Previously the camera
+ *     stayed on for the full flushAnswers → computeProctoringsSummary →
+ *     submitAttempt round trip after the student clicked "Confirm Submit".
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -60,15 +65,15 @@ function getRule(session: any): ExamRule {
   return {
     fullscreen_required:    raw?.require_fullscreen     ?? true,
     proctoring_enabled:     raw?.enable_proctoring      ?? false,
-    camera_required:        raw?.camera_required        ?? false,
-    microphone_required:    raw?.microphone_required    ?? false,
+    camera_required:        raw?.enable_proctoring      ?? false,
+    microphone_required:    raw?.enable_proctoring      ?? false,
     max_tab_switches:       raw?.max_tab_switches       ?? 3,
     max_fullscreen_exits:   raw?.max_fullscreen_exits   ?? 3,
     auto_save_interval_sec: raw?.auto_save_interval_sec ?? 30,
   };
 }
 
-// ── NEW: QuestionImage ─────────────────────────────────────────────────────────
+// ── QuestionImage ─────────────────────────────────────────────────────────
 //
 // Renders the image attached to a question between the stem and the options.
 // Clicking the image opens a lightbox overlay for a better look — useful for
@@ -200,6 +205,13 @@ export default function LiveExam() {
 
   const [warnings,        setWarnings]        = useState<ViolationWarning[]>([]);
 
+  // NEW: flips true the instant submission starts (before the network calls
+  // resolve), so the camera/mic/browser monitors stop immediately instead of
+  // staying active through flushAnswers → computeProctoringsSummary →
+  // submitAttempt. Resets to false if submission fails so proctoring resumes
+  // for the remainder of the (still-live) attempt.
+  const [examEnding,    setExamEnding]    = useState(false);
+
   const dirty              = useRef(new Set<string>());
   const submitted          = useRef(false);
   const enteredAt          = useRef(Date.now());
@@ -284,6 +296,10 @@ export default function LiveExam() {
     submitted.current = true;
     setSubmitting(true);
     setError(null);
+    // Stop camera/mic/browser monitoring right away — the student has
+    // committed to submitting, so there's no reason to keep the webcam
+    // light on while we talk to the backend.
+    setExamEnding(true);
     try {
       await flushAnswers();
       await studentApi.computeProctoringsSummary(session.attempt.id).catch(() => undefined);
@@ -298,6 +314,8 @@ export default function LiveExam() {
       submitted.current = false;
       setError(apiMessage(cause));
       setSubmitting(false);
+      // Submission failed — the attempt is still live, so resume proctoring.
+      setExamEnding(false);
     }
   }, [session, navigate, flushAnswers, currentUser?.roles]);
 
@@ -575,7 +593,7 @@ export default function LiveExam() {
           </div>
           <div className="proctor-indicator">
             <div className="proctor-dot" />
-            <span>Monitored</span>
+            <span>{examEnding ? "Submitting" : "Monitored"}</span>
           </div>
           <button className="header-submit" onClick={() => setSubmitOpen(true)}>
             Submit exam
@@ -679,7 +697,16 @@ export default function LiveExam() {
         </main>
       </div>
 
-      {session && (
+      {/*
+        Proctoring monitors — camera/mic/browser tracking.
+        Gated on `!examEnding` so they unmount (and stop their tracks — see
+        the cleanup functions in WebcamCapture/AudioMonitor/BrowserMonitor)
+        the instant submission begins, rather than staying active through
+        the flushAnswers → computeProctoringsSummary → submitAttempt round
+        trip. This is what turns the camera off promptly when the exam ends,
+        instead of only once navigate() unmounts the whole page afterward.
+      */}
+      {session && !examEnding && (
         <>
           <WebcamCapture
             attemptId={session.attempt.id}
