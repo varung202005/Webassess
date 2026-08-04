@@ -306,6 +306,87 @@ export function FlaggedTable({ attempts, loading, onVerdict, pendingId }: Flagge
  *   - Audio Noise → the logged noise events from audio_monitoring_logs
  *     (no photo — shows dB level / notes / timestamp instead).
  */
+function AudioEvidenceList({
+  rows,
+}: {
+  rows: {
+    noise_level_db: number | null;
+    notes: string | null;
+    detected_at: string;
+    audio_url?: string | null;
+    transcript?: string | null;
+  }[];
+}) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {rows.map((r, i) => {
+        const isExpanded = expanded === i;
+        return (
+          <div key={i} style={{ background: "#f8f9fb", borderRadius: 8, padding: "8px 12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+              <span>{r.notes ?? "Noise detected"}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#888", whiteSpace: "nowrap" }}>
+                  {r.noise_level_db != null ? `${r.noise_level_db} dB · ` : ""}{relativeTime(r.detected_at)}
+                </span>
+                {r.audio_url && (
+                  <button
+                    type="button"
+                    title={isExpanded ? "Hide clip" : "Play clip"}
+                    onClick={() => setExpanded(isExpanded ? null : i)}
+                    style={{
+                      border: "none",
+                      background: isExpanded ? "#ede9fe" : "#eee",
+                      color: isExpanded ? "#6d28d9" : "#555",
+                      borderRadius: 5,
+                      padding: "2px 7px",
+                      cursor: "pointer",
+                      fontSize: 11,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <i className={`ti ti-${isExpanded ? "chevron-up" : "player-play"}`} style={{ fontSize: 10 }} />
+                    {isExpanded ? "Hide" : "Play"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {isExpanded && r.audio_url && (
+              <div style={{
+                marginTop: 8,
+                background: "#faf5ff",
+                border: "1px solid #ddd6fe",
+                borderRadius: 7,
+                padding: "8px 10px",
+              }}>
+                <audio
+                  controls
+                  autoPlay
+                  src={r.audio_url}
+                  style={{ width: "100%", height: 32 }}
+                  preload="metadata"
+                />
+                {r.transcript && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#374151", fontStyle: "italic", lineHeight: 1.5 }}>
+                    <i className="ti ti-quote" style={{ fontSize: 10, marginRight: 4, color: "#9ca3af" }} />
+                    {r.transcript}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EvidenceModal({
   attemptId,
   studentName: name,
@@ -335,7 +416,7 @@ function EvidenceModal({
       if (isAudio) {
         const { data, error } = await supabase
           .from("audio_monitoring_logs")
-          .select("noise_level_db,notes,detected_at")
+          .select("noise_level_db,notes,detected_at,audio_url,transcript")
           .eq("attempt_id", attemptId)
           .eq("noise_detected", true)
           .order("detected_at", { ascending: false })
@@ -415,16 +496,15 @@ function EvidenceModal({
             }
           </div>
         ) : isAudio ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(rows as { noise_level_db: number | null; notes: string | null; detected_at: string }[]).map((r, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8f9fb", borderRadius: 8, fontSize: 13 }}>
-                <span>{r.notes ?? "Noise detected"}</span>
-                <span style={{ color: "#888", whiteSpace: "nowrap", marginLeft: 12 }}>
-                  {r.noise_level_db != null ? `${r.noise_level_db} dB · ` : ""}{relativeTime(r.detected_at)}
-                </span>
-              </div>
-            ))}
-          </div>
+          <AudioEvidenceList
+            rows={rows as {
+              noise_level_db: number | null;
+              notes: string | null;
+              detected_at: string;
+              audio_url?: string | null;
+              transcript?: string | null;
+            }[]}
+          />
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
             {(rows as { snapshot_url: string | null; person_count: number; face_detected: boolean; checked_at: string }[]).map((r, i) => (

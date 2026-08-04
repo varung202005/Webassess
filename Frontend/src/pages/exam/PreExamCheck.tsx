@@ -67,9 +67,15 @@ export default function PreExamCheck() {
   const verifyCamera = async () => {
     setError(null); setCamera("checking"); setFraming("checking");
     try {
+      const rawRules = Array.isArray(schedule?.exam?.exam_rules)
+        ? schedule.exam.exam_rules[0]
+        : schedule?.exam?.exam_rules;
+      const micRequired = rawRules?.microphone_required ?? false;
+
       streamRef.current?.getTracks().forEach((track) => track.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false,
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: micRequired,
       });
       streamRef.current = stream;
       const video = videoRef.current!;

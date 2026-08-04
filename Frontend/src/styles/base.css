@@ -77,8 +77,8 @@ a { color: inherit; text-decoration: none; }
 .route-transition { animation: page-enter 180ms ease-out both; }
 
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
