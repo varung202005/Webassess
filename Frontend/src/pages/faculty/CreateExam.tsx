@@ -405,7 +405,6 @@ function RepositoryOverview({ portal }: {
         <StatCard label="True / False"        value={byType.TRUE_FALSE  ?? 0} icon="ti-toggle-left" color="#059669" />
         <StatCard label="Fill in the Blank"   value={byType.SHORT_ANSWER ?? 0} icon="ti-forms"       color="#b45309" />
         <StatCard label="Active"              value={qs?.active         ?? 0} icon="ti-circle-check" color="#d97706" />
-        <StatCard label="Courses Covered"     value={portal?.courses?.length ?? 0} icon="ti-book"  color="#0891b2" />
       </div>
     </div>
   );
@@ -2749,8 +2748,9 @@ const canProceed = () => {
     else saveExam();
   };
 
-  const [pageTab,    setPageTab]    = useState<"create" | "drafts">("create");
+  const [pageTab,    setPageTab]    = useState<"choose" | "create" | "drafts">("choose");
   const [draftCount, setDraftCount] = useState(() => loadDrafts().length);
+  const isExamBuilderModal = !isEditMode && pageTab === "create";
 
   const handleResumeDraftAndSwitch = (draft: ExamDraft) => {
     handleResumeDraft(draft);
@@ -2781,24 +2781,39 @@ const canProceed = () => {
           {!isEditMode && <RepositoryOverview portal={portal} />}
 
           <div className="workspace-card">
-            {!examId && !isEditMode && (
-              <div className="page-tabs">
-                <button className={`page-tab ${pageTab === "create" ? "active" : ""}`}
-                  onClick={() => setPageTab("create")} type="button">
-                  <i className="ti ti-plus" /> Create New Exam
-                </button>
-                <button className={`page-tab ${pageTab === "drafts" ? "active" : ""}`}
-                  onClick={() => { setDraftCount(loadDrafts().length); setPageTab("drafts"); }} type="button">
-                  <i className="ti ti-file-pencil" /> Saved Drafts
-                  {draftCount > 0 && <span className="page-tab-badge">{draftCount}</span>}
-                </button>
+            {pageTab === "choose" && !examId && !isEditMode && (
+              <div className="exam-start-choice">
+                <div className="exam-start-choice-copy">
+                  <h2>Choose an option</h2>
+                  <p>Start a new exam from scratch or continue work you saved earlier.</p>
+                </div>
+                <div className="exam-start-choice-actions">
+                  <button className="exam-start-button exam-start-button-primary" onClick={() => setPageTab("create")} type="button">
+                    <span className="exam-start-button-icon"><i className="ti ti-plus" /></span>
+                    <span><strong>Create New Exam</strong><small>Set up questions, rules, schedule, and proctoring</small></span>
+                    <i className="ti ti-arrow-right exam-start-button-arrow" />
+                  </button>
+                  <button className="exam-start-button" onClick={() => { setDraftCount(loadDrafts().length); setPageTab("drafts"); }} type="button">
+                    <span className="exam-start-button-icon"><i className="ti ti-file-pencil" /></span>
+                    <span><strong>Saved Drafts {draftCount > 0 && <em>{draftCount}</em>}</strong><small>{draftCount > 0 ? "Continue an exam you started earlier" : "No saved exams yet"}</small></span>
+                    <i className="ti ti-arrow-right exam-start-button-arrow" />
+                  </button>
+                </div>
               </div>
             )}
 
             {pageTab === "drafts" && !examId && !isEditMode && (
+              <div className="exam-builder-modal" role="dialog" aria-modal aria-label="Saved exam drafts">
+              <div className="exam-builder-modal-dialog exam-drafts-modal-dialog">
               <div className="workspace-body">
-                <div className="step-header">
-                  <h3>Saved Drafts</h3>
+                <div className="step-header exam-drafts-modal-head">
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                    <h3>Saved Drafts</h3>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button className="btn btn-sm btn-primary" onClick={() => setPageTab("create")} type="button"><i className="ti ti-plus" /> Create New Exam</button>
+                      <button className="exam-modal-close" onClick={() => setPageTab("choose")} type="button" aria-label="Close saved drafts" title="Close saved drafts"><i className="ti ti-x" /><span>Close</span></button>
+                    </div>
+                  </div>
                   <p>Resume any in-progress exam or delete ones you no longer need.</p>
                 </div>
                 <DraftsList
@@ -2808,10 +2823,13 @@ const canProceed = () => {
                   onRefresh={() => setDraftCount(loadDrafts().length)}
                 />
               </div>
+              </div>
+              </div>
             )}
 
             {(pageTab === "create" || !!examId || isEditMode) && (
-              <>
+              <div className={isExamBuilderModal ? "exam-builder-modal" : ""} role={isExamBuilderModal ? "dialog" : undefined} aria-modal={isExamBuilderModal || undefined} aria-label={isExamBuilderModal ? "Create new exam" : undefined}>
+              <div className={isExamBuilderModal ? "exam-builder-modal-dialog" : ""}>
                 <div className="workspace-header">
                   <div>
                     <h2 className="workspace-title">
@@ -2826,8 +2844,8 @@ const canProceed = () => {
                     </p>
                   </div>
                   {!justSaved && (
-                    <button className="btn btn-sm btn-ghost" onClick={() => navigate("/faculty/dashboard")} type="button">
-                      <i className="ti ti-x" /> Cancel
+                    <button className="exam-modal-close" onClick={() => isEditMode ? navigate("/faculty/dashboard") : setPageTab("choose")} type="button" aria-label="Close exam builder" title="Close exam builder">
+                      <i className="ti ti-x" /><span>Close</span>
                     </button>
                   )}
                 </div>
@@ -2922,7 +2940,8 @@ const canProceed = () => {
                     </button>
                   </div>
                 )}
-              </>
+              </div>
+              </div>
             )}
           </div>
         </div>

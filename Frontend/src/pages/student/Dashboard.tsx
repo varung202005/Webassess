@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import StudentLayout, { EmptyState, PageState } from "../../features/student/StudentLayout";
-import { CountdownCard, PageHeading } from "../../features/student/components";
+import { PageHeading } from "../../features/student/components";
 import { formatDate } from "../../features/student/format";
 import { useStudentPortal } from "../../features/student/hooks";
 
@@ -22,8 +22,6 @@ export default function Dashboard() {
     item.can_register &&
     new Date(item.end_time).getTime() > now
   ) ?? [];
-
-  const next = [...registeredUpcoming].sort((a, b) => +new Date(a.start_time) - +new Date(b.start_time))[0];
 
   const passed = data?.results.filter((item) => item.is_passed).length ?? 0;
   const average = data?.results.length
@@ -61,68 +59,56 @@ export default function Dashboard() {
           <Stat label="Average Score" value={data?.results.length ? `${average.toFixed(1)}%` : "—"} detail={trend == null ? "Awaiting comparable results" : `${trend >= 0 ? "+" : ""}${trend.toFixed(1)}% vs previous results`} icon="ti-chart-line" trend={trend} />
         </div>
 
-        <div className="dashboard-grid">
-          <div className="dashboard-left dashboard-exam-groups">
-            {/* Section 1: Registered Upcoming */}
-            <section className="panel">
-              <div className="panel-header">
-                <i className="ti ti-calendar-check" />
-                <h2>Registered/Upcoming Exams</h2>
-                <Link to="/student/registered">View all</Link>
-              </div>
-              <div className="panel-body">
-                {!registeredUpcoming.length
-                  ? <EmptyState icon="ti-calendar-off" title="No upcoming registered exams" body="Register for available exams before the deadline." />
-                  : registeredUpcoming.slice(0, 3).map((item) => (
-                    <div className="schedule-row" key={item.id}>
-                      <div>
-                        <div className="eyebrow">{item.course.code || "Course"} · {item.course.name}</div>
-                        <h3>{item.exam.title}</h3>
-                        <div className="meta-line">
-                          <span><i className="ti ti-calendar" />{formatDate(item.start_time, true)}</span>
-                          <span><i className="ti ti-clock" />{item.exam.duration_minutes} min</span>
-                        </div>
-                      </div>
-                      <div className="schedule-actions">
-                        <button className="btn btn-secondary" onClick={() => navigate("/student/registered")}>View</button>
+        <div className="dashboard-grid student-dashboard-grid">
+          <section className="panel student-dashboard-panel">
+            <div className="panel-header">
+              <i className="ti ti-calendar-check" />
+              <h2>Registered / Upcoming Exams</h2>
+              <Link to="/student/registered">View all</Link>
+            </div>
+            <div className="panel-body">
+              {!registeredUpcoming.length
+                ? <EmptyState icon="ti-calendar-off" title="No upcoming registered exams" body="Register for available exams before the deadline." />
+                : registeredUpcoming.slice(0, 3).map((item) => (
+                  <div className="schedule-row" key={item.id}>
+                    <div>
+                      <div className="eyebrow">{item.course.code || "Course"} · {item.course.name}</div>
+                      <h3>{item.exam.title}</h3>
+                      <div className="meta-line">
+                        <span><i className="ti ti-calendar" />{formatDate(item.start_time, true)}</span>
+                        <span><i className="ti ti-clock" />{item.exam.duration_minutes} min</span>
                       </div>
                     </div>
-                  ))}
-              </div>
-            </section>
+                    <div className="schedule-actions"><button className="btn btn-secondary" onClick={() => navigate("/student/registered")}>View</button></div>
+                  </div>
+                ))}
+            </div>
+          </section>
 
-            {/* Section 2: Available to Register */}
-            <section className="panel dashboard-section">
-              <div className="panel-header">
-                <i className="ti ti-clipboard-list" />
-                <h2>Available to Register</h2>
-                <Link to="/student/exams">Browse all</Link>
-              </div>
-              <div className="panel-body">
-                {!availableToRegister.length
-                  ? <EmptyState icon="ti-file-search" title="No exams available" body="Check back later for new exams open for registration." />
-                  : availableToRegister.slice(0, 3).map((item) => (
-                    <div className="schedule-row" key={item.id}>
-                      <div>
-                        <div className="eyebrow">{item.course.code || "Course"} · {item.course.name}</div>
-                        <h3>{item.exam.title}</h3>
-                        <div className="meta-line">
-                          <span><i className="ti ti-calendar" />{formatDate(item.start_time, true)}</span>
-                          <span><i className="ti ti-clock" />{item.exam.duration_minutes} min</span>
-                        </div>
-                      </div>
-                      <div className="schedule-actions">
-                        <button className="btn btn-primary" onClick={() => navigate("/student/exams")}>Register</button>
+          <section className="panel student-dashboard-panel">
+            <div className="panel-header">
+              <i className="ti ti-clipboard-list" />
+              <h2>Available to Register</h2>
+              <Link to="/student/exams">Browse all</Link>
+            </div>
+            <div className="panel-body">
+              {!availableToRegister.length
+                ? <EmptyState icon="ti-file-search" title="No exams available" body="Check back later for new exams open for registration." />
+                : availableToRegister.slice(0, 3).map((item) => (
+                  <div className="schedule-row" key={item.id}>
+                    <div>
+                      <div className="eyebrow">{item.course.code || "Course"} · {item.course.name}</div>
+                      <h3>{item.exam.title}</h3>
+                      <div className="meta-line">
+                        <span><i className="ti ti-calendar" />{formatDate(item.start_time, true)}</span>
+                        <span><i className="ti ti-clock" />{item.exam.duration_minutes} min</span>
                       </div>
                     </div>
-                  ))}
-              </div>
-            </section>
-          </div>
-
-          <div className="dashboard-right">
-            {next && <CountdownCard schedule={next} />}
-          </div>
+                    <div className="schedule-actions"><button className="btn btn-primary" onClick={() => navigate("/student/exams")}>Register</button></div>
+                  </div>
+                ))}
+            </div>
+          </section>
         </div>
       </PageState>
     </StudentLayout>

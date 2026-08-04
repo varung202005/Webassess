@@ -89,6 +89,11 @@ def sanitize(text: str | None) -> str | None:
     return _strip_bold_markers(text)
 
 
+def normalize_question_text(text: str | None) -> str:
+    """Create a stable comparison key for duplicate question detection."""
+    return " ".join((sanitize(text) or "").casefold().split())
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class OptionCreate(BaseModel):
@@ -197,6 +202,17 @@ async def create_question(
     current_user: dict = Depends(require_faculty),
 ):
     supabase = get_supabase_admin()
+
+    normalized_text = normalize_question_text(body.question_text)
+    existing_questions = (
+        supabase.table("questions")
+        .select("id, question_text")
+        .eq("created_by", current_user["user_id"])
+        .execute()
+        .data
+    ) or []
+    if any(normalize_question_text(row.get("question_text")) == normalized_text for row in existing_questions):
+        raise HTTPException(status_code=409, detail="This question already exists in your repository.")
 
     # FIX: sanitize() removes U+0000 null bytes and repairs ligature glyphs
     # that PDF extraction can embed in text, which PostgreSQL rejects with
