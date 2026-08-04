@@ -655,7 +655,7 @@ export default function LiveExam() {
                   <button className={currentAnswer.is_marked_for_review ? "flagged" : ""} onClick={() => changeAnswer({ is_marked_for_review: !currentAnswer.is_marked_for_review })}>
                     <i className="ti ti-flag" />{currentAnswer.is_marked_for_review ? "Marked for review" : "Mark for review"}
                   </button>
-                  <button onClick={() => changeAnswer({ selected_option_id: null, selected_option_ids: [], answer_text: "" })}>
+                  <button className="clear-response" onClick={() => changeAnswer({ selected_option_id: null, selected_option_ids: [], answer_text: "" })}>
                     <i className="ti ti-eraser" />Clear response
                   </button>
                 </div>
