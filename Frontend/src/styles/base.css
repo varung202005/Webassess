@@ -17,6 +17,60 @@ button { font-family: var(--font); cursor: pointer; }
 
 a { color: inherit; text-decoration: none; }
 
+.date-time-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, .72fr);
+  gap: 8px;
+}
+
+.date-time-field select { cursor: pointer; }
+
+.time-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 3px 7px;
+  border: 1px solid var(--c-gray-300);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.time-spinner-part { display: grid; grid-template-rows: 15px 18px 15px; justify-items: center; }
+.time-spinner-part button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--c-gray-600);
+  font-size: 13px;
+}
+.time-spinner-part button:hover { background: var(--c-primary-100); color: var(--c-primary-700); }
+.time-spinner-part input {
+  width: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--c-gray-900);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  outline: 0;
+}
+.time-spinner-separator { padding-bottom: 1px; color: var(--c-gray-500); font-weight: 800; }
+.time-spinner-period { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border: 1px solid var(--c-gray-300); border-radius: 5px; }
+.time-spinner-period button { min-width: 32px; padding: 3px 5px; border: 0; background: #fff; color: var(--c-gray-600); font-size: 10px; font-weight: 750; }
+.time-spinner-period button + button { border-left: 1px solid var(--c-gray-300); }
+.time-spinner-period button.active { background: var(--c-primary-700); color: #fff; }
+
+@media (max-width: 540px) {
+  .date-time-field { grid-template-columns: 1fr; }
+}
+
 /* A light interaction layer shared by every portal. Motion is intentionally
    brief and functional: route changes and expandable UI feel responsive
    without turning the assessment experience into a distracting animation. */

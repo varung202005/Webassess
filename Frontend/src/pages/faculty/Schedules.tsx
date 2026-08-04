@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
+import DateTimeField from "../../components/DateTimeField";
 import { PageState, EmptyState, Feedback } from "../../features/faculty/components";
 import { useFacultyDashboard, useSchedules, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
@@ -384,32 +385,20 @@ function CreateScheduleModal({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="form-field">
               <label>Start Time *</label>
-              <input
-                type="datetime-local"
-                className="form-input"
-                value={form.start_time}
-                onChange={(e) => set({ start_time: e.target.value })}
-              />
+              <DateTimeField value={form.start_time} ariaLabel="Start time" required
+                onChange={(start_time) => set({ start_time })} />
             </div>
             <div className="form-field">
               <label>End Time *</label>
-              <input
-                type="datetime-local"
-                className="form-input"
-                value={form.end_time}
-                onChange={(e) => set({ end_time: e.target.value })}
-              />
+              <DateTimeField value={form.end_time} ariaLabel="End time" required
+                onChange={(end_time) => set({ end_time })} />
             </div>
           </div>
 
           <div className="form-field">
             <label>Registration Deadline (optional)</label>
-            <input
-              type="datetime-local"
-              className="form-input"
-              value={form.registration_deadline}
-              onChange={(e) => set({ registration_deadline: e.target.value })}
-            />
+            <DateTimeField value={form.registration_deadline} ariaLabel="Registration deadline"
+              onChange={(registration_deadline) => set({ registration_deadline })} />
             <span style={{ fontSize: 11, color: "#888", marginTop: 3, display: "block" }}>
               Defaults to exam start time if left blank.
             </span>

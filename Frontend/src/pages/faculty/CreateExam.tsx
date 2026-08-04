@@ -22,6 +22,7 @@ import { useState, useRef, useCallback, useEffect, type Dispatch, type SetStateA
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import FacultyLayout from "../../features/faculty/FacultyLayout";
+import DateTimeField from "../../components/DateTimeField";
 import { PageState } from "../../features/faculty/components";
 import { useFacultyDashboard, useQuestions, QUERY_KEYS } from "../../features/faculty/hooks";
 import { facultyApi } from "../../features/faculty/api";
@@ -2209,18 +2210,18 @@ function StepSchedule({ schedule, onChange }: {
       <div className="form-grid-2col">
         <div className="form-field">
           <label>Start Time *</label>
-          <input type="datetime-local" className="form-input"
-            value={schedule.start_time} onChange={(e) => onChange({ start_time: e.target.value })} />
+          <DateTimeField value={schedule.start_time} ariaLabel="Start time"
+            onChange={(start_time) => onChange({ start_time })} required />
         </div>
         <div className="form-field">
           <label>End Time *</label>
-          <input type="datetime-local" className="form-input"
-            value={schedule.end_time} onChange={(e) => onChange({ end_time: e.target.value })} />
+          <DateTimeField value={schedule.end_time} ariaLabel="End time"
+            onChange={(end_time) => onChange({ end_time })} required />
         </div>
         <div className="form-field">
           <label>Registration Deadline <span style={{ fontWeight: 400, color: "#aaa" }}>(optional)</span></label>
-          <input type="datetime-local" className="form-input"
-            value={schedule.registration_deadline} onChange={(e) => onChange({ registration_deadline: e.target.value })} />
+          <DateTimeField value={schedule.registration_deadline} ariaLabel="Registration deadline"
+            onChange={(registration_deadline) => onChange({ registration_deadline })} />
           <span className="field-hint">Leave blank to allow registration up until exam start.</span>
         </div>
       </div>
