@@ -48,6 +48,19 @@ async def list_users(
     return result.data
 
 
+@router.get("/me")
+async def get_my_profile(current_user: dict = Depends(get_current_user_with_roles)):
+    """
+    Get the authenticated user's own profile.
+    BACKEND responsibility.
+    """
+    supabase = get_supabase_admin()
+    result = supabase.table("users").select("*").eq("id", current_user["user_id"]).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="User not found")
+    return result.data
+
+
 @router.get("/{user_id}")
 async def get_user(user_id: UUID, current_user: dict = Depends(get_current_user_with_roles)):
     """

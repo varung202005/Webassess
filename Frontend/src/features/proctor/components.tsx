@@ -318,9 +318,13 @@ function EvidenceModal({
   onClose: () => void;
 }) {
   const isAudio   = issue === "Audio Noise";
-  // Tab Limit and Fullscreen Exit are pure browser events — no camera snapshot
-  // is ever captured for them, so skip the face_verification_logs query entirely.
-  const isBrowser = issue === "Tab Limit" || issue === "Fullscreen Exit";
+  const isBrowser =
+    issue === "Tab Limit" ||
+    issue === "Fullscreen Exit" ||
+    issue === "Focus Lost" ||
+    issue === "Clipboard" ||
+    issue === "Screenshot" ||
+    issue === "Print";
 
   const { data: rows, isLoading } = useQuery({
     queryKey: ["evidence", attemptId, issue],
@@ -493,7 +497,6 @@ export function StudentsPanel({
           <tr>
             <th>Student</th>
             <th>Tab Switches</th>
-            <th>Focus Loss</th>
             <th>Fullscreen Exits</th>
             <th>Clipboard / Print</th>
             <th>Screenshots</th>
@@ -523,15 +526,6 @@ export function StudentsPanel({
                 >
                   <i className="ti ti-arrows-left-right" style={{ fontSize: 9, marginRight: 3 }} />
                   {s.tab_switch_count}
-                </span>
-              </td>
-              <td>
-                <span
-                  className={`issue-chip${s.focus_loss_count > 0 ? " audio" : ""}`}
-                  style={s.focus_loss_count === 0 ? { background: "#f3f4f6", color: "#999" } : undefined}
-                >
-                  <i className="ti ti-focus-2" style={{ fontSize: 9, marginRight: 3 }} />
-                  {s.focus_loss_count}
                 </span>
               </td>
               <td>

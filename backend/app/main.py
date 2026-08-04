@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.api.v1.router import api_router
+from app.core.security import get_current_user_with_roles
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,50 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 # Mount all API routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+@app.get("/users/me")
+async def get_me_fallback(
+    request: Request,
+    current_user: dict = Depends(get_current_user_with_roles),
+):
+    """
+    Fallback route for GET /users/me (without /api/v1 prefix).
+    """
+    from app.db.supabase import get_supabase_admin
+    from fastapi import HTTPException
+    supabase = get_supabase_admin()
+    result = supabase.table("users").select("*").eq("id", current_user["user_id"]).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="User not found")
+    return result.data
+
+
+@app.patch("/users/me")
+async def patch_me_fallback(
+    request: Request,
+    current_user: dict = Depends(get_current_user_with_roles),
+):
+    """
+    Fallback route for PATCH /users/me (without /api/v1 prefix).
+    """
+    from app.db.supabase import get_supabase_admin
+    from app.api.v1.endpoints.users import UserProfileUpdate
+    from fastapi import HTTPException
+    
+    body = UserProfileUpdate(**await request.json())
+    supabase = get_supabase_admin()
+    update_data = body.model_dump(exclude_none=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = (
+        supabase.table("users")
+        .update(update_data)
+        .eq("id", current_user["user_id"])
+        .execute()
+    )
+    return result.data[0]
 
 
 @app.get("/health")
