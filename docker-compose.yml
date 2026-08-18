@@ -1,0 +1,37 @@
+# Place this file at the PROJECT ROOT (same level as Frontend/ and backend/)
+# Run with:  docker compose up -d --build
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: webassess-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env          # <-- your real secrets stay OUTSIDE the image, only used at runtime
+    ports:
+      - "8000:8000"
+    networks:
+      - webassess-net
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    container_name: webassess-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - webassess-net
+
+networks:
+  webassess-net:
+    driver: bridge
