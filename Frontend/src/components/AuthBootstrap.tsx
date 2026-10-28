@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuthStore, type Role } from "../store/authStore";
 
-const API_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_BASE_URL ?? "https://webassess-1.onrender.com";
 const PROFILE_TIMEOUT_MS = 10_000;
 
 function normalizeRole(role: string): Role | null {

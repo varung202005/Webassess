@@ -161,7 +161,7 @@ export default function Login() {
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveRole = useAuthStore((s) => s.setActiveRole);
-  const apiUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  const apiUrl = import.meta.env.VITE_API_BASE_URL ?? "https://webassess-1.onrender.com";
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

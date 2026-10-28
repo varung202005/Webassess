@@ -75,7 +75,7 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 ### 4. View API docs
-Open: http://localhost:8000/api/v1/docs
+Open: https://webassess-1.onrender.com/api/v1/docs
 
 ---
 

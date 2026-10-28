@@ -1,7 +1,7 @@
 import { useAuthStore } from "../store/authStore";
 import { supabase } from "./supabase";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "https://webassess-1.onrender.com";
 const REQUEST_TIMEOUT_MS = 12_000;
 
 export class ApiError extends Error {
