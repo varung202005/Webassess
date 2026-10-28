@@ -383,7 +383,6 @@ export default function Login() {
               <img src="/auth-assets/tslas-logo.png" alt="Thapar School of Liberal Arts and Sciences" />
             </div>
           </div>
-
           <div className="hero-main">
             <div className="eyebrow">Online Examination Platform</div>
             <h1 className="hero-title">WebAssess</h1>
