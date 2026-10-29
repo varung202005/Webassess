@@ -11,3 +11,4 @@ python-docx
 slowapi
 PyMuPDF
 requests
+resend
